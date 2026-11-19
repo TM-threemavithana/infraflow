@@ -1,0 +1,690 @@
+name: "InfraFlow Reusable Terraform Planning & Approval"
+
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: "Terraform version to use (e.g. 1.10.4). Must be >= 1.6.0"
+        required: false
+        default: "1.10.4"
+        type: string
+      working-directory:
+        description: "Relative path to the Terraform module or root configuration"
+        required: false
+        default: "."
+        type: string
+      var-file:
+        description: "Optional relative path to a .tfvars file for planning"
+        required: false
+        default: ""
+        type: string
+      environment:
+        description: "Target GitHub Environment name for protected approval gate"
+        required: false
+        default: "production-approval"
+        type: string
+      enable-policy-evaluation:
+        description: "Whether to execute Conftest / OPA policy checks on plan JSON"
+        required: false
+        default: true
+        type: boolean
+      policy-directory:
+        description: "Relative path to the Rego policies directory"
+        required: false
+        default: "policies"
+        type: string
+      enable-trivy:
+        description: "Whether to execute Trivy IaC misconfiguration scanning"
+        required: false
+        default: true
+        type: boolean
+      severity-threshold:
+        description: "Severity levels that trigger failure (e.g. HIGH,CRITICAL)"
+        required: false
+        default: "HIGH,CRITICAL"
+        type: string
+      fail-on-destructive:
+        description: "Whether to fail plan generation if deletions or replacements occur"
+        required: false
+        default: false
+        type: boolean
+      upload-plan-attestation:
+        description: "Whether to upload sanitized plan summary and attestation manifest"
+        required: false
+        default: true
+        type: boolean
+      enable-github-attestation:
+        description: "Whether to generate GitHub Artifact Attestation using GitHub OIDC & Sigstore"
+        required: false
+        default: true
+        type: boolean
+      trusted-public-key:
+        description: "Relative path to pinned trusted public key PEM (outside untrusted artifacts)"
+        required: false
+        default: ""
+        type: string
+      trusted-signer-keyids:
+        description: "Comma-separated list of authorized signer public key SHA-256 fingerprints"
+        required: false
+        default: ""
+        type: string
+      require-production-signer:
+        description: "Whether to enforce production signing identity in the approval gate"
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      plan-status:
+        description: "Outcome of the speculative plan generation (success, failure, skipped)"
+        value: ${{ jobs.plan.outputs.plan-status }}
+      analysis-status:
+        description: "Outcome of plan change analysis (success, failure, skipped)"
+        value: ${{ jobs.plan.outputs.analysis-status }}
+      security-status:
+        description: "Outcome of security policy evaluation (success, failure, skipped)"
+        value: ${{ jobs.plan.outputs.security-status }}
+      approval-status:
+        description: "Outcome of the protected environment approval gate"
+        value: ${{ jobs.approval-gate.outputs.gate-status }}
+      has-changes:
+        description: "Whether the plan contains modifying resource changes"
+        value: ${{ jobs.plan.outputs.has-changes }}
+      has-destructive-changes:
+        description: "Whether the plan contains deletions or replacements"
+        value: ${{ jobs.plan.outputs.has-destructive-changes }}
+      total-changes:
+        description: "Total count of modifying resource changes"
+        value: ${{ jobs.plan.outputs.total-changes }}
+      attestation-status:
+        description: "Outcome of GitHub Artifact Attestation generation (success, failure, skipped)"
+        value: ${{ jobs.attest.outputs.attestation-status }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: "Generate & Analyze Speculative Plan"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    outputs:
+      plan-status: ${{ steps.summary.outputs.plan-status }}
+      analysis-status: ${{ steps.summary.outputs.analysis-status }}
+      security-status: ${{ steps.summary.outputs.security-status }}
+      has-changes: ${{ steps.analyze.outputs.has-changes }}
+      has-destructive-changes: ${{ steps.analyze.outputs.has-destructive-changes }}
+      total-changes: ${{ steps.analyze.outputs.total-changes }}
+
+    steps:
+      - name: "Security Guard: Sanitize and Validate Inputs"
+        id: guard
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VERSION: ${{ inputs.terraform-version }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
+          INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+          INPUT_ENV: ${{ inputs.environment }}
+          INPUT_TRUSTED_PUBKEY: ${{ inputs.trusted-public-key }}
+          INPUT_TRUSTED_KEYIDS: ${{ inputs.trusted-signer-keyids }}
+        run: |
+          set -euo pipefail
+          echo "::group::Input Sanitization & Security Validation"
+
+          # 1. Validate Terraform SemVer pattern
+          if [[ ! "${INPUT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Security Violation: Invalid terraform-version '${INPUT_VERSION}'. Must follow SemVer (e.g., 1.10.4)."
+            exit 1
+          fi
+
+          # 2. Enforce Terraform >= 1.6.0
+          MAJOR=$(echo "${INPUT_VERSION}" | cut -d. -f1)
+          MINOR=$(echo "${INPUT_VERSION}" | cut -d. -f2)
+          if (( MAJOR < 1 )) || (( MAJOR == 1 && MINOR < 6 )); then
+            echo "::error::Security Violation: Terraform version '${INPUT_VERSION}' is unsupported. InfraFlow requires Terraform >= 1.6.0."
+            exit 1
+          fi
+
+          # 3. Disallow absolute paths for working directory
+          if [[ "${INPUT_DIR}" =~ ^/ ]] || [[ "${INPUT_DIR}" =~ ^~ ]]; then
+            echo "::error::Security Violation: Working directory must be a relative path: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 4. Prevent directory traversal in working directory
+          if [[ "${INPUT_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: Working directory path traversal ('..') is prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 5. Allow only safe characters in working directory
+          if [[ ! "${INPUT_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::Security Violation: Working directory contains forbidden characters: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 6. Validate var-file if provided
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            if [[ "${INPUT_VAR_FILE}" =~ ^/ ]] || [[ "${INPUT_VAR_FILE}" =~ ^~ ]] || [[ "${INPUT_VAR_FILE}" =~ \.\. ]]; then
+              echo "::error::Security Violation: var-file must be a safe relative path: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_VAR_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: var-file contains forbidden characters: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+          fi
+
+          # 7. Validate policy-directory
+          if [[ "${INPUT_POLICY_DIR}" =~ ^/ ]] || [[ "${INPUT_POLICY_DIR}" =~ ^~ ]] || [[ "${INPUT_POLICY_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: policy-directory must be a relative path: '${INPUT_POLICY_DIR}'."
+            exit 1
+          fi
+
+          # 8. Validate severity-threshold
+          if [[ ! "${INPUT_SEVERITY}" =~ ^[A-Z,]+$ ]]; then
+            echo "::error::Security Violation: severity-threshold contains invalid characters: '${INPUT_SEVERITY}'."
+            exit 1
+          fi
+
+          # 9. Validate environment name
+          if [[ ! "${INPUT_ENV}" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "::error::Security Violation: environment name contains invalid characters: '${INPUT_ENV}'."
+            exit 1
+          fi
+
+          # 10. Validate trusted-public-key if provided
+          if [[ -n "${INPUT_TRUSTED_PUBKEY}" ]]; then
+            if [[ "${INPUT_TRUSTED_PUBKEY}" =~ ^/ ]] || [[ "${INPUT_TRUSTED_PUBKEY}" =~ ^~ ]] || [[ "${INPUT_TRUSTED_PUBKEY}" =~ \.\. ]]; then
+              echo "::error::Security Violation: trusted-public-key must be a safe relative path: '${INPUT_TRUSTED_PUBKEY}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_TRUSTED_PUBKEY}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: trusted-public-key contains forbidden characters: '${INPUT_TRUSTED_PUBKEY}'."
+              exit 1
+            fi
+          fi
+
+          # 11. Validate trusted-signer-keyids if provided
+          if [[ -n "${INPUT_TRUSTED_KEYIDS}" ]]; then
+            if [[ ! "${INPUT_TRUSTED_KEYIDS}" =~ ^[a-fA-F0-9,[:space:]]+$ ]]; then
+              echo "::error::Security Violation: trusted-signer-keyids contains invalid hex characters: '${INPUT_TRUSTED_KEYIDS}'."
+              exit 1
+            fi
+          fi
+
+          echo "All inputs successfully sanitized and validated against platform security policy."
+          echo "::endgroup::"
+
+      - name: "Checkout Target Repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Verify Workspace Containment"
+        id: verify_workspace
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+        run: |
+          set -euo pipefail
+          echo "::group::Workspace Containment Check"
+          TARGET_PATH="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+          if [[ ! -d "${TARGET_PATH}" ]]; then
+            echo "::error::Configuration Error: Working directory '${INPUT_DIR}' does not exist inside workspace."
+            exit 1
+          fi
+
+          CANONICAL_TARGET="$(cd "${TARGET_PATH}" && pwd -P)"
+          CANONICAL_WORKSPACE="$(cd "${GITHUB_WORKSPACE}" && pwd -P)"
+          if [[ "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}" && "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}/"* ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' resolves outside GITHUB_WORKSPACE."
+            exit 1
+          fi
+
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            VAR_FILE_PATH="${TARGET_PATH}/${INPUT_VAR_FILE}"
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              VAR_FILE_PATH="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Configuration Error: Specified var-file '${INPUT_VAR_FILE}' was not found in '${TARGET_PATH}' or workspace root."
+              exit 1
+            fi
+          fi
+
+          echo "Working directory safely verified within workspace."
+          echo "::endgroup::"
+
+      - name: "Setup Terraform Toolchain"
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "Terraform Init (Backend-Free)"
+        id: init
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Terraform Init (Backend-Free)"
+          terraform init -backend=false -input=false
+          echo "::endgroup::"
+
+      - name: "Generate Speculative Plan & Plan JSON"
+        id: plan_gen
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+        run: |
+          set -euo pipefail
+          echo "::group::Speculative Terraform Plan Generation"
+
+          # Ensure secure plan destination in runner temp
+          PLAN_DIR="${RUNNER_TEMP}/infraflow_plan"
+          mkdir -p "${PLAN_DIR}"
+          chmod 700 "${PLAN_DIR}"
+
+          PLAN_OUT="${PLAN_DIR}/tfplan"
+          PLAN_JSON="${PLAN_DIR}/tfplan.json"
+
+          # Cleanup trap for sensitive plan files on exit
+          trap 'rm -f "${PLAN_OUT}"' EXIT
+
+          PLAN_ARGS=("-input=false" "-lock=false" "-out=${PLAN_OUT}")
+
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            if [[ -f "${INPUT_VAR_FILE}" ]]; then
+              RESOLVED_VAR_FILE="${INPUT_VAR_FILE}"
+            else
+              RESOLVED_VAR_FILE="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            PLAN_ARGS+=("-var-file=${RESOLVED_VAR_FILE}")
+          fi
+
+          terraform plan "${PLAN_ARGS[@]}"
+          terraform show -json "${PLAN_OUT}" > "${PLAN_JSON}"
+
+          # Copy plan JSON to workspace for subsequent scanner steps
+          cp "${PLAN_JSON}" "${GITHUB_WORKSPACE}/tfplan.json"
+
+          echo "Plan generated and converted to JSON successfully."
+          echo "::endgroup::"
+
+      - name: "Execute Plan Analysis Engine"
+        id: analyze
+        env:
+          FAIL_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
+        run: |
+          set -euo pipefail
+          echo "::group::Executing Plan Analysis Engine"
+
+          ANALYSIS_ARGS=(
+            "--plan-json" "${GITHUB_WORKSPACE}/tfplan.json"
+            "--output-json" "${GITHUB_WORKSPACE}/plan-metrics.json"
+            "--output-markdown" "${GITHUB_WORKSPACE}/plan-summary.md"
+          )
+
+          if [[ "${FAIL_DESTRUCTIVE}" == "true" ]]; then
+            ANALYSIS_ARGS+=("--fail-on-destructive")
+          fi
+
+          python3 "${GITHUB_WORKSPACE}/scripts/analyze-plan.py" "${ANALYSIS_ARGS[@]}"
+
+          # Extract change indicators from metrics JSON
+          TOTAL_CHANGES=$(python3 -c "import json; m=json.load(open('${GITHUB_WORKSPACE}/plan-metrics.json')); print(m['metrics']['total_changes'])")
+          HAS_CHANGES=$(python3 -c "import json; m=json.load(open('${GITHUB_WORKSPACE}/plan-metrics.json')); print(str(m['has_changes']).lower())")
+          HAS_DESTRUCTIVE=$(python3 -c "import json; m=json.load(open('${GITHUB_WORKSPACE}/plan-metrics.json')); print(str(m['has_destructive_changes']).lower())")
+
+          {
+            echo "total-changes=${TOTAL_CHANGES}"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f "${GITHUB_WORKSPACE}/plan-summary.md" ]]; then
+            cat "${GITHUB_WORKSPACE}/plan-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "::endgroup::"
+
+      - name: "Install & Run Trivy (IaC Scan)"
+        id: trivy
+        if: inputs.enable-trivy
+        env:
+          TARGET_DIR: ${{ inputs.working-directory }}
+          SEVERITY: ${{ inputs.severity-threshold }}
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Trivy (SHA256 Verified)"
+          TRIVY_VER="0.69.1"
+          TRIVY_SHA="c2ea1a6a9be80c7dd91937f3747eb2eafe6688582f3f9f4a0a4176cf35c6f376"
+          curl -sSL -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA}  trivy.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/bin
+          tar -xzf trivy.tar.gz -C /tmp/bin trivy
+          chmod +x /tmp/bin/trivy
+          echo "::endgroup::"
+
+          echo "::group::Executing Trivy IaC Scan"
+          /tmp/bin/trivy config \
+            --severity "${SEVERITY}" \
+            --exit-code 1 \
+            --format table \
+            "${TARGET_DIR}"
+          echo "::endgroup::"
+
+      - name: "Install & Run Conftest (OPA Plan Evaluation)"
+        id: conftest
+        if: inputs.enable-policy-evaluation
+        env:
+          POLICY_DIR: ${{ inputs.policy-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Conftest (SHA256 Verified)"
+          CONFTEST_VER="0.71.1"
+          CONFTEST_SHA="c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985"
+          curl -sSL -o conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VER}/conftest_${CONFTEST_VER}_Linux_x86_64.tar.gz"
+          echo "${CONFTEST_SHA}  conftest.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/bin
+          tar -xzf conftest.tar.gz -C /tmp/bin conftest
+          chmod +x /tmp/bin/conftest
+          echo "::endgroup::"
+
+          echo "::group::Evaluating OPA Policies on Plan JSON"
+          RESOLVED_POLICY_DIR="${GITHUB_WORKSPACE}/${POLICY_DIR}"
+          if [[ ! -d "${RESOLVED_POLICY_DIR}" ]]; then
+            echo "::warning::Policy directory '${POLICY_DIR}' not found. Skipping Conftest evaluation."
+          else
+            /tmp/bin/conftest test \
+              --all-namespaces \
+              --policy "${RESOLVED_POLICY_DIR}" \
+              "${GITHUB_WORKSPACE}/tfplan.json"
+          fi
+          echo "::endgroup::"
+
+      - name: "Generate Cryptographic Plan Attestation & Signed Provenance"
+        id: attest
+        env:
+          TF_VER: ${{ inputs.terraform-version }}
+        run: |
+          set -euo pipefail
+          echo "::group::Generating Sanitized Plan Manifest & Signed Provenance"
+
+          # 1. Generate canonical sanitized plan manifest (Sigstore / GitHub Attestation subject)
+          python3 "${GITHUB_WORKSPACE}/scripts/verify-plan-integrity.py" generate-manifest \
+            --plan-json "${GITHUB_WORKSPACE}/tfplan.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit-sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --actor "${GITHUB_ACTOR}" \
+            --workflow "reusable-tf-plan.yml" \
+            --terraform-version "${TF_VER}" \
+            --security-decision "passed" \
+            --output "${GITHUB_WORKSPACE}/plan-manifest.json"
+
+          # 2. Sign in-toto DSSE plan provenance (offline test and legacy compatibility)
+          python3 "${GITHUB_WORKSPACE}/scripts/verify-plan-integrity.py" sign-provenance \
+            --plan-json "${GITHUB_WORKSPACE}/tfplan.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit-sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --actor "${GITHUB_ACTOR}" \
+            --workflow "reusable-tf-plan.yml" \
+            --terraform-version "${TF_VER}" \
+            --policy-result "passed" \
+            --public-key-out "${GITHUB_WORKSPACE}/public-key.pem" \
+            --output "${GITHUB_WORKSPACE}/plan-provenance.json"
+
+          # 3. Generate legacy digest manifest for backward compatibility
+          python3 "${GITHUB_WORKSPACE}/scripts/verify-plan-integrity.py" generate \
+            --plan-json "${GITHUB_WORKSPACE}/tfplan.json" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit-sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --actor "${GITHUB_ACTOR}" \
+            --terraform-version "${TF_VER}" \
+            --output "${GITHUB_WORKSPACE}/plan-attestation.json"
+
+          # Immediately purge raw unsanitized plan JSON from workspace to prevent leakage
+          rm -f "${GITHUB_WORKSPACE}/tfplan.json"
+          echo "Sanitized manifest, signed provenance, and legacy digests created; raw plan JSON purged."
+          echo "::endgroup::"
+
+      - name: "Publish Plan Manifest & Summaries"
+        if: inputs.upload-plan-attestation
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: infraflow-plan-manifest
+          path: |
+            ${{ github.workspace }}/plan-manifest.json
+            ${{ github.workspace }}/plan-provenance.json
+            ${{ github.workspace }}/public-key.pem
+            ${{ github.workspace }}/plan-attestation.json
+            ${{ github.workspace }}/plan-summary.md
+            ${{ github.workspace }}/plan-metrics.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: "Generate Stage Summary"
+        if: always()
+        id: summary
+        env:
+          PLAN_OUTCOME: ${{ steps.plan_gen.outcome }}
+          ANALYSIS_OUTCOME: ${{ steps.analyze.outcome }}
+          TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+        run: |
+          set -euo pipefail
+          PLAN_STATUS="${PLAN_OUTCOME:-skipped}"
+          ANALYSIS_STATUS="${ANALYSIS_OUTCOME:-skipped}"
+          TRIVY_STATUS="${TRIVY_OUTCOME:-skipped}"
+          CONFTEST_STATUS="${CONFTEST_OUTCOME:-skipped}"
+
+          SECURITY_STATUS="success"
+          if [[ "${TRIVY_STATUS}" == "failure" || "${CONFTEST_STATUS}" == "failure" ]]; then
+            SECURITY_STATUS="failure"
+          elif [[ "${TRIVY_STATUS}" == "skipped" && "${CONFTEST_STATUS}" == "skipped" ]]; then
+            SECURITY_STATUS="skipped"
+          fi
+
+          {
+            echo "plan-status=${PLAN_STATUS}"
+            echo "analysis-status=${ANALYSIS_STATUS}"
+            echo "security-status=${SECURITY_STATUS}"
+          } >> "$GITHUB_OUTPUT"
+
+  attest:
+    name: "Cryptographic Provenance Attestation"
+    needs: [plan]
+    if: inputs.enable-github-attestation && needs.plan.outputs.plan-status == 'success' && needs.plan.outputs.security-status == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    timeout-minutes: 10
+
+    outputs:
+      attestation-status: ${{ steps.status.outputs.attestation-status }}
+
+    steps:
+      - name: "Checkout Platform Verification Toolchain"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Download Plan Manifest Artifact"
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: infraflow-plan-manifest
+          path: ${{ github.workspace }}/manifest
+
+      - name: "Validate Manifest Before Attestation"
+        id: validate_manifest
+        run: |
+          set -euo pipefail
+          echo "::group::Validating Manifest Metadata & Policy Decision"
+
+          MANIFEST_FILE="${GITHUB_WORKSPACE}/manifest/plan-manifest.json"
+          if [[ ! -f "${MANIFEST_FILE}" ]]; then
+            echo "::error::Security Violation: plan-manifest.json not found in uploaded artifact."
+            exit 1
+          fi
+
+          # Strictly verify that the manifest matches current runner context before granting attestation
+          python3 "${GITHUB_WORKSPACE}/scripts/verify-plan-integrity.py" verify-attestation \
+            --manifest "${MANIFEST_FILE}" \
+            --expected-repository "${GITHUB_REPOSITORY}" \
+            --expected-commit-sha "${GITHUB_SHA}" \
+            --expected-workflow "reusable-tf-plan.yml"
+
+          echo "Manifest metadata, commit binding, and policy passing status verified."
+          echo "::endgroup::"
+
+      - name: "Attest Plan Manifest (GitHub OIDC & Sigstore)"
+        id: github_attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ github.workspace }}/manifest/plan-manifest.json
+
+      - name: "Record Attestation Status"
+        id: status
+        if: always()
+        env:
+          ATTEST_OUTCOME: ${{ steps.github_attest.outcome }}
+        run: |
+          set -euo pipefail
+          STATUS="${ATTEST_OUTCOME:-skipped}"
+          echo "attestation-status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+  approval-gate:
+    name: "Protected Approval Gate"
+    needs: [plan, attest]
+    if: always() && needs.plan.result == 'success' && (needs.attest.result == 'success' || needs.attest.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    timeout-minutes: 60
+
+    outputs:
+      gate-status: ${{ steps.summary.outputs.gate-status }}
+
+    steps:
+      - name: "Checkout Target Repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Download Plan Manifest Artifact"
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: infraflow-plan-manifest
+          path: ${{ github.workspace }}/attestation
+
+      - name: "Verify Cryptographic Provenance & Attestation Binding"
+        id: verify_gate
+        env:
+          TF_VER: ${{ inputs.terraform-version }}
+          INPUT_TRUSTED_PUBKEY: ${{ inputs.trusted-public-key }}
+          INPUT_TRUSTED_KEYIDS: ${{ inputs.trusted-signer-keyids }}
+          INPUT_REQUIRE_PROD: ${{ inputs.require-production-signer }}
+        run: |
+          set -euo pipefail
+          echo "::group::Verifying Signed Plan Provenance Against Trusted Root"
+
+          PLAN_MANIFEST="${GITHUB_WORKSPACE}/attestation/plan-manifest.json"
+          PROVENANCE_PATH="${GITHUB_WORKSPACE}/attestation/plan-provenance.json"
+          PUBKEY_PATH="${GITHUB_WORKSPACE}/attestation/public-key.pem"
+          MANIFEST_PATH="${GITHUB_WORKSPACE}/attestation/plan-attestation.json"
+
+          # 1. Verify Sanitized Plan Manifest if present
+          if [[ -f "${PLAN_MANIFEST}" ]]; then
+            python3 "${GITHUB_WORKSPACE}/scripts/verify-plan-integrity.py" verify-attestation \
+              --manifest "${PLAN_MANIFEST}" \
+              --expected-repository "${GITHUB_REPOSITORY}" \
+              --expected-commit-sha "${GITHUB_SHA}" \
+              --expected-workflow "reusable-tf-plan.yml"
+          fi
+
+          if [[ ! -f "${PROVENANCE_PATH}" ]]; then
+            echo "::error::Signed provenance not found in downloaded artifact."
+            exit 1
+          fi
+
+          VERIFY_ARGS=(
+            "--provenance" "${PROVENANCE_PATH}"
+            "--expected-repository" "${GITHUB_REPOSITORY}"
+            "--expected-commit-sha" "${GITHUB_SHA}"
+            "--expected-workflow" "reusable-tf-plan.yml"
+          )
+
+          if [[ "${INPUT_REQUIRE_PROD}" == "true" ]]; then
+            VERIFY_ARGS+=("--require-production-signer")
+          fi
+
+          # Independent Trust Root Resolution (never trust unpinned artifact key by default)
+          PLATFORM_ROOT_TRUST_ANCHOR="3c27ef9e1e520fd8c6c04db2c19680e16cf3c95a72b5536a9cada058890f7e90"
+          RESOLVED_TRUSTED_KEYIDS="${INPUT_TRUSTED_KEYIDS:-${PLATFORM_ROOT_TRUST_ANCHOR}}"
+
+          VERIFY_ARGS+=(
+            "--trusted-keyids" "${RESOLVED_TRUSTED_KEYIDS}"
+          )
+
+          if [[ -n "${INPUT_TRUSTED_PUBKEY}" && -f "${GITHUB_WORKSPACE}/${INPUT_TRUSTED_PUBKEY}" ]]; then
+            VERIFY_ARGS+=("--trusted-public-key" "${GITHUB_WORKSPACE}/${INPUT_TRUSTED_PUBKEY}")
+          elif [[ -f "${GITHUB_WORKSPACE}/policies/trust/trusted_signer.pub" ]]; then
+            VERIFY_ARGS+=("--trusted-public-key" "${GITHUB_WORKSPACE}/policies/trust/trusted_signer.pub")
+          elif [[ -f "${PUBKEY_PATH}" ]]; then
+            VERIFY_ARGS+=("--public-key" "${PUBKEY_PATH}")
+          fi
+
+          python3 "${GITHUB_WORKSPACE}/scripts/verify-plan-integrity.py" verify-provenance "${VERIFY_ARGS[@]}"
+
+          # 2. Verify legacy manifest if present
+          if [[ -f "${MANIFEST_PATH}" ]]; then
+            python3 -c "
+            import json, sys
+            m = json.load(open('${MANIFEST_PATH}'))
+            att = m.get('attestation', {})
+            expected_repo = '${GITHUB_REPOSITORY}'
+            expected_sha = '${GITHUB_SHA}'
+            if att.get('repository') != expected_repo:
+                sys.stderr.write('Repository mismatch in legacy manifest\n')
+                sys.exit(1)
+            if att.get('commit_sha', '').lower() != expected_sha.lower():
+                sys.stderr.write('Commit SHA mismatch in legacy manifest\n')
+                sys.exit(1)
+            "
+          fi
+
+          echo "✅ Authenticated digital signature, repository identity, and commit SHA successfully verified."
+          echo "::endgroup::"
+
+      - name: "Record Approval Audit Trail"
+        id: summary
+        if: always()
+        env:
+          GATE_OUTCOME: ${{ steps.verify_gate.outcome }}
+          TARGET_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          STATUS="${GATE_OUTCOME:-skipped}"
+          echo "gate-status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ### 🛡️ InfraFlow Protected Environment Approval Gate
+          | Property | Value |
+          |---|---|
+          | Environment | \`${TARGET_ENV}\` |
+          | Gate Outcome | **${STATUS}** |
+          | Verified Repository | \`${GITHUB_REPOSITORY}\` |
+          | Verified Commit SHA | \`${GITHUB_SHA}\` |
+          | Executing Actor | \`${GITHUB_ACTOR}\` |
+          | Workflow Run ID | \`${GITHUB_RUN_ID}\` |
+          EOF
+          fi
