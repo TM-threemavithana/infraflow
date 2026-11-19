@@ -1,0 +1,18 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket_server_side_encryption_configuration.stripped_encryption",
+      "type": "aws_s3_bucket_server_side_encryption_configuration",
+      "name": "stripped_encryption",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "bucket": "active-enterprise-bucket"
+        },
+        "after": null
+      }
+    }
+  ]
+}

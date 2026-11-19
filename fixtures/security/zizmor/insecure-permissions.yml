@@ -1,0 +1,14 @@
+name: "Insecure Permissions Fixture"
+
+on:
+  push:
+
+# Insecure: Excessive blanket write permissions across entire token
+permissions: write-all
+
+jobs:
+  insecure-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Unpinned action with write-all permissions"
+        uses: actions/checkout@v4

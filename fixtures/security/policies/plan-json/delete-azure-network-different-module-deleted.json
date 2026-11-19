@@ -1,0 +1,32 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "module.tenant_a.azurerm_storage_account_network_rules.rules",
+      "module_address": "module.tenant_a",
+      "type": "azurerm_storage_account_network_rules",
+      "name": "rules",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "storage_account_name": "shared-storage"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "module.tenant_b.azurerm_storage_account.sa",
+      "module_address": "module.tenant_b",
+      "type": "azurerm_storage_account",
+      "name": "sa",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "name": "shared-storage"
+        },
+        "after": null
+      }
+    }
+  ]
+}

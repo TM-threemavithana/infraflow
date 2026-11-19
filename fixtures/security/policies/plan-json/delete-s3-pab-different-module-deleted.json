@@ -1,0 +1,36 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "module.tenant_a.aws_s3_bucket_public_access_block.pab",
+      "module_address": "module.tenant_a",
+      "type": "aws_s3_bucket_public_access_block",
+      "name": "pab",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "bucket": "shared-bucket-name",
+          "block_public_acls": true,
+          "block_public_policy": true,
+          "ignore_public_acls": true,
+          "restrict_public_buckets": true
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "module.tenant_b.aws_s3_bucket.bucket",
+      "module_address": "module.tenant_b",
+      "type": "aws_s3_bucket",
+      "name": "bucket",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "bucket": "shared-bucket-name"
+        },
+        "after": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.bad_public_data",
+      "type": "aws_s3_bucket",
+      "name": "bad_public_data",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "bucket": "infraflow-insecure-public-store",
+          "acl": "public-read"
+        }
+      }
+    }
+  ]
+}

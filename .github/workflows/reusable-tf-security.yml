@@ -1,0 +1,327 @@
+name: "InfraFlow Reusable Terraform Security"
+
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: "Terraform version to use (e.g. 1.10.4). Must be >= 1.6.0"
+        required: false
+        default: "1.10.4"
+        type: string
+      working-directory:
+        description: "Relative path to the Terraform module or root configuration"
+        required: false
+        default: "."
+        type: string
+      severity-threshold:
+        description: "Severity levels that trigger failure (e.g. HIGH,CRITICAL)"
+        required: false
+        default: "HIGH,CRITICAL"
+        type: string
+      enable-tflint:
+        description: "Whether to execute TFLint static analysis"
+        required: false
+        default: true
+        type: boolean
+      enable-trivy:
+        description: "Whether to execute Trivy IaC misconfiguration scanning"
+        required: false
+        default: true
+        type: boolean
+      enable-conftest:
+        description: "Whether to execute Conftest / OPA policy checks"
+        required: false
+        default: true
+        type: boolean
+      enable-zizmor:
+        description: "Whether to execute Zizmor GitHub Actions security analysis"
+        required: false
+        default: false
+        type: boolean
+      policy-directory:
+        description: "Relative path to the Rego policies directory"
+        required: false
+        default: "policies"
+        type: string
+    outputs:
+      tflint-status:
+        description: "Outcome of TFLint analysis (success, failure, skipped)"
+        value: ${{ jobs.security-scan.outputs.tflint-status }}
+      trivy-status:
+        description: "Outcome of Trivy IaC scan (success, failure, skipped)"
+        value: ${{ jobs.security-scan.outputs.trivy-status }}
+      conftest-status:
+        description: "Outcome of Conftest policy checks (success, failure, skipped)"
+        value: ${{ jobs.security-scan.outputs.conftest-status }}
+      zizmor-status:
+        description: "Outcome of Zizmor workflow analysis (success, failure, skipped)"
+        value: ${{ jobs.security-scan.outputs.zizmor-status }}
+      security-summary:
+        description: "Aggregated security execution summary string"
+        value: ${{ jobs.security-scan.outputs.security-summary }}
+
+permissions:
+  contents: read
+
+jobs:
+  security-scan:
+    name: "DevSecOps Security Quality Gates"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    outputs:
+      tflint-status: ${{ steps.summary.outputs.tflint-status }}
+      trivy-status: ${{ steps.summary.outputs.trivy-status }}
+      conftest-status: ${{ steps.summary.outputs.conftest-status }}
+      zizmor-status: ${{ steps.summary.outputs.zizmor-status }}
+      security-summary: ${{ steps.summary.outputs.security-summary }}
+
+    steps:
+      - name: "Security Guard: Sanitize and Validate Inputs"
+        id: guard
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VERSION: ${{ inputs.terraform-version }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
+          INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+        run: |
+          set -euo pipefail
+          echo "::group::Input Sanitization & Security Validation"
+
+          # 1. Validate Terraform SemVer pattern
+          if [[ ! "${INPUT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Security Violation: Invalid terraform-version '${INPUT_VERSION}'. Must follow SemVer (e.g., 1.10.4)."
+            exit 1
+          fi
+
+          # 2. Enforce Terraform >= 1.6.0
+          MAJOR=$(echo "${INPUT_VERSION}" | cut -d. -f1)
+          MINOR=$(echo "${INPUT_VERSION}" | cut -d. -f2)
+          if (( MAJOR < 1 )) || (( MAJOR == 1 && MINOR < 6 )); then
+            echo "::error::Security Violation: Terraform version '${INPUT_VERSION}' is unsupported. InfraFlow requires Terraform >= 1.6.0."
+            exit 1
+          fi
+
+          # 3. Disallow absolute paths for working directory
+          if [[ "${INPUT_DIR}" =~ ^/ ]] || [[ "${INPUT_DIR}" =~ ^~ ]]; then
+            echo "::error::Security Violation: Working directory must be a relative path: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 4. Prevent directory traversal in working directory
+          if [[ "${INPUT_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: Working directory path traversal ('..') is prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 5. Allow only safe characters in working directory
+          if [[ ! "${INPUT_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::Security Violation: Working directory contains forbidden characters: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 6. Validate policy directory if conftest enabled
+          if [[ "${INPUT_POLICY_DIR}" =~ ^/ ]] || [[ "${INPUT_POLICY_DIR}" =~ ^~ ]]; then
+            echo "::error::Security Violation: Policy directory must be a relative path: '${INPUT_POLICY_DIR}'."
+            exit 1
+          fi
+          if [[ "${INPUT_POLICY_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: Policy directory path traversal ('..') is prohibited: '${INPUT_POLICY_DIR}'."
+            exit 1
+          fi
+          if [[ ! "${INPUT_POLICY_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::Security Violation: Policy directory contains forbidden characters: '${INPUT_POLICY_DIR}'."
+            exit 1
+          fi
+
+          # 7. Validate severity threshold format (e.g. HIGH,CRITICAL)
+          if [[ ! "${INPUT_SEVERITY}" =~ ^[A-Z,]+$ ]]; then
+            echo "::error::Security Violation: Severity threshold contains invalid characters: '${INPUT_SEVERITY}'."
+            exit 1
+          fi
+
+          echo "All security parameters successfully validated."
+          echo "::endgroup::"
+
+      - name: "Checkout Source Code"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Verify Workspace Containment"
+        id: verify_workspace
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Workspace Path Containment Verification"
+
+          TARGET_PATH="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+          if [[ ! -d "${TARGET_PATH}" ]]; then
+            echo "::error::Configuration Error: Working directory '${INPUT_DIR}' does not exist inside workspace."
+            exit 1
+          fi
+
+          CANONICAL_TARGET="$(cd "${TARGET_PATH}" && pwd -P)"
+          CANONICAL_WORKSPACE="$(cd "${GITHUB_WORKSPACE}" && pwd -P)"
+          if [[ "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}" && "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}/"* ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' resolves outside GITHUB_WORKSPACE."
+            exit 1
+          fi
+
+          echo "Working directory '${INPUT_DIR}' is verified to exist and is safely contained within GITHUB_WORKSPACE."
+          echo "::endgroup::"
+
+      - name: "Setup Terraform Toolchain"
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "Install & Run TFLint"
+        id: tflint
+        if: inputs.enable-tflint
+        env:
+          TARGET_DIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Installing TFLint (SHA256 Verified)"
+          TFLINT_VER="0.66.0"
+          TFLINT_SHA="22be11cadc25cd02401e94c0ccc91aa63467debb8485c2a755d98f4c0a9d1e2e"
+          curl -sSL -o tflint.zip "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VER}/tflint_linux_amd64.zip"
+          echo "${TFLINT_SHA}  tflint.zip" | sha256sum -c -
+          unzip -q tflint.zip -d /tmp/bin
+          chmod +x /tmp/bin/tflint
+          echo "::endgroup::"
+
+          echo "::group::Executing TFLint"
+          TFLINT_ARGS=()
+          if [[ -f "${GITHUB_WORKSPACE}/.tflint.hcl" ]]; then
+            TFLINT_ARGS+=("--config=${GITHUB_WORKSPACE}/.tflint.hcl")
+          fi
+          /tmp/bin/tflint "${TFLINT_ARGS[@]}" --chdir="${TARGET_DIR}" --minimum-failure-severity=warning
+          echo "::endgroup::"
+
+      - name: "Install & Run Trivy (IaC Misconfiguration Scan)"
+        id: trivy
+        if: inputs.enable-trivy
+        env:
+          TARGET_DIR: ${{ inputs.working-directory }}
+          SEVERITY: ${{ inputs.severity-threshold }}
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Trivy (SHA256 Verified)"
+          TRIVY_VER="0.76.2"
+          TRIVY_SHA="bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
+          curl -sSL -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA}  trivy.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/bin
+          tar -xzf trivy.tar.gz -C /tmp/bin trivy
+          chmod +x /tmp/bin/trivy
+          echo "::endgroup::"
+
+          echo "::group::Executing Trivy IaC Scan"
+          /tmp/bin/trivy config \
+            --severity "${SEVERITY}" \
+            --exit-code 1 \
+            --format table \
+            "${TARGET_DIR}"
+          echo "::endgroup::"
+
+      - name: "Install & Run Conftest (OPA Policies)"
+        id: conftest
+        if: inputs.enable-conftest
+        env:
+          TARGET_DIR: ${{ inputs.working-directory }}
+          POLICY_DIR: ${{ inputs.policy-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Conftest (SHA256 Verified)"
+          CONFTEST_VER="0.71.1"
+          CONFTEST_SHA="c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985"
+          curl -sSL -o conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VER}/conftest_${CONFTEST_VER}_Linux_x86_64.tar.gz"
+          echo "${CONFTEST_SHA}  conftest.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/bin
+          tar -xzf conftest.tar.gz -C /tmp/bin conftest
+          chmod +x /tmp/bin/conftest
+          echo "::endgroup::"
+
+          echo "::group::Executing Conftest Policy Validation"
+          RESOLVED_POLICY_DIR="${GITHUB_WORKSPACE}/${POLICY_DIR}"
+          if [[ ! -d "${RESOLVED_POLICY_DIR}" ]]; then
+            echo "::warning::Policy directory '${POLICY_DIR}' not found. Skipping Conftest evaluation."
+          else
+            # Test all .tf files in the target directory
+            /tmp/bin/conftest test \
+              --all-namespaces \
+              --policy "${RESOLVED_POLICY_DIR}" \
+              "${TARGET_DIR}"
+          fi
+          echo "::endgroup::"
+
+      - name: "Install & Run Zizmor (GitHub Actions Audit)"
+        id: zizmor
+        if: inputs.enable-zizmor
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Zizmor (SHA256 Verified)"
+          ZIZMOR_VER="1.32.0"
+          ZIZMOR_SHA="bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b"
+          curl -sSL -o zizmor.tar.gz "https://github.com/woodruffw/zizmor/releases/download/v${ZIZMOR_VER}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA}  zizmor.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/bin
+          tar -xzf zizmor.tar.gz -C /tmp/bin --strip-components=1 zizmor-x86_64-unknown-linux-gnu/zizmor
+          chmod +x /tmp/bin/zizmor
+          echo "::endgroup::"
+
+          echo "::group::Executing Zizmor Workflow Audit"
+          ZIZMOR_ARGS=()
+          if [[ -f "${GITHUB_WORKSPACE}/.zizmor.yml" ]]; then
+            ZIZMOR_ARGS+=("-c" "${GITHUB_WORKSPACE}/.zizmor.yml")
+          fi
+          /tmp/bin/zizmor "${ZIZMOR_ARGS[@]}" --min-severity medium "${GITHUB_WORKSPACE}/.github/workflows"
+          echo "::endgroup::"
+
+      - name: "Generate Security Execution Summary"
+        if: always()
+        id: summary
+        env:
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          WORKSPACE_OUTCOME: ${{ steps.verify_workspace.outcome }}
+          TFLINT_OUTCOME: ${{ steps.tflint.outcome }}
+          TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          ZIZMOR_OUTCOME: ${{ steps.zizmor.outcome }}
+        run: |
+          set -euo pipefail
+          TFLINT_STATUS="${TFLINT_OUTCOME:-skipped}"
+          TRIVY_STATUS="${TRIVY_OUTCOME:-skipped}"
+          CONFTEST_STATUS="${CONFTEST_OUTCOME:-skipped}"
+          ZIZMOR_STATUS="${ZIZMOR_OUTCOME:-skipped}"
+          GUARD_STATUS="${GUARD_OUTCOME:-skipped}"
+          WORKSPACE_STATUS="${WORKSPACE_OUTCOME:-skipped}"
+
+          {
+            echo "tflint-status=${TFLINT_STATUS}"
+            echo "trivy-status=${TRIVY_STATUS}"
+            echo "conftest-status=${CONFTEST_STATUS}"
+            echo "zizmor-status=${ZIZMOR_STATUS}"
+            echo "security-summary=Guard: ${GUARD_STATUS}, TFLint: ${TFLINT_STATUS}, Trivy: ${TRIVY_STATUS}, Conftest: ${CONFTEST_STATUS}, Zizmor: ${ZIZMOR_STATUS}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ### InfraFlow DevSecOps Quality Gates Summary
+          | Security Layer | Tool | Status |
+          |---|---|---|
+          | Input Guard | Security Policy | ${GUARD_STATUS} |
+          | Workspace Containment | Runner Sandbox | ${WORKSPACE_STATUS} |
+          | Static Code Linting | TFLint | ${TFLINT_STATUS} |
+          | IaC Misconfiguration | Trivy | ${TRIVY_STATUS} |
+          | Policy as Code | Conftest / OPA | ${CONFTEST_STATUS} |
+          | CI/CD Supply Chain | Zizmor | ${ZIZMOR_STATUS} |
+          EOF
+          fi

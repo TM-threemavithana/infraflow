@@ -1,0 +1,30 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "azurerm_storage_account_network_rules.rules",
+      "type": "azurerm_storage_account_network_rules",
+      "name": "rules",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "storage_account_name": "decommsa"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "azurerm_storage_account.sa",
+      "type": "azurerm_storage_account",
+      "name": "sa",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "name": "decommsa"
+        },
+        "after": null
+      }
+    }
+  ]
+}

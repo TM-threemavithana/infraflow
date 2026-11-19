@@ -1,0 +1,28 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket_public_access_block.replaced_pab_dc",
+      "type": "aws_s3_bucket_public_access_block",
+      "name": "replaced_pab_dc",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {
+          "bucket": "corp-data-bucket",
+          "block_public_acls": true,
+          "block_public_policy": true,
+          "ignore_public_acls": true,
+          "restrict_public_buckets": true
+        },
+        "after": {
+          "bucket": "corp-data-bucket",
+          "block_public_acls": false,
+          "block_public_policy": true,
+          "ignore_public_acls": true,
+          "restrict_public_buckets": true
+        }
+      }
+    }
+  ]
+}
