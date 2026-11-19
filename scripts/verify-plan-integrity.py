@@ -555,12 +555,19 @@ def create_attestation_bundle(manifest_path, repository=None, workflow=None,
 def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
                        plan_file_path=None, expected_repository=None,
                        expected_commit_sha=None, expected_workflow=None,
-                       require_production_signer=False):
+                       require_production_signer=False, use_gh_cli=False,
+                       signer_repo=None, signer_workflow=None):
     """
-    Verifies a GitHub Artifact Attestation (Sigstore bundle) and associated plan manifest:
+    Verifies a GitHub Artifact Attestation and associated plan manifest:
     - Confirms the plan manifest format, integrity, and security decision.
     - Confirms candidate plan JSON and plan binary digests match the manifest.
-    - Validates Sigstore bundle mediaType and DSSE payload statement.
+    - When use_gh_cli is True:
+      Invokes official 'gh attestation verify' to cryptographically verify
+      the Sigstore Fulcio certificate, Rekor transparency log entry, and subject digest.
+    - When bundle_path is provided (offline unit testing):
+      Validates synthetic Sigstore bundle mediaType and DSSE payload statement.
+      NOTE: Synthetic bundles are strictly for offline unit tests; production verification
+      in live workflows requires official 'gh attestation verify'.
     - Confirms the subject in the attestation matches the SHA-256 digest of plan-manifest.json.
     - Validates repository, commit SHA, and workflow identity.
     - When require_production_signer is True:
@@ -640,8 +647,32 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
             f"expected '{expected_workflow}'"
         )
 
-    # 5. Sigstore Attestation Bundle Verification
-    if bundle_path:
+    # 5. Official GitHub CLI Verification (gh attestation verify)
+    if use_gh_cli:
+        cmd = ["gh", "attestation", "verify", manifest_path]
+        if expected_repository:
+            cmd.extend(["--repo", expected_repository])
+        if bundle_path and os.path.isfile(bundle_path):
+            cmd.extend(["--bundle", bundle_path])
+        if signer_workflow:
+            cmd.extend(["--signer-workflow", signer_workflow])
+        elif signer_repo:
+            cmd.extend(["--signer-repo", signer_repo])
+        if expected_commit_sha:
+            cmd.extend(["--source-digest", expected_commit_sha])
+        cmd.extend(["--cert-oidc-issuer", "https://token.actions.githubusercontent.com"])
+        cmd.append("--format=json")
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                errors.append(f"Official 'gh attestation verify' failed: {result.stderr.strip()}")
+        except FileNotFoundError:
+            errors.append("Official verification error: 'gh' CLI tool not found in PATH")
+        except Exception as e:
+            errors.append(f"Official verification execution error: {str(e)}")
+
+    # 6. Synthetic Sigstore Attestation Bundle Verification (Offline Tests)
+    elif bundle_path:
         if not os.path.isfile(bundle_path):
             errors.append(f"Attestation bundle not found: {bundle_path}")
         else:
@@ -712,13 +743,13 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
                             f"expected '{expected_commit_sha}'"
                         )
 
-    # 6. Production Authorization Requirements
+    # 7. Production Authorization Requirements
     if require_production_signer:
-        if not bundle_path or not os.path.isfile(bundle_path):
+        if not use_gh_cli:
             errors.append(
-                "CRITICAL: Production authorization strictly requires a verified GitHub Artifact Attestation "
-                "(Sigstore OIDC bundle). Offline preview signatures, unverified keys, and unsigned manifests "
-                "are prohibited in production."
+                "CRITICAL: Production authorization strictly requires official GitHub Artifact Attestation verification "
+                "via GitHub CLI (--use-gh-cli) backed by Sigstore OIDC and transparency logs. "
+                "Synthetic offline bundles, unverified keys, and unsigned manifests cannot authorize production."
             )
 
     return (len(errors) == 0), errors
@@ -894,6 +925,9 @@ def main():
     vatt_parser.add_argument("--expected-commit-sha", help="Expected git commit SHA")
     vatt_parser.add_argument("--expected-workflow", help="Expected workflow identity")
     vatt_parser.add_argument("--require-production-signer", action="store_true", help="Enforce production Sigstore attestation requirements")
+    vatt_parser.add_argument("--use-gh-cli", action="store_true", help="Invoke official 'gh attestation verify' to cryptographically verify attestation")
+    vatt_parser.add_argument("--signer-repo", help="Signer repository for gh attestation verify")
+    vatt_parser.add_argument("--signer-workflow", help="Signer workflow for gh attestation verify")
 
     args = parser.parse_args()
 
@@ -1061,7 +1095,10 @@ def main():
             expected_repository=args.expected_repository,
             expected_commit_sha=args.expected_commit_sha,
             expected_workflow=args.expected_workflow,
-            require_production_signer=getattr(args, "require_production_signer", False)
+            require_production_signer=getattr(args, "require_production_signer", False),
+            use_gh_cli=getattr(args, "use_gh_cli", False),
+            signer_repo=getattr(args, "signer_repo", None),
+            signer_workflow=getattr(args, "signer_workflow", None)
         )
         if success:
             print("✅ GitHub Artifact Attestation & plan manifest verified successfully: Authenticated Sigstore provenance matches.")

@@ -42,6 +42,16 @@ git push origin v1.0.0 v1
 ```
 After step 3 completes on GitHub, caller workflows referencing `@v1` will resolve and execute successfully.
 
+### 2.1 Two-Stage Immutable SHA Pinning Process
+
+InfraFlow strictly mandates an **immutable 40-character hexadecimal commit SHA** for all platform toolchain references (`platform-ref` and `uses:` references). Branch names (`main`, `release/*`) and mutable floating tags are strictly prohibited and rejected by the platform input validation guard.
+
+To pin an external consumer repository to InfraFlow:
+1. **Stage 1 (Platform Commit)**: Commit and push the approved InfraFlow platform implementation to GitHub to obtain the final immutable 40-character commit SHA (e.g., `git rev-parse HEAD`).
+2. **Stage 2 (Consumer Pinning)**: Update the consumer workflow (`infraflow-plan.yml` and `infraflow-validate.yml`) by setting both:
+   - The reusable workflow caller reference: `uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-plan.yml@<40_HEX_COMMIT_SHA>`
+   - The required platform toolchain reference: `platform-ref: "<40_HEX_COMMIT_SHA>"`
+
 ---
 
 ## 3. Quick Start: Pull Request Validation

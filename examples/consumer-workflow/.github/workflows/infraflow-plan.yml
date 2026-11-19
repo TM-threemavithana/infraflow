@@ -46,3 +46,5 @@ jobs:
       enable-trivy: true
       enable-github-attestation: true
       upload-plan-attestation: true
+      platform-repository: "YOUR_OWNER/YOUR_REPOSITORY"
+      platform-ref: "YOUR_INFRAFLOW_COMMIT_SHA"

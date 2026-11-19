@@ -309,3 +309,10 @@ GitHub Actions permissions are workflow- and job-scoped, not step-scoped. To enf
 ### 9.4 Approval Gate Decoupling
 - **Cryptographic Attestation Gate**: Verifies machine identity, plan integrity, source commit SHA, and automated security policy results (`scripts/verify-plan-integrity.py verify-attestation`).
 - **Human Governance Gate**: Managed independently via GitHub Protected Environments (`environment: production-approval`). Local tests simulate gate pass/fail conditions; live human approval remains **UNVERIFIED** pending live reviewer interaction.
+
+### 9.5 External Consumer Independence & Platform Toolchain Isolation (G04 PR Correction)
+- **Decoupled Toolchain Architecture**: External consumer repositories invoking InfraFlow reusable workflows (`reusable-tf-security.yml`, `reusable-tf-plan.yml`) retain their application Terraform source code in `GITHUB_WORKSPACE`. InfraFlow platform tooling (scripts, policies, TFLint configuration, Zizmor configuration, and verification anchors) is checked out independently to `${RUNNER_TEMP}/infraflow-platform` via immutable commit SHA or release reference.
+- **Zero Consumer Bleed**: Consumers are never required to copy platform scripts (`scripts/`), OPA policies (`policies/`), or lint configs (`.tflint.hcl`, `.zizmor.yml`) into their own repositories.
+- **Fail-Closed Policy Enforcement**: If policy evaluation is enabled (`enable-policy-evaluation: true`) and the resolved policy directory is missing, both reusable workflows fail closed immediately (`exit 1`). Missing policies are strictly prohibited from degrading to warning-only success.
+- **Official Production Attestation Verification**: Workflows invoke official `gh attestation verify` in GitHub Actions to cryptographically verify Sigstore OIDC Fulcio certificates, Rekor transparency logs, and subject digests. Synthetic Sigstore bundles are maintained exclusively for offline unit testing.
+- **Fail-Safe Ephemeral Cleanup**: Binary plans (`tfplan`), raw plan JSON (`tfplan.json`), and temporary directories are trapped on `EXIT` and deleted in `always()` steps on both job success and job failure.

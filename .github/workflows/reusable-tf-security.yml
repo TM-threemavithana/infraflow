@@ -43,6 +43,15 @@ on:
         required: false
         default: "policies"
         type: string
+      platform-repository:
+        description: "GitHub repository containing InfraFlow platform tooling"
+        required: false
+        default: "TM-threemavithana/infraflow"
+        type: string
+      platform-ref:
+        description: "Immutable 40-character hexadecimal commit SHA of the InfraFlow platform repository"
+        required: true
+        type: string
     outputs:
       tflint-status:
         description: "Outcome of TFLint analysis (success, failure, skipped)"
@@ -86,6 +95,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.terraform-version }}
           INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
           INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+          PLATFORM_REF: ${{ inputs.platform-ref }}
         run: |
           set -euo pipefail
           echo "::group::Input Sanitization & Security Validation"
@@ -142,13 +152,46 @@ jobs:
             exit 1
           fi
 
+          # 8. Validate platform-ref: Must be an exact 40-character hexadecimal commit SHA
+          if [[ ! "${PLATFORM_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Security Violation: platform-ref '${PLATFORM_REF}' is invalid. InfraFlow strictly mandates an immutable 40-character hexadecimal commit SHA (branch names and mutable tags are prohibited)."
+            exit 1
+          fi
+
           echo "All security parameters successfully validated."
           echo "::endgroup::"
 
-      - name: "Checkout Source Code"
+      - name: "Checkout Consumer Source Code"
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+
+      - name: "Checkout InfraFlow Platform Toolchain"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: ".infraflow-platform"
+          persist-credentials: false
+
+      - name: "Isolate Platform Toolchain"
+        id: isolate_platform
+        run: |
+          set -euo pipefail
+          echo "::group::Isolating Platform Toolchain Outside Consumer Workspace"
+          PLATFORM_DIR="${RUNNER_TEMP}/infraflow-platform"
+          rm -rf "${PLATFORM_DIR}"
+          if [[ -d "${GITHUB_WORKSPACE}/.infraflow-platform" ]]; then
+            mv "${GITHUB_WORKSPACE}/.infraflow-platform" "${PLATFORM_DIR}"
+          elif [[ -d "${GITHUB_WORKSPACE}/policies" ]]; then
+            # Fallback when running self-tests inside the platform repository itself
+            mkdir -p "${PLATFORM_DIR}"
+            cp -r "${GITHUB_WORKSPACE}/policies" "${PLATFORM_DIR}/" 2>/dev/null || true
+            cp "${GITHUB_WORKSPACE}/.tflint.hcl" "${PLATFORM_DIR}/" 2>/dev/null || true
+            cp "${GITHUB_WORKSPACE}/.zizmor.yml" "${PLATFORM_DIR}/" 2>/dev/null || true
+          fi
+          echo "Platform toolchain isolated at: ${PLATFORM_DIR}"
+          echo "::endgroup::"
 
       - name: "Verify Workspace Containment"
         id: verify_workspace
@@ -201,6 +244,8 @@ jobs:
           TFLINT_ARGS=()
           if [[ -f "${GITHUB_WORKSPACE}/.tflint.hcl" ]]; then
             TFLINT_ARGS+=("--config=${GITHUB_WORKSPACE}/.tflint.hcl")
+          elif [[ -f "${RUNNER_TEMP}/infraflow-platform/.tflint.hcl" ]]; then
+            TFLINT_ARGS+=("--config=${RUNNER_TEMP}/infraflow-platform/.tflint.hcl")
           fi
           /tmp/bin/tflint "${TFLINT_ARGS[@]}" --chdir="${TARGET_DIR}" --minimum-failure-severity=warning
           echo "::endgroup::"
@@ -250,16 +295,20 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Executing Conftest Policy Validation"
-          RESOLVED_POLICY_DIR="${GITHUB_WORKSPACE}/${POLICY_DIR}"
-          if [[ ! -d "${RESOLVED_POLICY_DIR}" ]]; then
-            echo "::warning::Policy directory '${POLICY_DIR}' not found. Skipping Conftest evaluation."
-          else
-            # Test all .tf files in the target directory
-            /tmp/bin/conftest test \
-              --all-namespaces \
-              --policy "${RESOLVED_POLICY_DIR}" \
-              "${TARGET_DIR}"
+          RESOLVED_POLICY_DIR="${RUNNER_TEMP}/infraflow-platform/${POLICY_DIR}"
+          if [[ ! -d "${RESOLVED_POLICY_DIR}" && -d "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+            RESOLVED_POLICY_DIR="${GITHUB_WORKSPACE}/${POLICY_DIR}"
           fi
+          if [[ ! -d "${RESOLVED_POLICY_DIR}" ]]; then
+            echo "::error::Security Policy Violation: Policy directory '${POLICY_DIR}' was not found in platform toolchain or workspace. Policy evaluation is strictly fail-closed."
+            exit 1
+          fi
+
+          # Test all .tf files in the target directory
+          /tmp/bin/conftest test \
+            --all-namespaces \
+            --policy "${RESOLVED_POLICY_DIR}" \
+            "${TARGET_DIR}"
           echo "::endgroup::"
 
       - name: "Install & Run Zizmor (GitHub Actions Audit)"
@@ -273,7 +322,7 @@ jobs:
           curl -sSL -o zizmor.tar.gz "https://github.com/woodruffw/zizmor/releases/download/v${ZIZMOR_VER}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
           echo "${ZIZMOR_SHA}  zizmor.tar.gz" | sha256sum -c -
           mkdir -p /tmp/bin
-          tar -xzf zizmor.tar.gz -C /tmp/bin --strip-components=1 zizmor-x86_64-unknown-linux-gnu/zizmor
+          tar -xzf zizmor.tar.gz -C /tmp/bin zizmor
           chmod +x /tmp/bin/zizmor
           echo "::endgroup::"
 
@@ -281,6 +330,8 @@ jobs:
           ZIZMOR_ARGS=()
           if [[ -f "${GITHUB_WORKSPACE}/.zizmor.yml" ]]; then
             ZIZMOR_ARGS+=("-c" "${GITHUB_WORKSPACE}/.zizmor.yml")
+          elif [[ -f "${RUNNER_TEMP}/infraflow-platform/.zizmor.yml" ]]; then
+            ZIZMOR_ARGS+=("-c" "${RUNNER_TEMP}/infraflow-platform/.zizmor.yml")
           fi
           /tmp/bin/zizmor "${ZIZMOR_ARGS[@]}" --min-severity medium "${GITHUB_WORKSPACE}/.github/workflows"
           echo "::endgroup::"

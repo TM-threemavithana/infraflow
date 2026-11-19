@@ -140,9 +140,11 @@ In milestone **G04.1.4**, InfraFlow adopted **GitHub Artifact Attestations** (`a
    - Rather than publishing raw plans or raw JSON, the platform creates `plan-manifest.json` binding the SHA-256 digest of both the binary `tfplan` and `tfplan.json`, repository, commit, run ID, actor, workflow, and security decision (`security_decision: passed`).
    - `actions/attest` cryptographically attests the sanitized manifest file.
 3. **Strict Gate Verification**:
-   - The approval gate verifies the Sigstore bundle and plan manifest using `scripts/verify-plan-integrity.py verify-attestation`.
-   - Missing, unauthenticated, tampered, or cross-repository attestations fail closed.
-   - Asymmetric ECDSA signing is maintained strictly for offline unit tests and legacy compatibility, and is never accepted as an alternative production trust identity.
+   - The approval gate verifies the Sigstore bundle and plan manifest using official `gh attestation verify` in GitHub Actions (with fallback to `scripts/verify-plan-integrity.py verify-attestation` for offline unit testing).
+   - Approval gate execution condition strictly mandates:
+     `needs.plan.result == 'success' && needs.plan.outputs.security-status == 'success' && needs.attest.result == 'success'`.
+   - Missing, skipped, unauthenticated, tampered, or cross-repository attestations fail closed immediately before entering human review. Caller inputs cannot disable or bypass mandatory production verification.
+   - Asymmetric ECDSA preview signing is maintained strictly for offline unit tests and legacy compatibility, and is never accepted as an alternative production authorization identity (`--require-production-signer` enforced).
 4. **Attestation Scope vs. Exact-Plan Application (Future G06 Requirement)**:
    - GitHub Artifact Attestation attests `plan-manifest.json`, which contains the cryptographic digests of the binary and JSON plans (`plan_file_sha256` and `plan_json_sha256`).
    - The original binary plan (`tfplan`) is purged immediately upon completion and is **not** retained as a build artifact, strictly preventing confidential infrastructure state exposure in public repositories.

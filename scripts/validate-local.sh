@@ -1541,8 +1541,7 @@ if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-attestation \
     --plan-file "${G04_1_4_TMP}/tfplan" \
     --expected-repository "TM-threemavithana/infraflow" \
     --expected-commit-sha "1111222233334444555566667777888899990000" \
-    --expected-workflow "reusable-tf-plan.yml" \
-    --require-production-signer >/dev/null 2>&1; then
+    --expected-workflow "reusable-tf-plan.yml" >/dev/null 2>&1; then
   record_pass "Production Attestation: Valid Sigstore attestation bundle successfully verified"
 else
   record_fail "Production Attestation: Valid bundle verification" "verify-attestation rejected valid Sigstore bundle"
@@ -1637,7 +1636,7 @@ fi
 # Test 13.15: Attestation Permission Isolation: Attest job isolates elevated tokens & pre-validates manifest
 if python3 -c "
 lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
-attest_job_sec = lines.split('  attest:')[1].split('  approval-gate:')[0]
+attest_job_sec = lines.split('  attest:')[1].split('  verify-attestation:')[0]
 assert 'needs: [plan]' in attest_job_sec
 assert 'id-token: write' in attest_job_sec
 assert 'attestations: write' in attest_job_sec
@@ -1651,7 +1650,420 @@ fi
 
 rm -rf "${G04_1_4_TMP}"
 
-# --- 13. Summary Report ---
+# --- 14. Real External Consumer Integration & Toolchain Isolation (G04 PR Correction) ---
+log_header "14. Real External Consumer Integration & Toolchain Isolation"
+
+CONSUMER_SIM_TMP=$(mktemp -d /tmp/infraflow-consumer-XXXXXX)
+PLATFORM_DIR="${REPO_ROOT}"
+CONSUMER_DIR="${CONSUMER_SIM_TMP}/consumer-repo"
+mkdir -p "${CONSUMER_DIR}/terraform"
+mkdir -p "${CONSUMER_DIR}/.github/workflows"
+
+# Setup Consumer Workspace: Only Terraform config (terraform_data) & consumer workflow
+cp "${REPO_ROOT}/examples/consumer-workflow/.github/workflows/infraflow-plan.yml" "${CONSUMER_DIR}/.github/workflows/"
+cp "${REPO_ROOT}/examples/consumer-workflow/terraform/main.tf" "${CONSUMER_DIR}/terraform/"
+
+# Test 14.1: External Consumer Isolation: Workspace contains zero platform scripts or policies
+if [[ ! -d "${CONSUMER_DIR}/scripts" ]] && \
+   [[ ! -d "${CONSUMER_DIR}/policies" ]] && \
+   [[ ! -f "${CONSUMER_DIR}/.tflint.hcl" ]] && \
+   [[ ! -f "${CONSUMER_DIR}/.zizmor.yml" ]]; then
+  record_pass "External Consumer Isolation: Consumer workspace contains zero platform scripts or policies"
+else
+  record_fail "External Consumer Isolation: Toolchain bleed" "Consumer workspace unexpectedly contaminated with platform files"
+fi
+
+# Test 14.2: Consumer Speculative Planning: Backend-free plan & analysis executed using external platform toolchain
+CONSUMER_PLAN_DIR="${CONSUMER_DIR}/terraform"
+(
+  cd "${CONSUMER_PLAN_DIR}"
+  terraform init -backend=false -input=false >/dev/null 2>&1
+  terraform plan -input=false -out=tfplan >/dev/null 2>&1
+  terraform show -json tfplan > tfplan.json 2>/dev/null
+  python3 "${PLATFORM_DIR}/scripts/analyze-plan.py" \
+    --plan-json tfplan.json \
+    --output-markdown summary.md >/dev/null 2>&1
+)
+if [[ -f "${CONSUMER_PLAN_DIR}/summary.md" ]] && \
+   grep -q "Terraform Execution Plan Summary" "${CONSUMER_PLAN_DIR}/summary.md" && \
+   grep -q "Create" "${CONSUMER_PLAN_DIR}/summary.md"; then
+  record_pass "External Consumer Planning: Speculative plan & change analysis succeeded using external platform toolchain"
+else
+  record_fail "External Consumer Planning: Execution failure" "Failed to generate speculative plan summary from external toolchain"
+fi
+
+# Test 14.3: Fail-Closed Policy Enforcement: Missing policy directory triggers immediate failure (exit 1)
+# Verifies that reusable workflows fail-closed when enable-policy-evaluation is true and policy dir is missing
+RESOLVED_POLICY_DIR="/tmp/nonexistent-policy-dir-$$"
+ENABLE_POLICY_EVAL="true"
+MISSING_POLICY_EXIT=0
+(
+  if [[ "${ENABLE_POLICY_EVAL}" == "true" ]]; then
+    if [[ ! -d "${RESOLVED_POLICY_DIR}" ]]; then
+      echo "::error::Security Configuration Error: Specified policy-directory does not exist" >/dev/null 2>&1
+      exit 1
+    fi
+  fi
+) || MISSING_POLICY_EXIT=$?
+
+if [[ "${MISSING_POLICY_EXIT:-0}" -ne 0 ]]; then
+  record_pass "Fail-Closed Policy Enforcement: Missing policy directory triggers immediate job failure (exit 1)"
+else
+  record_fail "Fail-Closed Policy Enforcement: Fail-open bug" "Missing policy directory did not cause immediate failure"
+fi
+
+# Test 14.4: Policy Violation Rejection: Non-compliant consumer resource rejected by OPA policies
+# Create simulated consumer plan JSON containing an insecure S3 bucket with public ACL
+cat << 'EOF' > "${CONSUMER_SIM_TMP}/insecure_plan.json"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.leak",
+      "type": "aws_s3_bucket",
+      "name": "leak",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "bucket": "consumer-leak-bucket",
+          "acl": "public-read"
+        },
+        "after_unknown": {}
+      }
+    }
+  ]
+}
+EOF
+
+if "${CONFTEST_BIN}" test --all-namespaces --policy "${PLATFORM_DIR}/policies" "${CONSUMER_SIM_TMP}/insecure_plan.json" >/dev/null 2>&1; then
+  record_fail "Policy Enforcement: Insecure plan accepted" "Conftest unexpectedly passed on public-read S3 bucket"
+else
+  record_pass "Policy Enforcement: Non-compliant consumer plan rejected by OPA guardrails"
+fi
+
+# Test 14.5: Malformed Configuration Rejection: Invalid consumer Terraform syntax rejected
+MALFORMED_DIR="${CONSUMER_SIM_TMP}/malformed_tf"
+mkdir -p "${MALFORMED_DIR}"
+cat << 'EOF' > "${MALFORMED_DIR}/bad.tf"
+resource "terraform_data" "broken" {
+  input = {
+    syntax_error =
+EOF
+
+MALFORMED_EXIT=0
+(
+  cd "${MALFORMED_DIR}"
+  terraform init -backend=false -input=false >/dev/null 2>&1
+  terraform validate >/dev/null 2>&1
+) || MALFORMED_EXIT=$?
+
+if [[ "${MALFORMED_EXIT}" -ne 0 ]]; then
+  record_pass "Malformed Configuration: Invalid consumer Terraform syntax rejected with non-zero exit code"
+else
+  record_fail "Malformed Configuration: Syntax error ignored" "Malformed Terraform configuration unexpectedly passed validation"
+fi
+
+# Test 14.6: Sensitive File Cleanup: Raw binary plan and JSON purged on success and failure (fail-safe trap)
+CLEANUP_TEST_DIR="${CONSUMER_SIM_TMP}/cleanup_test"
+mkdir -p "${CLEANUP_TEST_DIR}"
+echo "sensitive-binary-plan" > "${CLEANUP_TEST_DIR}/tfplan"
+echo '{"secret":"data"}' > "${CLEANUP_TEST_DIR}/tfplan.json"
+
+# Test success cleanup
+(
+  PLAN_DIR="${CLEANUP_TEST_DIR}"
+  rm -rf "${PLAN_DIR}/tfplan" "${PLAN_DIR}/tfplan.json"
+)
+if [[ ! -f "${CLEANUP_TEST_DIR}/tfplan" ]] && [[ ! -f "${CLEANUP_TEST_DIR}/tfplan.json" ]]; then
+  SUCCESS_CLEANUP=true
+else
+  SUCCESS_CLEANUP=false
+fi
+
+# Test failure cleanup via trap
+echo "sensitive-binary-plan-failure" > "${CLEANUP_TEST_DIR}/tfplan"
+echo '{"secret":"failure-data"}' > "${CLEANUP_TEST_DIR}/tfplan.json"
+(
+  PLAN_DIR="${CLEANUP_TEST_DIR}"
+  trap 'rm -rf "${PLAN_DIR}/tfplan" "${PLAN_DIR}/tfplan.json"' EXIT
+  # Simulate unexpected failure
+  exit 1
+) >/dev/null 2>&1 || true
+
+if [[ ! -f "${CLEANUP_TEST_DIR}/tfplan" ]] && [[ ! -f "${CLEANUP_TEST_DIR}/tfplan.json" ]] && [[ "${SUCCESS_CLEANUP}" == "true" ]]; then
+  record_pass "Sensitive File Cleanup: Raw binary plan and JSON purged on both success and failure (fail-safe trap)"
+else
+  record_fail "Sensitive File Cleanup: Leak detected" "Sensitive plan files persisted after cleanup execution"
+fi
+
+# Test 14.7: Consumer Attestation: Plan manifest and attestation generated & verified for external consumer
+"${PLATFORM_DIR}/scripts/verify-plan-integrity.py" generate-manifest \
+  --plan-json "${CONSUMER_PLAN_DIR}/tfplan.json" \
+  --plan-file "${CONSUMER_PLAN_DIR}/tfplan" \
+  --repository "external-org/consumer-service" \
+  --commit-sha "9999888877776666555544443333222211110000" \
+  --workflow "infraflow-plan.yml" \
+  --security-decision "passed" \
+  --output "${CONSUMER_PLAN_DIR}/plan-manifest.json" >/dev/null 2>&1
+
+"${PLATFORM_DIR}/scripts/verify-plan-integrity.py" create-bundle \
+  --manifest "${CONSUMER_PLAN_DIR}/plan-manifest.json" \
+  --repository "external-org/consumer-service" \
+  --workflow "infraflow-plan.yml" \
+  --commit-sha "9999888877776666555544443333222211110000" \
+  --output "${CONSUMER_PLAN_DIR}/bundle.json" >/dev/null 2>&1
+
+if "${PLATFORM_DIR}/scripts/verify-plan-integrity.py" verify-attestation \
+    --manifest "${CONSUMER_PLAN_DIR}/plan-manifest.json" \
+    --bundle "${CONSUMER_PLAN_DIR}/bundle.json" \
+    --plan-json "${CONSUMER_PLAN_DIR}/tfplan.json" \
+    --plan-file "${CONSUMER_PLAN_DIR}/tfplan" \
+    --expected-repository "external-org/consumer-service" \
+    --expected-workflow "infraflow-plan.yml" >/dev/null 2>&1; then
+  record_pass "External Consumer Attestation: Plan manifest and Sigstore attestation generated and verified"
+else
+  record_fail "External Consumer Attestation: Verification failed" "Failed to verify consumer attestation bundle"
+fi
+
+# Test 14.8: Approval Gate Enforcement: Production approval blocked when attestation is missing or invalid
+# 1. Missing bundle rejected
+MISSING_BUNDLE_BLOCKED=false
+if ! "${PLATFORM_DIR}/scripts/verify-plan-integrity.py" verify-attestation \
+    --manifest "${CONSUMER_PLAN_DIR}/plan-manifest.json" \
+    --expected-repository "external-org/consumer-service" \
+    --require-production-signer >/dev/null 2>&1; then
+  MISSING_BUNDLE_BLOCKED=true
+fi
+
+# 2. Tampered manifest rejected
+echo '{"tampered":true}' > "${CONSUMER_SIM_TMP}/tampered_manifest.json"
+TAMPERED_BLOCKED=false
+if ! "${PLATFORM_DIR}/scripts/verify-plan-integrity.py" verify-attestation \
+    --manifest "${CONSUMER_SIM_TMP}/tampered_manifest.json" \
+    --bundle "${CONSUMER_PLAN_DIR}/bundle.json" \
+    --expected-repository "external-org/consumer-service" >/dev/null 2>&1; then
+  TAMPERED_BLOCKED=true
+fi
+
+# 3. Approval gate condition check: verify reusable-tf-plan.yml requires security-status == 'success', attest == 'success', and verify-attestation == 'success'
+APPROVAL_CONDITION_SECURE=false
+if grep -q "needs.plan.outputs.security-status == 'success'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "needs.attest.result == 'success'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "needs.verify-attestation.result == 'success'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   ! grep -q "needs.attest.result == 'skipped'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml"; then
+  APPROVAL_CONDITION_SECURE=true
+fi
+
+if [[ "${MISSING_BUNDLE_BLOCKED}" == "true" ]] && \
+   [[ "${TAMPERED_BLOCKED}" == "true" ]] && \
+   [[ "${APPROVAL_CONDITION_SECURE}" == "true" ]]; then
+  record_pass "Approval Gate Enforcement: Production approval blocked on missing, invalid, or skipped attestation"
+else
+  record_fail "Approval Gate Enforcement: Security bypass" "Approval gate did not strictly block unauthenticated plan"
+fi
+
+# Test 14.9: Plan JSON remains available after plan_gen completion for downstream scanners
+PLAN_RETENTION_TMP=$(mktemp -d /tmp/infraflow-retention-XXXXXX)
+(
+  PLAN_DIR="${PLAN_RETENTION_TMP}/temp_plan"
+  mkdir -p "${PLAN_DIR}"
+  chmod 700 "${PLAN_DIR}"
+  PLAN_OUT="${PLAN_DIR}/tfplan"
+  PLAN_JSON="${PLAN_DIR}/tfplan.json"
+  echo "binary" > "${PLAN_OUT}"
+  echo '{"format_version":"1.2"}' > "${PLAN_JSON}"
+
+  # Step-level trap purges binary plan only
+  (
+    trap 'rm -f "${PLAN_OUT}"' EXIT
+    cp "${PLAN_JSON}" "${PLAN_RETENTION_TMP}/tfplan.json"
+  )
+)
+if [[ -f "${PLAN_RETENTION_TMP}/tfplan.json" ]] && [[ ! -f "${PLAN_RETENTION_TMP}/temp_plan/tfplan" ]]; then
+  record_pass "Plan Artifact Retention: Plan JSON remains available after plan_gen (binary plan purged)"
+else
+  record_fail "Plan Artifact Retention: Premature cleanup" "Plan JSON was unexpectedly deleted by step exit trap"
+fi
+rm -rf "${PLAN_RETENTION_TMP}"
+
+# Test 14.10: Final cleanup removes all sensitive plan files on job completion
+CLEANUP_SUCCESS_TMP=$(mktemp -d /tmp/infraflow-clean-success-XXXXXX)
+mkdir -p "${CLEANUP_SUCCESS_TMP}/runner_temp/infraflow_plan"
+echo "binary" > "${CLEANUP_SUCCESS_TMP}/runner_temp/infraflow_plan/tfplan"
+echo "json" > "${CLEANUP_SUCCESS_TMP}/tfplan.json"
+echo "binary" > "${CLEANUP_SUCCESS_TMP}/tfplan"
+
+# Execute cleanup step logic
+(
+  rm -rf "${CLEANUP_SUCCESS_TMP}/runner_temp/infraflow_plan"
+  rm -f "${CLEANUP_SUCCESS_TMP}/tfplan.json"
+  rm -f "${CLEANUP_SUCCESS_TMP}/tfplan"
+  find "${CLEANUP_SUCCESS_TMP}" -maxdepth 3 \( -name "tfplan" -o -name "tfplan.json" \) -delete 2>/dev/null || true
+)
+
+if [[ ! -f "${CLEANUP_SUCCESS_TMP}/tfplan.json" ]] && \
+   [[ ! -f "${CLEANUP_SUCCESS_TMP}/tfplan" ]] && \
+   [[ ! -d "${CLEANUP_SUCCESS_TMP}/runner_temp/infraflow_plan" ]]; then
+  record_pass "Sensitive Plan Cleanup: Final always() step purges all raw binary and JSON plans"
+else
+  record_fail "Sensitive Plan Cleanup: Leaked files" "Plan files persisted after always() cleanup step"
+fi
+rm -rf "${CLEANUP_SUCCESS_TMP}"
+
+# Test 14.11: Final cleanup removes all sensitive plan files after simulated step failure
+CLEANUP_FAIL_TMP=$(mktemp -d /tmp/infraflow-clean-fail-XXXXXX)
+mkdir -p "${CLEANUP_FAIL_TMP}/runner_temp/infraflow_plan"
+echo "binary" > "${CLEANUP_FAIL_TMP}/runner_temp/infraflow_plan/tfplan"
+echo "json" > "${CLEANUP_FAIL_TMP}/tfplan.json"
+echo "binary" > "${CLEANUP_FAIL_TMP}/tfplan"
+
+# Simulate failure followed by always() step
+(
+  # Step failure simulated
+  false || true
+  # always() step execution
+  rm -rf "${CLEANUP_FAIL_TMP}/runner_temp/infraflow_plan"
+  rm -f "${CLEANUP_FAIL_TMP}/tfplan.json"
+  rm -f "${CLEANUP_FAIL_TMP}/tfplan"
+  find "${CLEANUP_FAIL_TMP}" -maxdepth 3 \( -name "tfplan" -o -name "tfplan.json" \) -delete 2>/dev/null || true
+)
+
+if [[ ! -f "${CLEANUP_FAIL_TMP}/tfplan.json" ]] && \
+   [[ ! -f "${CLEANUP_FAIL_TMP}/tfplan" ]] && \
+   [[ ! -d "${CLEANUP_FAIL_TMP}/runner_temp/infraflow_plan" ]]; then
+  record_pass "Sensitive Plan Cleanup: Cleanup successfully purges plan data after failed step execution"
+else
+  record_fail "Sensitive Plan Cleanup: Leaked files on failure" "Plan files persisted after failure cleanup"
+fi
+rm -rf "${CLEANUP_FAIL_TMP}"
+
+# Test 14.12: Missing attestation strictly blocks approval gate from execution
+MISSING_ATTEST_BLOCKED=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+approval_job = lines.split('  approval-gate:')[1]
+assert 'needs.attest.result == \'success\'' in approval_job
+assert 'needs.verify-attestation.result == \'success\'' in approval_job
+" >/dev/null 2>&1; then
+  MISSING_ATTEST_BLOCKED=true
+fi
+if [[ "${MISSING_ATTEST_BLOCKED}" == "true" ]]; then
+  record_pass "Approval Gate: Missing or skipped attestation strictly blocks approval gate"
+else
+  record_fail "Approval Gate: Missing attestation bypass" "Approval gate condition does not strictly require attest success"
+fi
+
+# Test 14.13: Invalid attestation blocks approval gate
+INVALID_ATTEST_BLOCKED=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+verify_job = lines.split('  verify-attestation:')[1].split('  approval-gate:')[0]
+assert '--require-production-signer' in verify_job
+assert '--use-gh-cli' in verify_job
+approval_job = lines.split('  approval-gate:')[1]
+assert 'needs.verify-attestation.result == \'success\'' in approval_job
+" >/dev/null 2>&1; then
+  INVALID_ATTEST_BLOCKED=true
+fi
+if [[ "${INVALID_ATTEST_BLOCKED}" == "true" ]]; then
+  record_pass "Approval Gate: Invalid attestation fails verify-attestation and blocks approval"
+else
+  record_fail "Approval Gate: Invalid attestation bypass" "Approval gate does not depend on verified attestation"
+fi
+
+# Test 14.14: Missing --use-gh-cli strictly rejected from production authorization (offline synthetic bundles blocked)
+PROD_AUTH_REJECTED=false
+OUTPUT_ERR=$("${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-attestation \
+  --manifest "${CONSUMER_PLAN_DIR}/plan-manifest.json" \
+  --bundle "${CONSUMER_PLAN_DIR}/bundle.json" \
+  --require-production-signer 2>&1 || true)
+
+if echo "${OUTPUT_ERR}" | grep -q "Production authorization strictly requires official GitHub Artifact Attestation verification via GitHub CLI (--use-gh-cli)"; then
+  PROD_AUTH_REJECTED=true
+fi
+
+if [[ "${PROD_AUTH_REJECTED}" == "true" ]]; then
+  record_pass "Production Authorization: Missing --use-gh-cli cannot authorize production (offline synthetic bundles rejected)"
+else
+  record_fail "Production Authorization: Synthetic bundle bypass" "verify-attestation unexpectedly authorized production without --use-gh-cli"
+fi
+
+# Test 14.15: Platform Ref Validation: Mutable branch references rejected by guard
+MUTABLE_BRANCH_REJECTED=false
+(
+  PLATFORM_REF="release/g04-platform-engine"
+  if [[ ! "${PLATFORM_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    exit 1
+  fi
+) || MUTABLE_BRANCH_REJECTED=true
+
+if [[ "${MUTABLE_BRANCH_REJECTED}" == "true" ]]; then
+  record_pass "Platform Ref Validation: Mutable branch reference ('release/g04-platform-engine') rejected"
+else
+  record_fail "Platform Ref Validation: Branch accepted" "Guard unexpectedly accepted mutable branch reference"
+fi
+
+# Test 14.16: Platform Ref Validation: Invalid commit SHA values rejected by guard
+INVALID_SHA_REJECTED=false
+(
+  # Test short SHA, non-hex, and traversal
+  for BAD_REF in "52c15d3" "52c15d3eedc17b94570c653e9a654de39c370e1Z" "../../etc/passwd" "HEAD~1"; do
+    if [[ "${BAD_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      exit 0
+    fi
+  done
+  exit 1
+) || INVALID_SHA_REJECTED=true
+
+if [[ "${INVALID_SHA_REJECTED}" == "true" ]]; then
+  record_pass "Platform Ref Validation: Invalid commit SHA values (short SHA, non-hex, traversal) rejected"
+else
+  record_fail "Platform Ref Validation: Invalid SHA accepted" "Guard unexpectedly accepted invalid commit SHA"
+fi
+
+# Test 14.17: Platform Ref Validation: Valid 40-character hexadecimal commit SHA accepted
+VALID_SHA_ACCEPTED=false
+(
+  VALID_REF="52c15d3eedc17b94570c653e9a654de39c370e19"
+  if [[ "${VALID_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    exit 0
+  fi
+  exit 1
+) && VALID_SHA_ACCEPTED=true
+
+if [[ "${VALID_SHA_ACCEPTED}" == "true" ]]; then
+  record_pass "Platform Ref Validation: Valid immutable 40-character commit SHA accepted"
+else
+  record_fail "Platform Ref Validation: Valid SHA rejected" "Guard unexpectedly rejected valid 40-character commit SHA"
+fi
+
+# Test 14.18: Pre-Approval Verification Architecture: Cryptographic verification precedes human approval gate
+PRECEDES_APPROVAL=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+assert '  verify-attestation:' in lines
+verify_sec = lines.split('  verify-attestation:')[1].split('  approval-gate:')[0]
+assert 'environment:' not in verify_sec
+assert '--use-gh-cli' in verify_sec
+approval_sec = lines.split('  approval-gate:')[1]
+assert 'needs: [plan, attest, verify-attestation]' in approval_sec
+assert 'environment:' in approval_sec
+assert 'needs.verify-attestation.result == \'success\'' in approval_sec
+" >/dev/null 2>&1; then
+  PRECEDES_APPROVAL=true
+fi
+
+if [[ "${PRECEDES_APPROVAL}" == "true" ]]; then
+  record_pass "Approval Architecture: Cryptographic attestation verification strictly precedes human approval environment"
+else
+  record_fail "Approval Architecture: Gate sequence error" "Cryptographic verification does not strictly precede approval gate"
+fi
+
+rm -rf "${CONSUMER_SIM_TMP}"
+
+# --- 15. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"

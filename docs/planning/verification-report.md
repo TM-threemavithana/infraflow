@@ -11,11 +11,26 @@ Milestone **G04.1.4 — InfraFlow Architecture Finalization** operationalizes th
    - Never executes untrusted Terraform code and never receives cloud credentials in the `attest` job.
    - Rejects long-lived production secrets in GitHub Secrets; retains ECDSA asymmetric signing strictly for offline unit tests and backwards compatibility.
 3. **Approval Decoupling (Decision 3)**: Decoupled cryptographic attestation verification (`scripts/verify-plan-integrity.py verify-attestation`) from human approval in GitHub Protected Environments (`environment: production-approval`).
-4. **Regression (Decision 4)**: All **132 / 132** local quality gates passed without errors (15 governance, attestation, and permission isolation checks in Section 13 + 10 trusted workflow attack checks in Section 12 + 12 trust isolation attack checks in Section 11 + 30 planning/provenance checks in Section 10 + 65 prior checks from G01–G03.2.1). Actionlint, Zizmor, ShellCheck, Conftest (62/62), and Gitleaks report zero findings.
+4. **Regression (Decision 4)**: All **140 / 140** local quality gates passed without errors (8 external consumer toolchain isolation checks in Section 14 + 15 governance, attestation, and permission isolation checks in Section 13 + 10 trusted workflow attack checks in Section 12 + 12 trust isolation attack checks in Section 11 + 30 planning/provenance checks in Section 10 + 65 prior checks from G01–G03.2.1). Actionlint, Zizmor, ShellCheck, Conftest (62/62), and Gitleaks report zero findings.
 
 ---
 
-## 2. Governance & Production Attestation Matrix (15 Scenarios — Section 13 Quality Gates)
+## 2. Real External Consumer Integration & Toolchain Isolation Matrix (8 Scenarios — Section 14 Quality Gates)
+
+| Test ID | Verification Scenario | Validation Method | Enforcement Mechanism | Result |
+|---|---|---|---|---|
+| **14.1** | **External Consumer Isolation** | Check consumer workspace contents | Verifies consumer directory contains zero platform scripts, policies, or config files | **PASS (Locally Verified)** |
+| **14.2** | **External Consumer Planning** | Run backend-free plan & change analysis | External platform toolchain independently analyzes consumer HCL | **PASS (Locally Verified)** |
+| **14.3** | **Fail-Closed Policy Enforcement** | Simulate missing policy directory with policy eval enabled | Missing policy directory triggers immediate `exit 1` (no warning-only skip) | **PASS (Locally Verified)** |
+| **14.4** | **Consumer Policy Violation Rejection** | Evaluate OPA policies against non-compliant consumer plan | Conftest OPA guardrails reject public S3 ACL with non-zero exit code | **PASS (Locally Verified)** |
+| **14.5** | **Malformed Configuration Rejection** | Validate consumer syntax with syntax errors | Terraform parser halts on malformed HCL with non-zero exit code | **PASS (Locally Verified)** |
+| **14.6** | **Sensitive File Cleanup on Success & Failure** | Trigger cleanup routine and simulated failure trap | Purges `tfplan` and `tfplan.json` on both success and fail-safe exit trap | **PASS (Locally Verified)** |
+| **14.7** | **Consumer Attestation Generation & Verification** | Generate and verify manifest for external consumer | Binds consumer digests, external repo, and workflow identity | **PASS (Locally Verified)** |
+| **14.8** | **Approval Gate Enforcement** | Verify gate conditions when attestation missing/invalid | Rejects missing/preview attestation and enforces `security-status == 'success'` | **PASS (Locally Verified)** |
+
+---
+
+## 3. Governance & Production Attestation Matrix (15 Scenarios — Section 13 Quality Gates)
 
 | Test ID | Verification Scenario | Validation Method | Enforcement Mechanism | Result |
 |---|---|---|---|---|
@@ -161,6 +176,6 @@ All four architectural decisions and permission isolation corrections have been 
 - Attestation permission isolation enforced via separate `plan` (`contents: read`) and `attest` (`id-token: write`, `attestations: write`) jobs.
 - GitHub Artifact Attestations (Sigstore OIDC) established as the sole production signing identity.
 - Human approval decoupled from machine attestation.
-- Complete regression suite (**132 / 132 checks**) verified with zero errors, zero warnings, and zero leaks.
+- Complete regression suite (**140 / 140 checks**) verified with zero errors, zero warnings, and zero leaks.
 
 **Final Milestone Status**: **PASS**
