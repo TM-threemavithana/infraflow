@@ -404,9 +404,9 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Installing Trivy (SHA256 Verified)"
-          TRIVY_VER="0.69.1"
-          TRIVY_SHA="c2ea1a6a9be80c7dd91937f3747eb2eafe6688582f3f9f4a0a4176cf35c6f376"
-          curl -sSL -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_Linux-64bit.tar.gz"
+          TRIVY_VER="0.76.2"
+          TRIVY_SHA="bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
+          curl -fsSL -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA}  trivy.tar.gz" | sha256sum -c -
           mkdir -p /tmp/bin
           tar -xzf trivy.tar.gz -C /tmp/bin trivy
