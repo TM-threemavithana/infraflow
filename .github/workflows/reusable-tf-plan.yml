@@ -414,7 +414,37 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Executing Trivy IaC Scan"
+          echo "Trivy Environment Inspection:"
+          echo "  TRIVY_CACHE_DIR:         ${TRIVY_CACHE_DIR:-<unset>}"
+          echo "  TRIVY_SKIP_CHECK_UPDATE: ${TRIVY_SKIP_CHECK_UPDATE:-<unset>}"
+          echo "  TRIVY_CONFIG:            ${TRIVY_CONFIG:-<unset>}"
+          echo "  XDG_CACHE_HOME:          ${XDG_CACHE_HOME:-<unset>}"
+          echo "  HOME:                    ${HOME:-<unset>}"
+
+          # Sanitize caller-injected TRIVY_* and cache environment variables
+          for var in $(env | grep -E '^TRIVY_' | cut -d= -f1 || true); do
+            unset "${var}"
+          done
+          unset XDG_CACHE_HOME || true
+
+          TRIVY_CACHE="${RUNNER_TEMP}/infraflow-trivy-cache"
+          TRIVY_CONF="${RUNNER_TEMP}/infraflow-trivy.yaml"
+          mkdir -p "${TRIVY_CACHE}"
+          mkdir -p "${HOME}/.trivy/policy"
+          mkdir -p "${HOME}/.trivy/modules"
+
+          printf '%s\n' \
+            'ignorefile: ""' \
+            'rego:' \
+            '  skip-check-update: false' \
+            'misconfiguration:' \
+            '  scanners:' \
+            '    - terraform' > "${TRIVY_CONF}"
+
           /tmp/bin/trivy config \
+            --config "${TRIVY_CONF}" \
+            --cache-dir "${TRIVY_CACHE}" \
+            --ignorefile "" \
             --severity "${SEVERITY}" \
             --exit-code 1 \
             --format table \
