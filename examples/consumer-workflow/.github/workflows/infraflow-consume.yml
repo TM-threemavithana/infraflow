@@ -1,0 +1,66 @@
+name: "Infrastructure Delivery PR Validation"
+
+# ==============================================================================
+# ILLUSTRATIVE EXAMPLE ONLY (UNTIL PUBLISHED)
+# ==============================================================================
+# This workflow is an illustrative template demonstrating how an external
+# consumer repository invokes the InfraFlow reusable core once published.
+#
+# SETUP INSTRUCTIONS:
+# 1. Replace 'YOUR_OWNER/YOUR_REPOSITORY' with your actual GitHub Organization and Repository.
+# 2. Pin to an immutable commit SHA (recommended for production security) or release tag:
+#    - Prior to release tag creation:
+#        uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-validate.yml@<COMMIT_SHA>
+#    - After tagging 'v1' / 'v1.0.0':
+#        uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-validate.yml@v1
+# 3. For private repositories in the same organization, enable cross-repository access:
+#    Settings -> Actions -> General -> Access -> "Accessible from repositories in this organization"
+# ==============================================================================
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infraflow-consume.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Validate Terraform configuration using InfraFlow reusable core
+  infraflow-validate:
+    name: "InfraFlow Core Validation"
+    # ILLUSTRATIVE: Replace YOUR_OWNER/YOUR_REPOSITORY with your GitHub org/repo
+    # and replace YOUR_INFRAFLOW_COMMIT_SHA with your desired commit SHA (e.g. 8a3f9c...) or @v1
+    uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-validate.yml@YOUR_INFRAFLOW_COMMIT_SHA
+    with:
+      terraform-version: "1.10.4"
+      working-directory: "terraform"
+      enable-fmt-check: true
+      enable-validate: true
+      enable-test: true
+
+  # Matrix execution example across multiple environments / modules
+  infraflow-matrix-validate:
+    name: "Validate Matrix Modules"
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - "modules/networking"
+          - "modules/database"
+          - "modules/compute"
+    # ILLUSTRATIVE: Replace YOUR_OWNER/YOUR_REPOSITORY and YOUR_INFRAFLOW_COMMIT_SHA
+    uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-validate.yml@YOUR_INFRAFLOW_COMMIT_SHA
+    with:
+      terraform-version: "1.10.4"
+      working-directory: ${{ matrix.module }}
+      enable-fmt-check: true
+      enable-validate: true
+      enable-test: true

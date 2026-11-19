@@ -1,0 +1,263 @@
+name: "InfraFlow Reusable Terraform Core"
+
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: "Terraform version to use (e.g. 1.10.4). Must be >= 1.6.0"
+        required: false
+        default: "1.10.4"
+        type: string
+      working-directory:
+        description: "Relative path to the Terraform module or root configuration"
+        required: false
+        default: "."
+        type: string
+      enable-fmt-check:
+        description: "Whether to enforce canonical Terraform formatting check"
+        required: false
+        default: true
+        type: boolean
+      enable-validate:
+        description: "Whether to execute terraform validate"
+        required: false
+        default: true
+        type: boolean
+      enable-test:
+        description: "Whether to execute terraform test (.tftest.hcl)"
+        required: false
+        default: true
+        type: boolean
+      test-var-file:
+        description: "Optional relative path to a .tfvars file for testing"
+        required: false
+        default: ""
+        type: string
+    outputs:
+      fmt-status:
+        description: "Outcome of the formatting check (success, failure, skipped)"
+        value: ${{ jobs.validate.outputs.fmt-status }}
+      validate-status:
+        description: "Outcome of the static validation check (success, failure, skipped)"
+        value: ${{ jobs.validate.outputs.validate-status }}
+      test-status:
+        description: "Outcome of the native test suite (success, failure, skipped)"
+        value: ${{ jobs.validate.outputs.test-status }}
+      summary:
+        description: "Aggregated execution summary string"
+        value: ${{ jobs.validate.outputs.summary }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: "Validate Terraform Core"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    outputs:
+      fmt-status: ${{ steps.summary.outputs.fmt-status }}
+      validate-status: ${{ steps.summary.outputs.validate-status }}
+      test-status: ${{ steps.summary.outputs.test-status }}
+      summary: ${{ steps.summary.outputs.summary }}
+
+    steps:
+      - name: "Security Guard: Sanitize and Validate Inputs"
+        id: guard
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VERSION: ${{ inputs.terraform-version }}
+          INPUT_VAR_FILE: ${{ inputs.test-var-file }}
+        run: |
+          set -euo pipefail
+          echo "::group::Input Sanitization & Security Validation"
+
+          # 1. Validate Terraform SemVer pattern (e.g. 1.10.4 or 1.11.0-alpha)
+          if [[ ! "${INPUT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Security Violation: Invalid terraform-version '${INPUT_VERSION}'. Must follow SemVer (e.g., 1.10.4)."
+            exit 1
+          fi
+
+          # 2. Enforce Terraform >= 1.6.0 (required for native .tftest.hcl support)
+          MAJOR=$(echo "${INPUT_VERSION}" | cut -d. -f1)
+          MINOR=$(echo "${INPUT_VERSION}" | cut -d. -f2)
+          if (( MAJOR < 1 )) || (( MAJOR == 1 && MINOR < 6 )); then
+            echo "::error::Security Violation: Terraform version '${INPUT_VERSION}' is unsupported. InfraFlow requires Terraform >= 1.6.0."
+            exit 1
+          fi
+
+          # 3. Disallow absolute paths for working directory
+          if [[ "${INPUT_DIR}" =~ ^/ ]] || [[ "${INPUT_DIR}" =~ ^~ ]]; then
+            echo "::error::Security Violation: Working directory must be a relative path: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 4. Prevent directory traversal attacks
+          if [[ "${INPUT_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: Working directory path traversal ('..') is strictly prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 5. Allow only safe characters in working directory
+          if [[ ! "${INPUT_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::Security Violation: Working directory contains forbidden characters: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 6. Validate test-var-file if specified
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            if [[ "${INPUT_VAR_FILE}" =~ ^/ ]] || [[ "${INPUT_VAR_FILE}" =~ ^~ ]]; then
+              echo "::error::Security Violation: test-var-file must be a relative path: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+            if [[ "${INPUT_VAR_FILE}" =~ \.\. ]]; then
+              echo "::error::Security Violation: test-var-file path traversal ('..') is prohibited: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_VAR_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: test-var-file contains forbidden characters: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+          fi
+
+          echo "Pre-checkout security validation succeeded for directory '${INPUT_DIR}' and version '${INPUT_VERSION}'."
+          echo "::endgroup::"
+
+      - name: "Checkout Source Code"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Verify Workspace Containment"
+        id: verify_workspace
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.test-var-file }}
+        run: |
+          set -euo pipefail
+          echo "::group::Workspace Containment & Existence Verification"
+
+          TARGET_PATH="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+          if [[ ! -d "${TARGET_PATH}" ]]; then
+            echo "::error::Configuration Error: Working directory '${INPUT_DIR}' does not exist inside workspace."
+            exit 1
+          fi
+
+          CANONICAL_TARGET="$(cd "${TARGET_PATH}" && pwd -P)"
+          CANONICAL_WORKSPACE="$(cd "${GITHUB_WORKSPACE}" && pwd -P)"
+          if [[ "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}" && "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}/"* ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' resolves outside GITHUB_WORKSPACE."
+            exit 1
+          fi
+
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            VAR_FILE_PATH="${TARGET_PATH}/${INPUT_VAR_FILE}"
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              VAR_FILE_PATH="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Configuration Error: Specified test-var-file '${INPUT_VAR_FILE}' was not found in '${TARGET_PATH}' or workspace root."
+              exit 1
+            fi
+          fi
+
+          echo "Directory '${INPUT_DIR}' is verified to exist and is safely contained within GITHUB_WORKSPACE."
+          echo "::endgroup::"
+
+      - name: "Setup Terraform Toolchain"
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "Terraform Format Check"
+        id: fmt
+        if: inputs.enable-fmt-check
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Terraform Format Check"
+          terraform fmt -check -diff -recursive
+          echo "::endgroup::"
+
+      - name: "Terraform Init (Backend-Free)"
+        id: init
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Terraform Init (Backend-Free)"
+          terraform init -backend=false -input=false
+          echo "::endgroup::"
+
+      - name: "Terraform Validate"
+        id: validate
+        if: inputs.enable-validate
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Terraform Validate"
+          terraform validate
+          echo "::endgroup::"
+
+      - name: "Terraform Test"
+        id: test
+        if: inputs.enable-test
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          INPUT_VAR_FILE: ${{ inputs.test-var-file }}
+        run: |
+          set -euo pipefail
+          echo "::group::Terraform Native Tests"
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            # Check if file exists relative to working-directory, otherwise use workspace-relative path
+            if [[ -f "${INPUT_VAR_FILE}" ]]; then
+              RESOLVED_VAR_FILE="${INPUT_VAR_FILE}"
+            else
+              RESOLVED_VAR_FILE="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            terraform test -verbose -var-file="${RESOLVED_VAR_FILE}"
+          else
+            terraform test -verbose
+          fi
+          echo "::endgroup::"
+
+      - name: "Generate Execution Summary"
+        if: always()
+        id: summary
+        env:
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          WORKSPACE_OUTCOME: ${{ steps.verify_workspace.outcome }}
+          FMT_OUTCOME: ${{ steps.fmt.outcome }}
+          INIT_OUTCOME: ${{ steps.init.outcome }}
+          VAL_OUTCOME: ${{ steps.validate.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          set -euo pipefail
+          FMT_STATUS="${FMT_OUTCOME:-skipped}"
+          VAL_STATUS="${VAL_OUTCOME:-skipped}"
+          TEST_STATUS="${TEST_OUTCOME:-skipped}"
+          INIT_STATUS="${INIT_OUTCOME:-skipped}"
+          GUARD_STATUS="${GUARD_OUTCOME:-skipped}"
+          WORKSPACE_STATUS="${WORKSPACE_OUTCOME:-skipped}"
+
+          echo "fmt-status=${FMT_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "validate-status=${VAL_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "test-status=${TEST_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "summary=Guard: ${GUARD_STATUS}, Workspace: ${WORKSPACE_STATUS}, Fmt: ${FMT_STATUS}, Init: ${INIT_STATUS}, Validate: ${VAL_STATUS}, Test: ${TEST_STATUS}" >> "$GITHUB_OUTPUT"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ### InfraFlow CI/CD Validation Summary
+          | Check Stage | Status |
+          |---|---|
+          | Security Guard (Inputs) | ${GUARD_STATUS} |
+          | Workspace Containment | ${WORKSPACE_STATUS} |
+          | Terraform Format Check | ${FMT_STATUS} |
+          | Terraform Init (Backend-Free) | ${INIT_STATUS} |
+          | Terraform Validate | ${VAL_STATUS} |
+          | Terraform Native Test | ${TEST_STATUS} |
+          EOF
+          fi

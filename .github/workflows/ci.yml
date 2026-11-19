@@ -1,0 +1,56 @@
+name: "InfraFlow CI"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-workflows:
+    name: "Lint GitHub Actions Workflows"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: "Checkout Source Code"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Install & Run actionlint (SHA256 Verified)"
+        run: |
+          set -euo pipefail
+          echo "::group::Downloading and verifying actionlint release"
+          ACTIONLINT_VER="1.7.7"
+          EXPECTED_SHA="023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+          
+          curl -sSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VER}/actionlint_${ACTIONLINT_VER}_linux_amd64.tar.gz"
+          echo "${EXPECTED_SHA}  actionlint.tar.gz" | sha256sum -c -
+          
+          tar -xzf actionlint.tar.gz actionlint
+          chmod +x ./actionlint
+          echo "::endgroup::"
+          
+          echo "::group::Executing actionlint"
+          ./actionlint -color
+          echo "::endgroup::"
+
+  validate-cloud-free-example:
+    name: "Self-Test Reusable Core (Cloud-Free Example)"
+    uses: ./.github/workflows/reusable-tf-validate.yml
+    with:
+      terraform-version: "1.10.4"
+      working-directory: "examples/cloud-free-module"
+      enable-fmt-check: true
+      enable-validate: true
+      enable-test: true
