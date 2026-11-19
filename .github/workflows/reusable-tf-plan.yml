@@ -474,20 +474,7 @@ jobs:
             --security-decision "passed" \
             --output "${GITHUB_WORKSPACE}/plan-manifest.json"
 
-          # 2. Sign in-toto DSSE plan provenance (offline test and legacy compatibility)
-          python3 "${RUNNER_TEMP}/infraflow-platform/scripts/verify-plan-integrity.py" sign-provenance \
-            --plan-json "${GITHUB_WORKSPACE}/tfplan.json" \
-            --repository "${GITHUB_REPOSITORY}" \
-            --commit-sha "${GITHUB_SHA}" \
-            --run-id "${GITHUB_RUN_ID}" \
-            --actor "${GITHUB_ACTOR}" \
-            --workflow "reusable-tf-plan.yml" \
-            --terraform-version "${TF_VER}" \
-            --policy-result "passed" \
-            --public-key-out "${GITHUB_WORKSPACE}/public-key.pem" \
-            --output "${GITHUB_WORKSPACE}/plan-provenance.json"
-
-          # 3. Generate legacy digest manifest for backward compatibility
+          # 2. Generate legacy digest manifest for backward compatibility
           python3 "${RUNNER_TEMP}/infraflow-platform/scripts/verify-plan-integrity.py" generate \
             --plan-json "${GITHUB_WORKSPACE}/tfplan.json" \
             --repository "${GITHUB_REPOSITORY}" \
@@ -499,7 +486,7 @@ jobs:
 
           # Immediately purge raw unsanitized plan JSON from workspace to prevent leakage
           rm -f "${GITHUB_WORKSPACE}/tfplan.json"
-          echo "Sanitized manifest, signed provenance, and legacy digests created; raw plan JSON purged."
+          echo "Sanitized manifest and legacy digests created; raw plan JSON purged."
           echo "::endgroup::"
 
       - name: "Purge All Raw Sensitive Plan Data"
@@ -521,8 +508,6 @@ jobs:
           name: infraflow-plan-manifest
           path: |
             ${{ github.workspace }}/plan-manifest.json
-            ${{ github.workspace }}/plan-provenance.json
-            ${{ github.workspace }}/public-key.pem
             ${{ github.workspace }}/plan-attestation.json
             ${{ github.workspace }}/plan-summary.md
             ${{ github.workspace }}/plan-metrics.json
@@ -712,74 +697,6 @@ jobs:
             --require-production-signer
 
           echo "Official GitHub Artifact Attestation verified successfully."
-          echo "::endgroup::"
-
-      - name: "Verify Cryptographic Provenance & Attestation Binding"
-        id: verify_gate
-        env:
-          TF_VER: ${{ inputs.terraform-version }}
-          INPUT_TRUSTED_PUBKEY: ${{ inputs.trusted-public-key }}
-          INPUT_TRUSTED_KEYIDS: ${{ inputs.trusted-signer-keyids }}
-          PLATFORM_REF: ${{ inputs.platform-ref }}
-        run: |
-          set -euo pipefail
-          echo "::group::Verifying Signed Plan Provenance Against Trusted Root"
-
-          PROVENANCE_PATH="${GITHUB_WORKSPACE}/attestation/plan-provenance.json"
-          PUBKEY_PATH="${GITHUB_WORKSPACE}/attestation/public-key.pem"
-          MANIFEST_PATH="${GITHUB_WORKSPACE}/attestation/plan-attestation.json"
-
-          if [[ ! -f "${PROVENANCE_PATH}" ]]; then
-            echo "::error::Signed provenance not found in downloaded artifact."
-            exit 1
-          fi
-
-          VERIFY_ARGS=(
-            "--provenance" "${PROVENANCE_PATH}"
-            "--expected-repository" "${GITHUB_REPOSITORY}"
-            "--expected-commit-sha" "${GITHUB_SHA}"
-            "--expected-workflow" "reusable-tf-plan.yml"
-            "--require-production-signer"
-          )
-
-          # Independent Trust Root Resolution (never trust unpinned artifact key by default)
-          PLATFORM_ROOT_TRUST_ANCHOR="3c27ef9e1e520fd8c6c04db2c19680e16cf3c95a72b5536a9cada058890f7e90"
-          RESOLVED_TRUSTED_KEYIDS="${INPUT_TRUSTED_KEYIDS:-${PLATFORM_ROOT_TRUST_ANCHOR}}"
-
-          VERIFY_ARGS+=(
-            "--trusted-keyids" "${RESOLVED_TRUSTED_KEYIDS}"
-          )
-
-          if [[ -n "${INPUT_TRUSTED_PUBKEY}" && -f "${GITHUB_WORKSPACE}/${INPUT_TRUSTED_PUBKEY}" ]]; then
-            VERIFY_ARGS+=("--trusted-public-key" "${GITHUB_WORKSPACE}/${INPUT_TRUSTED_PUBKEY}")
-          elif [[ -f "${RUNNER_TEMP}/infraflow-platform/policies/trust/trusted_signer.pub" ]]; then
-            VERIFY_ARGS+=("--trusted-public-key" "${RUNNER_TEMP}/infraflow-platform/policies/trust/trusted_signer.pub")
-          elif [[ -f "${GITHUB_WORKSPACE}/policies/trust/trusted_signer.pub" ]]; then
-            VERIFY_ARGS+=("--trusted-public-key" "${GITHUB_WORKSPACE}/policies/trust/trusted_signer.pub")
-          elif [[ -f "${PUBKEY_PATH}" ]]; then
-            VERIFY_ARGS+=("--public-key" "${PUBKEY_PATH}")
-          fi
-
-          python3 "${RUNNER_TEMP}/infraflow-platform/scripts/verify-plan-integrity.py" verify-provenance "${VERIFY_ARGS[@]}"
-
-          # Verify legacy manifest if present
-          if [[ -f "${MANIFEST_PATH}" ]]; then
-            python3 -c "
-            import json, sys
-            m = json.load(open('${MANIFEST_PATH}'))
-            att = m.get('attestation', {})
-            expected_repo = '${GITHUB_REPOSITORY}'
-            expected_sha = '${GITHUB_SHA}'
-            if att.get('repository') != expected_repo:
-                sys.stderr.write('Repository mismatch in legacy manifest\n')
-                sys.exit(1)
-            if att.get('commit_sha', '').lower() != expected_sha.lower():
-                sys.stderr.write('Commit SHA mismatch in legacy manifest\n')
-                sys.exit(1)
-            "
-          fi
-
-          echo "✅ Authenticated digital signature, repository identity, and commit SHA successfully verified."
           echo "::endgroup::"
 
       - name: "Record Verification Status"

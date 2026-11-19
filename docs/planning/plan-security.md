@@ -297,18 +297,28 @@ GitHub Actions permissions are workflow- and job-scoped, not step-scoped. To enf
   - Downloads only the sanitized manifest artifact (`infraflow-plan-manifest`).
   - Pre-validates manifest metadata, commit SHA binding, and policy passing status before invoking `actions/attest`.
   - Never executes untrusted Terraform code and never receives cloud credentials.
+- **`verify-attestation` Job**:
+  - Granted `contents: read` ONLY. No environment protection (executes before human reviewer pause).
+  - Cryptographically verifies GitHub Artifact Attestation using official `gh attestation verify` via `scripts/verify-plan-integrity.py verify-attestation`.
 - **`approval-gate` Job**:
-  - Granted `contents: read` ONLY.
-  - Enforces environment protection rules and verifies provenance against trusted anchors.
+  - Granted `contents: read` ONLY. Targets `environment: production-approval`.
+  - Dependent on `needs.verify-attestation.result == 'success'`. Pauses for authorized human reviewers only after machine verification passes.
 
 ### 9.3 Production Signing: GitHub Artifact Attestations (Sigstore OIDC)
 - **Authoritative Production Identity**: GitHub Artifact Attestations (`actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2`) with Sigstore OIDC.
 - **Short-Lived Ephemeral Certificates**: Eliminates the risk of long-lived private key leaks in GitHub Secrets. Fulcio issues short-lived signing certificates bound to workflow OIDC claims, recorded in Rekor.
-- **Legacy / Offline Decoupling**: ECDSA asymmetric signing is retained solely for offline unit testing and backwards compatibility. It is strictly prohibited from serving as the default production trust identity.
+- **Live Workflow Isolation**: Custom ECDSA private keys are NOT required or used in the live planning workflow. Speculative planning creates the canonical `plan-manifest.json` as the attestation subject.
+- **Legacy / Offline Decoupling**: ECDSA NIST P-256 in-toto DSSE asymmetric signing is retained solely for offline unit testing, attack simulation suites, and air-gapped verification. It is strictly excluded from authorizing live production approval gates (`--require-production-signer` rejects offline bundles).
 
-### 9.4 Approval Gate Decoupling
-- **Cryptographic Attestation Gate**: Verifies machine identity, plan integrity, source commit SHA, and automated security policy results (`scripts/verify-plan-integrity.py verify-attestation`).
-- **Human Governance Gate**: Managed independently via GitHub Protected Environments (`environment: production-approval`). Local tests simulate gate pass/fail conditions; live human approval remains **UNVERIFIED** pending live reviewer interaction.
+### 9.4 Pre-Approval Attestation Verification
+- **Cryptographic Attestation Verification**: Executed in dedicated `verify-attestation` job prior to human approval. Invokes official `gh attestation verify` to verify:
+  1. **Manifest Subject Digest**: SHA-256 digest of `plan-manifest.json`.
+  2. **Expected Source Repository**: Caller repository identity (`--repo`).
+  3. **Expected Source Commit SHA**: Source commit binding (`--source-digest`).
+  4. **Expected Signer Workflow**: Reusable planning workflow (`--signer-workflow`).
+  5. **GitHub Actions OIDC Issuer**: `https://token.actions.githubusercontent.com`.
+  6. **Manifest Security Decision**: Mandatory `security_decision == "passed"`.
+- **Human Governance Gate**: Managed independently via GitHub Protected Environments (`environment: production-approval`). Pauses for review only if cryptographic verification succeeds; failed or missing attestations strictly block approval.
 
 ### 9.5 External Consumer Independence & Platform Toolchain Isolation (G04 PR Correction)
 - **Decoupled Toolchain Architecture**: External consumer repositories invoking InfraFlow reusable workflows (`reusable-tf-security.yml`, `reusable-tf-plan.yml`) retain their application Terraform source code in `GITHUB_WORKSPACE`. InfraFlow platform tooling (scripts, policies, TFLint configuration, Zizmor configuration, and verification anchors) is checked out independently to `${RUNNER_TEMP}/infraflow-platform` via immutable commit SHA or release reference.

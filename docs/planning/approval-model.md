@@ -16,31 +16,42 @@ The **InfraFlow Approval Model** defines the operational and security criteria g
                                 │
                                 ▼
                     ┌────────────────────────┐
-                    │ Speculative Plan Job   │
-                    │  - Generates Plan      │
-                    │  - Evaluates Policies  │
-                    │  - Signs Provenance    │
-                    │    (Asymmetric ECDSA)  │
+                    │ [Job: plan]            │
+                    │  - Speculative Plan    │
+                    │  - OPA Policy Scanning │
+                    │  - Generate Manifest   │
+                    │    (plan-manifest.json)│
+                    │  - Purge Ephemeral Plan│
                     └───────────┬────────────┘
                                 │
                                 ▼
-    =================== APPROVAL GATE ===================
-    │                                                   │
-    │  [1] Automated Cryptographic Provenance Gate:     │
-    │      - Verify ECDSA digital signature against     │
-    │        pinned trusted root                        │
-    │      - Verify SHA-256 plan digests                │
-    │      - Verify source commit SHA matches HEAD      │
-    │      - Verify repository and workflow identity    │
-    │      - Enforce policy evaluation was "passed"     │
-    │                                                   │
-    │  [2] Human Gate (GitHub Environment):             │
-    │      - Environment: 'production-approval'         │
-    │      - Required Reviewers (e.g., Platform Team)   │
-    │      - Prevent self-review (author != reviewer)   │
-    │      - Review sanitized Step Summary diff         │
-    │                                                   │
-    =====================================================
+                    ┌────────────────────────┐
+                    │ [Job: attest]          │
+                    │  - Sigstore OIDC Token │
+                    │  - actions/attest      │
+                    │  - Record in Rekor     │
+                    └───────────┬────────────┘
+                                │
+                                ▼
+    =================== APPROVAL PIPELINE ===================
+    │                                                       │
+    │  [1] Pre-Approval Machine Gate (Job: verify-attestation)
+    │      - Official 'gh attestation verify'               │
+    │      - Verify Manifest Subject SHA-256 Digest         │
+    │      - Verify Expected Source Repository & Commit     │
+    │      - Verify Expected Signer Workflow                │
+    │      - Verify GitHub Actions OIDC Issuer              │
+    │      - Verify Manifest Security Decision ('passed')   │
+    │      - Runs BEFORE human review pause                 │
+    │                                                       │
+    │  [2] Human Gate (Job: approval-gate):                 │
+    │      - Gated on verify-attestation == 'success'       │
+    │      - Environment: 'production-approval'             │
+    │      - GitHub pauses for authorized human reviewer    │
+    │      - Prevent self-review (author != reviewer)       │
+    │      - Review sanitized Step Summary diff             │
+    │                                                       │
+    =========================================================
                                 │
                                 ▼
                     ┌────────────────────────┐
@@ -48,6 +59,11 @@ The **InfraFlow Approval Model** defines the operational and security criteria g
                     │ Downstream Delivery    │
                     └────────────────────────┘
 ```
+
+> [!NOTE]
+> **Production vs. Offline Provenance Architectures**:
+> - **Authoritative Production Mechanism**: GitHub Artifact Attestation using GitHub Actions OIDC and Sigstore (`actions/attest`) verified via official `gh attestation verify`. Eliminates static long-lived private keys and enforces transparency log verification.
+> - **Offline & Legacy Compatibility**: Asymmetric ECDSA NIST P-256 in-toto DSSE envelope signing remains available solely for offline unit testing, local attack simulations, and legacy backward compatibility. It is strictly excluded from authorizing live production approval gates.
 
 ---
 
@@ -139,10 +155,11 @@ In milestone **G04.1.4**, InfraFlow adopted **GitHub Artifact Attestations** (`a
 2. **Sanitized Plan Manifest Attestation**:
    - Rather than publishing raw plans or raw JSON, the platform creates `plan-manifest.json` binding the SHA-256 digest of both the binary `tfplan` and `tfplan.json`, repository, commit, run ID, actor, workflow, and security decision (`security_decision: passed`).
    - `actions/attest` cryptographically attests the sanitized manifest file.
-3. **Strict Gate Verification**:
-   - The approval gate verifies the Sigstore bundle and plan manifest using official `gh attestation verify` in GitHub Actions (with fallback to `scripts/verify-plan-integrity.py verify-attestation` for offline unit testing).
+3. **Strict Pre-Approval Gate Verification**:
+   - The pre-approval verification job (`verify-attestation`) verifies the Sigstore attestation and plan manifest using official `gh attestation verify` in GitHub Actions (with fallback to `scripts/verify-plan-integrity.py verify-attestation` for offline unit testing).
+   - Machine verification strictly verifies: (1) manifest subject digest, (2) expected source repository, (3) expected source commit SHA, (4) expected signer workflow, (5) GitHub Actions OIDC issuer (`https://token.actions.githubusercontent.com`), and (6) manifest security decision (`security_decision: passed`).
    - Approval gate execution condition strictly mandates:
-     `needs.plan.result == 'success' && needs.plan.outputs.security-status == 'success' && needs.attest.result == 'success'`.
+     `needs.plan.result == 'success' && needs.plan.outputs.security-status == 'success' && needs.attest.result == 'success' && needs.verify-attestation.result == 'success'`.
    - Missing, skipped, unauthenticated, tampered, or cross-repository attestations fail closed immediately before entering human review. Caller inputs cannot disable or bypass mandatory production verification.
    - Asymmetric ECDSA preview signing is maintained strictly for offline unit tests and legacy compatibility, and is never accepted as an alternative production authorization identity (`--require-production-signer` enforced).
 4. **Attestation Scope vs. Exact-Plan Application (Future G06 Requirement)**:

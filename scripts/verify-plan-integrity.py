@@ -504,6 +504,7 @@ def create_attestation_bundle(manifest_path, repository=None, workflow=None,
                 "repository": repo_str,
                 "workflow": workflow_str,
                 "commit_sha": commit_str,
+                "issuer": "https://token.actions.githubusercontent.com",
                 "type": "github-actions-oidc"
             },
             "attestation": {
@@ -556,7 +557,8 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
                        plan_file_path=None, expected_repository=None,
                        expected_commit_sha=None, expected_workflow=None,
                        require_production_signer=False, use_gh_cli=False,
-                       signer_repo=None, signer_workflow=None):
+                       signer_repo=None, signer_workflow=None,
+                       cert_oidc_issuer="https://token.actions.githubusercontent.com"):
     """
     Verifies a GitHub Artifact Attestation and associated plan manifest:
     - Confirms the plan manifest format, integrity, and security decision.
@@ -592,7 +594,7 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
     digests = manifest.get("digests", {})
 
     # 1. Enforce Security Decision
-    security_decision = metadata.get("security_decision", "passed")
+    security_decision = metadata.get("security_decision")
     if security_decision != "passed":
         errors.append(
             f"CRITICAL: Security decision in manifest was '{security_decision}'. "
@@ -660,12 +662,19 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
             cmd.extend(["--signer-repo", signer_repo])
         if expected_commit_sha:
             cmd.extend(["--source-digest", expected_commit_sha])
-        cmd.extend(["--cert-oidc-issuer", "https://token.actions.githubusercontent.com"])
+        cmd.extend(["--cert-oidc-issuer", cert_oidc_issuer])
         cmd.append("--format=json")
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if result.returncode != 0:
                 errors.append(f"Official 'gh attestation verify' failed: {result.stderr.strip()}")
+            elif result.stdout:
+                try:
+                    gh_output = json.loads(result.stdout)
+                    if not isinstance(gh_output, list) or len(gh_output) == 0:
+                        errors.append("Official verification error: no valid attestations returned by gh CLI")
+                except Exception:
+                    pass
         except FileNotFoundError:
             errors.append("Official verification error: 'gh' CLI tool not found in PATH")
         except Exception as e:
@@ -724,6 +733,13 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
                     att_repo = signer.get("repository")
                     att_workflow = signer.get("workflow")
                     att_commit = signer.get("commit_sha")
+                    att_issuer = signer.get("issuer", "https://token.actions.githubusercontent.com")
+
+                    if cert_oidc_issuer and att_issuer != cert_oidc_issuer:
+                        errors.append(
+                            f"OIDC issuer mismatch: attestation bound to '{att_issuer}', "
+                            f"expected '{cert_oidc_issuer}'"
+                        )
 
                     if expected_repository is not None and att_repo and att_repo != expected_repository:
                         errors.append(
@@ -731,7 +747,12 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
                             f"expected '{expected_repository}'"
                         )
 
-                    if expected_workflow is not None and att_workflow and att_workflow != expected_workflow:
+                    if signer_workflow is not None and att_workflow and att_workflow != signer_workflow:
+                        errors.append(
+                            f"Attestation signer workflow mismatch: attestation bound to '{att_workflow}', "
+                            f"expected '{signer_workflow}'"
+                        )
+                    elif expected_workflow is not None and att_workflow and att_workflow != expected_workflow:
                         errors.append(
                             f"Attestation signer workflow mismatch: attestation bound to '{att_workflow}', "
                             f"expected '{expected_workflow}'"
@@ -928,6 +949,7 @@ def main():
     vatt_parser.add_argument("--use-gh-cli", action="store_true", help="Invoke official 'gh attestation verify' to cryptographically verify attestation")
     vatt_parser.add_argument("--signer-repo", help="Signer repository for gh attestation verify")
     vatt_parser.add_argument("--signer-workflow", help="Signer workflow for gh attestation verify")
+    vatt_parser.add_argument("--cert-oidc-issuer", default="https://token.actions.githubusercontent.com", help="Expected OIDC certificate issuer")
 
     args = parser.parse_args()
 
@@ -1098,7 +1120,8 @@ def main():
             require_production_signer=getattr(args, "require_production_signer", False),
             use_gh_cli=getattr(args, "use_gh_cli", False),
             signer_repo=getattr(args, "signer_repo", None),
-            signer_workflow=getattr(args, "signer_workflow", None)
+            signer_workflow=getattr(args, "signer_workflow", None),
+            cert_oidc_issuer=getattr(args, "cert_oidc_issuer", "https://token.actions.githubusercontent.com")
         )
         if success:
             print("✅ GitHub Artifact Attestation & plan manifest verified successfully: Authenticated Sigstore provenance matches.")
