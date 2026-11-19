@@ -55,7 +55,7 @@ jobs:
           curl -sSL -o zizmor.tar.gz "https://github.com/woodruffw/zizmor/releases/download/v${ZIZMOR_VER}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
           echo "${ZIZMOR_SHA}  zizmor.tar.gz" | sha256sum -c -
 
-          tar -xzf zizmor.tar.gz --strip-components=1 zizmor-x86_64-unknown-linux-gnu/zizmor
+          tar -xzf zizmor.tar.gz zizmor
           chmod +x ./zizmor
           echo "::endgroup::"
 
