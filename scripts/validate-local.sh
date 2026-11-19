@@ -72,11 +72,22 @@ else
   record_fail "Actionlint installed" "actionlint binary not found"
 fi
 
+SHELLCHECK_BIN=""
+if command -v shellcheck >/dev/null 2>&1; then
+  SHELLCHECK_BIN="shellcheck"
+elif [[ -x "${HOME}/.local/bin/shellcheck" ]]; then
+  SHELLCHECK_BIN="${HOME}/.local/bin/shellcheck"
+fi
+
 # --- 2. GitHub Actions Workflow Syntax Linting ---
 log_header "2. GitHub Actions Workflow Linting (actionlint)"
 
 if [[ -n "${ACTIONLINT_BIN}" ]]; then
-  if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}"); then
+  AL_ARGS=()
+  if [[ -n "${SHELLCHECK_BIN}" ]]; then
+    AL_ARGS+=("-shellcheck" "${SHELLCHECK_BIN}")
+  fi
+  if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" "${AL_ARGS[@]}"); then
     record_pass "Workflow syntax & schema validation (.github/workflows & examples)"
   else
     record_fail "Workflow syntax validation" "actionlint reported errors"

@@ -243,10 +243,12 @@ jobs:
           GUARD_STATUS="${GUARD_OUTCOME:-skipped}"
           WORKSPACE_STATUS="${WORKSPACE_OUTCOME:-skipped}"
 
-          echo "fmt-status=${FMT_STATUS}" >> "$GITHUB_OUTPUT"
-          echo "validate-status=${VAL_STATUS}" >> "$GITHUB_OUTPUT"
-          echo "test-status=${TEST_STATUS}" >> "$GITHUB_OUTPUT"
-          echo "summary=Guard: ${GUARD_STATUS}, Workspace: ${WORKSPACE_STATUS}, Fmt: ${FMT_STATUS}, Init: ${INIT_STATUS}, Validate: ${VAL_STATUS}, Test: ${TEST_STATUS}" >> "$GITHUB_OUTPUT"
+          {
+            echo "fmt-status=${FMT_STATUS}"
+            echo "validate-status=${VAL_STATUS}"
+            echo "test-status=${TEST_STATUS}"
+            echo "summary=Guard: ${GUARD_STATUS}, Workspace: ${WORKSPACE_STATUS}, Fmt: ${FMT_STATUS}, Init: ${INIT_STATUS}, Validate: ${VAL_STATUS}, Test: ${TEST_STATUS}"
+          } >> "$GITHUB_OUTPUT"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
             cat <<EOF >> "$GITHUB_STEP_SUMMARY"
