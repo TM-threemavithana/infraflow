@@ -1,14 +1,17 @@
 # InfraFlow — Reusable Multi-Cloud Infrastructure Delivery Platform
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20terraform%20test-brightgreen.svg)](#local-validation)
+[![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#local-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
+[![DevSecOps](https://img.shields.io/badge/Security-TFLint%20%7C%20Trivy%20%7C%20Zizmor%20%7C%20OPA-blue.svg)](docs/security/security-architecture.md)
 
 **InfraFlow** is an enterprise-oriented, secure, and maintainable Terraform delivery platform engineered to be reused across independent GitHub repositories.
 
-InfraFlow separates infrastructure delivery into two distinct layers:
-1. **Tier 1 — Reusable Provider-Neutral CI/CD Core**: A standardized GitHub Actions workflow (`workflow_call`) executing linting, static validation, and native testing (`.tftest.hcl`) with **zero cloud credentials** and least-privilege tokens.
-2. **Tier 2 — Modular Cloud Adapters (AWS, Azure, GCP)**: Isolated adapters handling OIDC authentication, remote state backends, and speculative planning/applies on protected branches.
+InfraFlow separates infrastructure delivery into distinct layers:
+1. **Tier 1 — Reusable Provider-Neutral CI/CD Core (`reusable-tf-validate.yml`)**: A standardized GitHub Actions workflow (`workflow_call`) executing linting, static validation, and native testing (`.tftest.hcl`) with **zero cloud credentials** and least-privilege tokens.
+2. **Tier 1 — DevSecOps Security Quality Gates (`reusable-tf-security.yml`)**: Automated security scanning incorporating TFLint static analysis, Trivy IaC misconfiguration scanning, Zizmor CI/CD supply chain auditing, and Conftest/OPA Policy-as-Code governance.
+3. **Tier 1 — Secure Planning & Approval Engine (`reusable-tf-plan.yml`)**: Automated speculative planning (`-lock=false`), structural change classification (`analyze-plan.py`), OPA live plan evaluation, cryptographic attestation binding (`verify-plan-integrity.py`), and protected environment approval gating.
+4. **Tier 2 — Modular Cloud Adapters (AWS, Azure, GCP)**: Isolated adapters handling OIDC authentication, remote state backends, and speculative planning/applies on protected branches.
 
 ---
 
@@ -187,15 +190,28 @@ git push origin v1.0.0 v1
 infraflow/
 ├── .github/
 │   └── workflows/
-│       ├── reusable-tf-validate.yml   # Core reusable workflow (G02)
+│       ├── reusable-tf-validate.yml   # Core validation reusable workflow (G02)
+│       ├── reusable-tf-security.yml   # DevSecOps quality gates reusable workflow (G03)
+│       ├── reusable-tf-plan.yml       # Speculative planning & approval gate (G04)
 │       └── ci.yml                     # Platform self-testing workflow
 ├── docs/
-│   └── architecture/
-│       ├── ARCHITECTURE.md            # System design & two-tier model
-│       ├── REQUIREMENTS.md            # Functional & security requirements
-│       ├── THREAT_MODEL.md            # STRIDE threat model & trust boundaries
-│       ├── ADAPTERS.md                # Future AWS, Azure, GCP adapter specs
-│       └── MILESTONES.md              # Milestones & acceptance criteria (G01-G05)
+│   ├── architecture/                  # Architectural foundations (G01)
+│   │   ├── ARCHITECTURE.md            # System design & two-tier model
+│   │   ├── REQUIREMENTS.md            # Functional & security requirements
+│   │   ├── THREAT_MODEL.md            # STRIDE threat model & trust boundaries
+│   │   ├── ADAPTERS.md                # Multi-cloud adapter specifications
+│   │   └── MILESTONES.md              # Delivery milestones & quality gates
+│   ├── security/                      # DevSecOps security specifications (G03)
+│   │   ├── security-architecture.md   # Defense-in-depth security architecture
+│   │   ├── threat-model.md            # STRIDE security & supply chain threat model
+│   │   ├── policy-reference.md        # Rego policy reference & input contracts
+│   │   ├── scanner-configuration.md   # TFLint, Trivy, Zizmor, Conftest standards
+│   │   └── verification-report.md     # Milestone G03 engineering verification report
+│   └── planning/                      # Planning & approval specifications (G04)
+│       ├── planning-architecture.md   # Speculative planning architecture & data flow
+│       ├── approval-model.md          # Protected environment & human approval gates
+│       ├── plan-security.md           # Secret masking, ephemeral storage & attestation
+│       └── verification-report.md     # Milestone G04 verification & test evidence
 ├── examples/
 │   ├── cloud-free-module/             # Cloud-neutral reference module (terraform_data)
 │   │   ├── main.tf
@@ -205,16 +221,68 @@ infraflow/
 │   │   └── tests/
 │   │       └── unit.tftest.hcl
 │   └── consumer-workflow/             # Sample consumer repository workflow & guide
-│       ├── .github/workflows/
-│       │   └── infraflow-consume.yml
-│       └── README.md
-├── fixtures/                          # Negative testing verification fixtures
+├── fixtures/                          # Verification and regression test fixtures
 │   ├── invalid-syntax/
 │   ├── unformatted/
-│   └── failing-test/
+│   ├── failing-test/
+│   ├── security/                      # DevSecOps security fixtures (G03)
+│   │   ├── tflint/                    # Valid & invalid HCL lint fixtures
+│   │   ├── trivy/                     # Secure & insecure storage/network fixtures
+│   │   ├── zizmor/                    # Insecure permissions, unpinned action fixtures
+│   │   └── policies/                  # Positive & negative policy & plan JSON fixtures
+│   └── planning/                      # Planning engine fixtures (G04)
+│       ├── valid-plan/                # Valid plan JSON fixture
+│       ├── sensitive-plan/            # Sensitive attributes masking test fixture
+│       ├── destructive-plan/          # Destructive change (delete/replace) fixture
+│       └── malformed-plan/            # Corrupted plan JSON syntax fixture
+├── policies/                          # Declarative Rego Policy-as-Code suites
+│   ├── common/                        # Mandatory tags, naming, plan policies
+│   ├── aws/                           # AWS S3 encryption, public access, SG ingress
+│   ├── azure/                         # Azure storage TLS 1.2+, public blob disabled
+│   └── gcp/                           # GCP GCS uniform bucket-level access
+├── .github/
+│   ├── CODEOWNERS                     # Platform code ownership & review routing
+│   ├── rulesets/
+│   │   └── main-ruleset.json          # Repository-level GitHub governance ruleset
+│   └── workflows/
+│       ├── ci.yml                     # Platform CI pipeline
+│       ├── reusable-tf-validate.yml   # Core validation reusable workflow
+│       ├── reusable-tf-security.yml   # DevSecOps scanning reusable workflow
+│       └── reusable-tf-plan.yml       # Speculative plan & Sigstore attestation workflow
+├── docs/
+│   ├── architecture/                  # Architecture specs, requirements, threat models
+│   ├── planning/                      # Planning engine, approval model, provenance specs
+│   └── security/                      # DevSecOps, supply chain, and policy specifications
+├── examples/
+│   ├── cloud-free-module/             # Cloud-free reference module (tests, validations)
+│   └── consumer-workflow/             # Calling workflow integration patterns
+├── fixtures/                          # Positive & negative test fixtures
+│   ├── invalid-syntax/                # Malformed HCL syntax fixture
+│   ├── unformatted/                   # Canonical styling negative fixture
+│   ├── failing-test/                  # Native test failure fixture
+│   ├── security/                      # DevSecOps scanner fixtures
+│   │   ├── tflint/                    # Deprecated syntax & naming fixtures
+│   │   ├── trivy/                     # Secure & insecure storage/network fixtures
+│   │   ├── zizmor/                    # Insecure permissions, unpinned action fixtures
+│   │   └── policies/                  # Positive & negative policy & plan JSON fixtures
+│   └── planning/                      # Planning engine fixtures (G04)
+│       ├── valid-plan/                # Valid plan JSON fixture
+│       ├── sensitive-plan/            # Sensitive attributes masking test fixture
+│       ├── destructive-plan/          # Destructive change (delete/replace) fixture
+│       └── malformed-plan/            # Corrupted plan JSON syntax fixture
+├── policies/                          # Declarative Rego Policy-as-Code suites
+│   ├── common/                        # Mandatory tags, naming, plan policies
+│   ├── aws/                           # AWS S3 encryption, public access, SG ingress
+│   ├── azure/                         # Azure storage TLS 1.2+, public blob disabled
+│   ├── gcp/                           # GCP GCS uniform bucket-level access
+│   └── trust/                         # Trust anchors, public keys & revocation list
 ├── scripts/
-│   └── validate-local.sh              # Local automated verification harness
+│   ├── analyze-plan.py                # Plan analysis engine & change classifier
+│   ├── verify-plan-integrity.py       # Plan provenance, Sigstore & attestation engine
+│   └── validate-local.sh              # Local automated verification harness (132 checks)
 ├── .gitignore
+├── .tflint.hcl                        # Standardized TFLint configuration
+├── .zizmor.yml                        # Zizmor workflow audit configuration
 ├── LICENSE
 └── README.md
 ```
@@ -223,7 +291,7 @@ infraflow/
 
 ## Local Validation
 
-InfraFlow includes an automated, offline local test harness executing all 22 quality gates:
+InfraFlow includes an automated, offline local test harness executing all 132 quality gates across G01, G02, G03, G04, G04.1, G04.1.1, G04.1.2, G04.1.3, and G04.1.4:
 
 ```bash
 chmod +x scripts/validate-local.sh
@@ -234,9 +302,23 @@ chmod +x scripts/validate-local.sh
 
 ## Documentation Links
 
+### Architecture & Delivery
 - [System Architecture](docs/architecture/ARCHITECTURE.md)
 - [Requirements Specification](docs/architecture/REQUIREMENTS.md)
-- [Threat Model & Trust Boundaries](docs/architecture/THREAT_MODEL.md)
+- [Foundational Threat Model](docs/architecture/THREAT_MODEL.md)
 - [Cloud Adapters Specification](docs/architecture/ADAPTERS.md)
 - [Milestones & Acceptance Criteria](docs/architecture/MILESTONES.md)
 - [Consumer Integration Guide](examples/consumer-workflow/README.md)
+
+### DevSecOps Security (G03)
+- [Security Architecture](docs/security/security-architecture.md)
+- [Supply Chain Threat Model](docs/security/threat-model.md)
+- [Policy as Code Reference](docs/security/policy-reference.md)
+- [Scanner Configuration Standards](docs/security/scanner-configuration.md)
+- [G03 Security Verification Report](docs/security/verification-report.md)
+
+### Planning & Approval Engine (G04)
+- [Planning Architecture](docs/planning/planning-architecture.md)
+- [Approval Model & Environment Gates](docs/planning/approval-model.md)
+- [Plan Security & Attestation](docs/planning/plan-security.md)
+- [G04 Verification Report](docs/planning/verification-report.md)

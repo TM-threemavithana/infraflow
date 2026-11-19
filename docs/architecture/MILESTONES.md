@@ -2,15 +2,24 @@
 
 ## 1. Program Roadmap Overview
 
-InfraFlow is structured into five progressive delivery milestones:
+InfraFlow is structured into progressive delivery milestones:
 
 | Milestone | Title | Focus Area | Status |
 |---|---|---|---|
-| **G01** | **Foundation and Architecture** | Architecture, threat model, repository structure, requirements, adapters spec. | **In Progress (Active)** |
-| **G02** | **Reusable Terraform CI/CD Core** | Reusable `workflow_call` workflow, input validation guard, cloud-free module, tests, negative fixtures. | **In Progress (Active)** |
-| **G03** | **Multi-Cloud Adapters & OIDC** | AWS, Azure, GCP provider adapters using passwordless Workload Identity Federation. | Backlog (Future) |
-| **G04** | **Policy as Code & Drift Detection** | OPA/Checkov/Trivy policy enforcement, automated scheduled drift detection pipelines. | Backlog (Future) |
-| **G05** | **Enterprise Governance & Fleet Rollout** | Multi-repo orchestration, centralized compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
+| **G01** | **Foundation and Architecture** | Architecture, threat model, repository structure, requirements, adapters spec. | **PASS** |
+| **G02** | **Reusable Terraform CI/CD Core** | Reusable `workflow_call` workflow, input validation guard, cloud-free module, tests, negative fixtures. | **PASS** |
+| **G03** | **DevSecOps Security Integration** | TFLint static analysis, Trivy IaC scanning, Zizmor workflow security, OPA/Conftest Rego policies. | **PASS** |
+| **G04** | **Secure Terraform Planning & Approval Engine** | Speculative plan engine, plan change analysis, OPA live plan evaluation, cryptographic attestation, protected environment approval gate. | **PASS** |
+| **G04.1** | **Plan Provenance & Approval Hardening** | Asymmetric DSSE in-toto signed provenance, schema-aware redaction, output masking, ephemeral plan storage. | **PASS** |
+| **G04.1.1** | **Trusted Provenance & Human Approval Verification** | Independent trust root, pinned public key, key ID allowlists, key revocation blocklist, 8-scenario approval matrix, 95/95 checks. | **PASS** |
+| **G04.1.2** | **Trust Root Isolation & Attack Simulation** | Anti-substitution verification, PR threat analysis, key lifecycle, 12 attack simulation tests, 107/107 checks. | **PASS** |
+| **G04.1.3** | **Trusted Workflow Enforcement** | Caller workflow security, trusted configuration, preview/prod signing separation, 10 attack simulation tests, 117/117 checks. | **PASS** |
+| **G04.1.4** | **InfraFlow Architecture Finalization** | Governance rulesets, GitHub Artifact Attestations (Sigstore OIDC), human approval decoupling, permission boundary isolation, 132/132 checks. | **PASS** |
+| **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | Backlog (Future) |
+| **G06** | **Protected Apply and Destroy** | Secure execution of approved plans with cryptographic digest verification, KMS-encrypted plan storage, and controlled destruction. | Backlog (Future) |
+| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | Backlog (Future) |
+| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
+| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
 ---
 
@@ -44,7 +53,141 @@ InfraFlow is structured into five progressive delivery milestones:
 
 ---
 
-## 4. Quality Gate Definitions
+## 4. Milestone G03 — Acceptance Criteria (DevSecOps Security Integration)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G03-01** | Trivy IaC Misconfiguration | Trivy integrated to scan Terraform source; rejects insecure configurations with exit code 1; passes secure fixtures. | Automated local & workflow tests | PASS |
+| **AC-G03-02** | TFLint Static Analysis | `.tflint.hcl` created with standard rules; catches syntax deprecations and naming violations; blocks on error. | Automated local & workflow tests | PASS |
+| **AC-G03-03** | Zizmor Supply Chain Security | Zizmor scans GitHub Actions workflows for excessive permissions, unpinned actions, and injection vectors. | Automated local & workflow tests | PASS |
+| **AC-G03-04** | OPA/Conftest Policy as Code | Rego policies in `policies/` (common, aws, azure, gcp); unit tested with `conftest verify`; blocks violations. | `conftest verify` & `conftest test` | PASS |
+| **AC-G03-05** | Reusable Security Workflow | `.github/workflows/reusable-tf-security.yml` implemented with minimal tokens, pinned SHAs, and security summary. | `actionlint` & workflow tests | PASS |
+| **AC-G03-06** | Negative Security Regression Suite | 8+ negative and positive security regression fixtures verified in automated test suite. | `scripts/validate-local.sh` | PASS |
+| **AC-G03-07** | Non-Suppression Governance | Documented false-positive and exception handling without silent suppression. | `docs/security/security-architecture.md` | PASS |
+| **AC-G03-08** | Zero Cost & Zero Credentials | All security scanning operates offline with $0 budget and no cloud credentials. | Program invariant audit | PASS |
+
+---
+
+## 5. Milestone G03.1 — Acceptance Criteria (DevSecOps Security Hardening)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G03.1-01** | Zizmor Supply Chain Audit & Hardening | Eliminate blanket file ignore of `ci.yml`. Document parser conflict between Zizmor (`$/...`) and Actionlint. Enforce narrowest rule suppression (`rules.self-repository.ignore: ["ci.yml"]`). All supply chain checks active. | `zizmor` execution on platform workflows & fixtures | PASS |
+| **AC-G03.1-02** | Trivy Invariant Audit | Verify zero broad exclusions/ignores. Re-verify exact finding IDs on storage and network fixtures (`AWS-0086`, `AWS-0087`, `AWS-0091`, `AWS-0093`, `AWS-0132`, `AWS-0107`). | Automated fixture scans & exit code checks | PASS |
+| **AC-G03.1-03** | TFLint Scope Verification | Verify 8 core rules. Explicitly document provider plugin limitation (offline/$0 invariant) in architecture documentation. | `.tflint.hcl` review & test fixtures | PASS |
+| **AC-G03.1-04** | OPA/Conftest Policy Hardening | Prevent attribute omission bypasses via `object.get` and `taggable_resource`. Harden plan evaluation for delete/unknowns. Expand unit tests to 27 tests. | `conftest verify` (27/27 passed) & fixtures | PASS |
+| **AC-G03.1-05** | Local Harness Resilience | Eliminate SIGPIPE pipefail termination (`sed -n '1p'`). Execute full 48/48 check regression suite. | `./scripts/validate-local.sh` | PASS |
+
+---
+
+## 6. Milestone G03.2 — Acceptance Criteria (Tagging Correctness & Security Control Deletion)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G03.2-01** | Explicit Metadata Allowlists & Mapping | AWS/Azure `tags` and GCP `labels` mapped via explicit allowlists (`aws_taggable_resources`, etc.); unsupported resources (`aws_route_table_association`, `google_compute_network`) produce zero false positives. | Rego unit tests & HCL fixture scans | PASS |
+| **AC-G03.2-02** | Security Control Deletion Protection | Intercept pure deletions of standalone security controls (`aws_s3_bucket_public_access_block`, `azurerm_storage_account_network_rules`, etc.). Block deletion unless parent asset is simultaneously decommissioned. | Plan JSON fixtures & `conftest test` | PASS |
+| **AC-G03.2-03** | Replacement Security Enforcement | Evaluate replacement actions (`["delete", "create"]`) against proposed `after` state. Reject replacements that degrade security settings. | Plan JSON fixtures & `conftest test` | PASS |
+| **AC-G03.2-04** | Fail-Closed Unknown Attributes | Reject speculative unknown values (`after_unknown`) on security-critical attributes (`acl`, `block_public_acls`, `min_tls_version`, `uniform_bucket_level_access`). | Plan JSON fixtures & `conftest test` | PASS |
+| **AC-G03.2-05** | Expanded Regression Suite (56 Checks) | Verify 8 new plan regression fixtures and 55 Rego unit tests. Execute full 56/56 check validation suite. | `./scripts/validate-local.sh` | PASS |
+
+---
+
+## 7. Milestone G03.2.1 — Acceptance Criteria (Replacement Order & Parent Correlation)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G03.2.1-01** | Replacement Action Order Invariance | Enforce security policies identically across both `["delete", "create"]` and `["create", "delete"]`. Reject insecure replacements; allow secure replacements. | Plan JSON fixtures & `conftest test` | PASS |
+| **AC-G03.2.1-02** | Exact Parent Deletion Correlation (AWS) | Correlate S3 public access block with exact target bucket and module instance identity (`same_module_scope`). Block deletion if different bucket or different module parent is deleted. | Plan JSON fixtures & `conftest test` | PASS |
+| **AC-G03.2.1-03** | Exact Parent Deletion Correlation (Azure) | Correlate Azure storage network rules with exact target storage account and module scope. Block deletion if different storage or different module parent is deleted. | Plan JSON fixtures & `conftest test` | PASS |
+| **AC-G03.2.1-04** | Expanded Regression Suite (65 Checks) | Execute 62 native Rego unit tests (`conftest verify`) and 65 quality gates in automated validation harness. | `./scripts/validate-local.sh` | PASS |
+
+---
+
+## 8. Milestone G04 — Acceptance Criteria (Secure Planning & Approval Engine)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G04-01** | Speculative Planning Engine | Generate speculative Terraform plans with `-input=false` and `-lock=false` without cloud credentials; export to JSON via `terraform show -json`. Never execute apply or destroy. | `./scripts/validate-local.sh` & CLI verification | PASS |
+| **AC-G04-02** | Plan Analysis Engine | Classify create, update, delete, replace, and no-op changes; extract addresses, types, and computed unknowns; generate sanitized Markdown summary and structured metrics JSON. | `scripts/analyze-plan.py` execution & unit tests | PASS |
+| **AC-G04-03** | Sensitive Attribute Protection | Mask passwords, tokens, keys, and credentials with zero plaintext leakage in summaries and metrics. Enforce ephemeral runner temp storage (`chmod 700`) and immediate file cleanup traps. | Fixture test & Gitleaks scan (0 leaks) | PASS |
+| **AC-G04-04** | Destructive Change Gating | Classify resource deletions and replacements; support optional hard rejection (`--fail-on-destructive`) with alert diagnostics. | Automated fixture execution | PASS |
+| **AC-G04-05** | Cryptographic Plan Attestation | Compute SHA-256 digests of plan files; bind to repository identity, commit SHA, run ID, actor, and Terraform version in `infraflow-plan-attestation-v1` manifest. | `scripts/verify-plan-integrity.py` | PASS |
+| **AC-G04-06** | Tampering & Stale Plan Detection | Automated integrity verification rejects altered plan JSON (digest mismatch), stale plans (commit SHA mismatch), and cross-repo spoofing (repository mismatch). | Automated fixture execution | PASS |
+| **AC-G04-07** | OPA Policy Gating on Live Plan JSON | Evaluate Conftest/OPA policies against actual generated Terraform plan JSON; enforce tagging, encryption, and deletion safety. | `conftest test` against live plan JSON | PASS |
+| **AC-G04-08** | Reusable Workflow Implementation | Implement `.github/workflows/reusable-tf-plan.yml` with least-privilege `permissions: contents: read`, pinned action SHAs, input validation guard, and protected environment approval gate. | `actionlint` & `zizmor` audits | PASS |
+| **AC-G04-09** | Protected Environment Approval Gate | Define GitHub Environment `production-approval` with required reviewers; couple manual UI gate with automated cryptographic attestation verification. | Reusable workflow contract & docs | PASS |
+| **AC-G04-10** | Comprehensive Local Regression (79 Checks) | Expand local test harness to execute 79 automated quality gates; verify zero regressions across G01–G04. | `./scripts/validate-local.sh` (79/79 passed) | PASS |
+
+---
+
+## 9. Milestone G04.1 — Acceptance Criteria (Plan Provenance & Approval Hardening)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G04.1-01** | Authenticated Digital Provenance Signing | Sign in-toto Statement v1 inside a DSSE envelope (`application/vnd.in-toto+json`) using asymmetric ECDSA (NIST P-256 / SHA-256). Bind binary plan digest, plan JSON digest, repository, commit SHA, run ID, and workflow. | `verify-plan-integrity.py sign-provenance` | PASS |
+| **AC-G04.1-02** | Cryptographic Provenance Verification & Forgery Detection | Verify digital signatures using public key; reject altered payloads (`InvalidSignature`), forged signatures, and untrusted public keys. | Automated fixture execution | PASS |
+| **AC-G04.1-03** | Environmental & Policy Binding Enforcement | Enforce matching repository (`$GITHUB_REPOSITORY`), commit SHA (`$GITHUB_SHA`), workflow identity, and security policy evaluation outcome (`passed`). | Automated fixture execution | PASS |
+| **AC-G04.1-04** | Schema-Aware Sensitive Attribute Redaction | Traverse `before_sensitive` and `after_sensitive` schema trees in `analyze-plan.py`. Recursively redact sensitive maps, lists, and non-obvious attribute keys with zero secret leakage. | Automated fixture & Gitleaks scan | PASS |
+| **AC-G04.1-05** | Sensitive Output Redaction | Inspect `output_changes` in plan JSON; mask sensitive outputs to `(sensitive output redacted)` in both Markdown summary and structured metrics JSON. | Automated fixture execution | PASS |
+| **AC-G04.1-06** | Approval Gate Bypass Defense | Reject approval bypass attempts including stale source commits, modified candidate plans, missing reviewer authorization, and failed policy results. | Automated fixture execution | PASS |
+| **AC-G04.1-07** | Plan Lifecycle & Secure Apply Architecture | Formulate secure retention architecture for future apply without public artifact exposure (KMS envelope encryption & OIDC-authenticated storage). | Documentation review | PASS |
+| **AC-G04.1-08** | Full Regression Suite Expansion (91 Checks) | Expand validation harness to 91 automated checks; verify Actionlint, ShellCheck, Zizmor, Conftest, and Gitleaks pass with zero errors. | `./scripts/validate-local.sh` (91/91 passed) | PASS |
+
+---
+
+## 10. Milestone G04.1.1 — Acceptance Criteria (Trusted Provenance & Human Approval Verification)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G04.1.1-01** | Independent Trust Root & Anti-Substitution | Eliminate in-band untrusted public key acceptance; verify signatures against pinned trusted public key (`policies/trust/trusted_signer.pub`) or explicit trusted key ID fingerprint allowlist (`--trusted-keyids`). Reject unpinned keys by default (`--enforce-trusted-signer`). | Automated fixture execution & `./scripts/validate-local.sh` (Tests 10.14-10.16) | PASS |
+| **AC-G04.1.1-02** | Private Key Custody & Ephemeral Security | Enforce POSIX mode `600` (`-rw-------`) on private key creation; store ephemeral keys in `${RUNNER_TEMP}`; guarantee zero exposure in git, workflow logs, step outputs, or public artifacts. | Permissions audit & Gitleaks scan (0 leaks) | PASS |
+| **AC-G04.1.1-03** | Key Revocation Enforcement | Implement explicit key revocation blocklist (`--revoked-keyids`); reject signatures produced by revoked keys even if present in the allowlist. | Automated fixture execution (Test 10.22) | PASS |
+| **AC-G04.1.1-04** | Approval-to-Plan Mathematical Binding | Cryptographically prove that human approval for plan $P_1$ cannot authorize $P_2$; bind candidate plan binary digest, plan JSON digest, and current Git commit SHA to signed provenance statement. | Gate verification (Tests 10.28-10.30) | PASS |
+| **AC-G04.1.1-05** | Human Approval Matrix & Operational Truth | Document 8-scenario Human Approval Verification Matrix; accurately classify Scenarios 1–5 as UNVERIFIED (requiring live GitHub Environment configuration) and Scenarios 6–8 as PASS (cryptographic binding). Correct false equivalence between cryptographic rejection and human review. | `docs/planning/approval-model.md` & `verification-report.md` | PASS |
+| **AC-G04.1.1-06** | Full Regression Suite Expansion (95 Checks) | Expand automated quality gates to 95 checks; verify zero regressions across G01–G04.1.1 with zero Actionlint errors, zero Zizmor findings, zero ShellCheck warnings, and zero Gitleaks findings. | `./scripts/validate-local.sh` (95/95 passed) | PASS |
+
+---
+
+## 11. Milestone G04.1.2 — Acceptance Criteria (Trust Root Isolation & Attack Simulation)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G04.1.2-01** | Trust Root Isolation Architecture | Evaluate PR threat vectors; guarantee verifier cannot be subverted by PR modifications to public keys, allowlists, or scripts. Enforce Platform Trust Anchor (`3c27ef...`) and toolchain isolation. | Codebase inspection & test suite | PASS |
+| **AC-G04.1.2-02** | Anti-Substitution Key Verification | Verifier checks public key files from disk against trusted allowlists; rejects attacker public key files substituted on disk even if validly signed. | `./scripts/validate-local.sh` (Test 11.1) | PASS |
+| **AC-G04.1.2-03** | Twelve-Scenario Attack Simulation Suite | Execute automated negative attack simulation suite covering PR public key replacement, allowlist tampering, script alteration, workflow modification, self-signed keys, revocation, wrong repo, wrong workflow, binary tampering, JSON tampering, provenance alteration, and stale commits. Every scenario fails closed. | `./scripts/validate-local.sh` (Tests 11.1–11.12) | PASS |
+| **AC-G04.1.2-04** | Cryptographic Key Provisioning Architecture | Formally define key provisioning lifecycle: distinguish persistent protected signing key, temporary runner copy, ephemeral signing identity, and public trust anchor. Document generation, storage, rotation, revocation, and disaster recovery. | `docs/planning/plan-security.md` | PASS |
+| **AC-G04.1.2-05** | Branch Protection Governance Truth | Rigorously separate local branch-guard tests from remote GitHub branch protection configuration; classify remote branch protection as UNVERIFIED without live SaaS account. | `docs/planning/approval-model.md` & `verification-report.md` | PASS |
+| **AC-G04.1.2-06** | Full Regression Expansion (107 Checks) | Expand automated validation harness to 107 quality gates; verify zero regressions across G01–G04.1.2 with zero Actionlint errors, zero Zizmor findings, zero ShellCheck warnings, zero Gitleaks leaks, and 62/62 passing OPA tests. | `./scripts/validate-local.sh` (107/107 passed) | PASS |
+
+---
+
+## 12. Milestone G04.1.3 — Acceptance Criteria (Trusted Workflow Enforcement)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G04.1.3-01** | Caller Workflow Security & Protection | Prove that pinning reusable workflows alone does not protect callers; articulate Organization Required Workflows and Branch Protection Status Check enforcement. Ensure untrusted PRs never execute with privileged credentials. | Architecture review & test suite | PASS |
+| **AC-G04.1.3-02** | Trusted Configuration Architecture | Guarantee that trusted signers, revocations, expected repo, expected workflow, production authorization, and approval requirements cannot be controlled by untrusted PR inputs. Retrieve from protected sources. | `./scripts/validate-local.sh` (Tests 12.3–12.8) | PASS |
+| **AC-G04.1.3-03** | Signing Identity Separation | Implement strict cryptographic separation between preview and production signing tiers (`signing_tier: preview` vs `production`). Enforce that ephemeral preview keys cannot authorize production deployments (`--require-production-signer`). | `./scripts/validate-local.sh` (Test 12.9) | PASS |
+| **AC-G04.1.3-04** | Ten-Scenario Trusted Workflow Attack Suite | Execute automated negative attack suite: security workflow removal, workflow SHA tampering, attacker fingerprint injection, trusted key modification, revocation omission, verifier replacement, approval environment removal, repo spoofing, preview signer bypass, and missing security check authorization. All fail closed. | `./scripts/validate-local.sh` (Tests 12.1–12.10) | PASS |
+| **AC-G04.1.3-05** | Remote Ruleset & Branch Protection Truth | Rigorously separate local workflow guard tests from remote GitHub Organization Rulesets and Branch Protection; classify remote rulesets as UNVERIFIED without live SaaS account. | `docs/planning/approval-model.md` & `verification-report.md` | PASS |
+| **AC-G04.1.3-06** | Full Regression Suite Expansion (117 Checks) | Expand automated quality gates to 117 checks; verify zero regressions across G01–G04.1.3 with zero Actionlint errors, zero Zizmor findings, zero ShellCheck warnings, zero Gitleaks leaks, and 62/62 passing OPA tests. | `./scripts/validate-local.sh` (117/117 passed) | PASS |
+
+---
+
+## 13. Milestone G04.1.4 — Acceptance Criteria (InfraFlow Architecture Finalization)
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G04.1.4-01** | Repository Governance Rulesets (Decision 1) | Formalize repository-level GitHub Rulesets ([.github/rulesets/main-ruleset.json](file:///home/tharuka/projects/infraflow/.github/rulesets/main-ruleset.json)) for personal, public InfraFlow repos. Require PRs, stale review dismissals, strict branch updates, GitHub Actions check source, sensitive file restrictions, force push blocks, and zero bypass actors. Document enterprise organization-level adoption ($0 budget preserved). | Schema validation & `./scripts/validate-local.sh` (Tests 13.1–13.6) | PASS |
+| **AC-G04.1.4-02** | GitHub Artifact Attestations (Decision 2) | Adopt GitHub Artifact Attestations (`actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2`) with Sigstore OIDC as the authoritative production provenance architecture. Generate and attest sanitized `plan-manifest.json` binding binary and JSON plan digests, repo, commit, run ID, and security decision (`passed`). Rejects long-lived keys in GitHub Secrets. | `./scripts/validate-local.sh` (Tests 13.7, 13.8, 13.13) | PASS |
+| **AC-G04.1.4-03** | Production Gate Attestation Enforcement | Approval gate strictly verifies Sigstore attestation bundle and manifest using `verify-attestation`. Fails closed on tampered manifests, cross-repo spoofing, failed security decisions, or missing production attestations. | `./scripts/validate-local.sh` (Tests 13.9–13.12) | PASS |
+| **AC-G04.1.4-04** | Legacy Decoupling & Offline Compatibility | Retain asymmetric ECDSA signing exclusively for offline unit testing and backwards compatibility. Strictly prohibit ECDSA keys from serving as the default production trust identity. | `./scripts/validate-local.sh` (Test 13.12) | PASS |
+| **AC-G04.1.4-05** | Human Approval Decoupling (Decision 3) | Decouple machine cryptographic attestation from human review in GitHub Protected Environments. Document operational truth: local simulation = PASS, remote GitHub Environment human sign-off = UNVERIFIED until live reviewer execution. | `docs/planning/approval-model.md` & `verification-report.md` | PASS |
+| **AC-G04.1.4-06** | Full Regression Suite Expansion (132 Checks) | Expand validation suite to 132 quality gates (including job permission isolation); verify zero regressions across G01–G04.1.4 with zero Actionlint errors, zero Zizmor findings, zero ShellCheck warnings, zero Gitleaks leaks, and 62/62 passing OPA tests. | `./scripts/validate-local.sh` (132/132 passed) | PASS |
+
+---
+
+## 14. Quality Gate Definitions
 
 To achieve status **PASS** for G01 and G02:
 1. Every G01 document must exist, be fully elaborated, and be internally consistent.
