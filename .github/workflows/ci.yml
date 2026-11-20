@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   lint-workflows:
-    name: "Lint GitHub Actions Workflows"
+    name: "Lint & Audit GitHub Actions Workflows"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,17 +33,47 @@ jobs:
           echo "::group::Downloading and verifying actionlint release"
           ACTIONLINT_VER="1.7.7"
           EXPECTED_SHA="023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
-          
+
           curl -sSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VER}/actionlint_${ACTIONLINT_VER}_linux_amd64.tar.gz"
           echo "${EXPECTED_SHA}  actionlint.tar.gz" | sha256sum -c -
-          
+
           tar -xzf actionlint.tar.gz actionlint
           chmod +x ./actionlint
           echo "::endgroup::"
-          
+
           echo "::group::Executing actionlint"
           ./actionlint -color
           echo "::endgroup::"
+
+      - name: "Install & Run zizmor (SHA256 Verified)"
+        run: |
+          set -euo pipefail
+          echo "::group::Downloading and verifying zizmor release"
+          ZIZMOR_VER="1.32.0"
+          ZIZMOR_SHA="bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b"
+
+          curl -sSL -o zizmor.tar.gz "https://github.com/woodruffw/zizmor/releases/download/v${ZIZMOR_VER}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA}  zizmor.tar.gz" | sha256sum -c -
+
+          tar -xzf zizmor.tar.gz zizmor
+          chmod +x ./zizmor
+          echo "::endgroup::"
+
+          echo "::group::Executing zizmor"
+          ./zizmor -c .zizmor.yml --min-severity medium .github/workflows
+          echo "::endgroup::"
+
+  security-cloud-free-example:
+    name: "Self-Test Reusable Security (Cloud-Free Example)"
+    uses: ./.github/workflows/reusable-tf-security.yml
+    with:
+      terraform-version: "1.10.4"
+      working-directory: "examples/cloud-free-module"
+      policy-directory: "policies"
+      enable-tflint: true
+      enable-trivy: true
+      enable-conftest: true
+      enable-zizmor: false
 
   validate-cloud-free-example:
     name: "Self-Test Reusable Core (Cloud-Free Example)"

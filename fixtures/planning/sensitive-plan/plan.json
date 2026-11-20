@@ -1,0 +1,29 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "module.database.aws_db_instance.primary",
+      "type": "aws_db_instance",
+      "name": "primary",
+      "module_address": "module.database",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "allocated_storage": 20,
+          "engine": "postgres",
+          "engine_version": "15.4",
+          "instance_class": "db.t3.micro",
+          "db_password": "SuperSecretSuperDangerousPlaintextPassword123!",
+          "admin_auth_token": "simulated_auth_token_for_masking_test_string_xyz"
+        },
+        "after_unknown": {
+          "arn": true,
+          "endpoint": true,
+          "id": true
+        }
+      }
+    }
+  ]
+}

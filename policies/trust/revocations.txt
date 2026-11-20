@@ -1,0 +1,3 @@
+# InfraFlow Platform Signing Key Revocation Registry
+# Lists SHA-256 fingerprints of explicitly revoked signing keys (one per line).
+# Any provenance signed by a key on this list will be rejected unconditionally.

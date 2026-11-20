@@ -1,0 +1,28 @@
+# ==============================================================================
+# InfraFlow Zizmor Static Analysis Configuration
+# Configures supply chain and security auditing for GitHub Actions workflows.
+# https://docs.zizmor.sh/configuration/
+# ==============================================================================
+
+rules:
+  # ----------------------------------------------------------------------------
+  # Audit Rule: self-repository
+  # Severity: Low (Informational / Suggestion)
+  # Finding: Reusable workflow calls within the same repo use './.github/workflows/...'
+  #
+  # Technical Justification:
+  # Zizmor recommends GitHub's newer '$/...' syntax (uses: $/.github/workflows/...).
+  # However, actionlint v1.7.7 strictly rejects '$/...' as an invalid workflow-call format:
+  #   "reusable workflow call at 'uses' is not following the format 'owner/repo/...' nor './...'"
+  # Adopting '$/...' causes actionlint and standard GitHub runner parsers to fail.
+  #
+  # Compensating Control:
+  # The workflow runs in an ephemeral runner with least-privilege token (contents: read)
+  # and all steps are verified within GITHUB_WORKSPACE.
+  #
+  # Review Condition:
+  # Re-evaluate when actionlint adds official schema support for '$/...' self-repository syntax.
+  # ----------------------------------------------------------------------------
+  self-repository:
+    ignore:
+      - "ci.yml"

@@ -1,0 +1,48 @@
+name: "Infrastructure Delivery PR Planning & Attestation"
+
+# ==============================================================================
+# ILLUSTRATIVE EXAMPLE ONLY (UNTIL PUBLISHED)
+# ==============================================================================
+# Demonstrates how an external consumer repository invokes the InfraFlow
+# speculative planning & Sigstore attestation reusable workflow.
+#
+# SETUP INSTRUCTIONS:
+# 1. Replace 'YOUR_OWNER/YOUR_REPOSITORY' with your actual GitHub Organization and Repository.
+# 2. Pin to an immutable commit SHA (recommended for production security) or release tag.
+# 3. Caller workflow MUST grant 'id-token: write' and 'attestations: write' for GitHub
+#    Artifact Attestations (Sigstore OIDC) to succeed.
+# ==============================================================================
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infraflow-plan.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  infraflow-plan:
+    name: "InfraFlow Speculative Plan & Attestation"
+    uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-plan.yml@YOUR_INFRAFLOW_COMMIT_SHA
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      terraform-version: "1.10.4"
+      working-directory: "terraform"
+      environment: "production"
+      enable-policy-evaluation: true
+      enable-trivy: true
+      enable-github-attestation: true
+      upload-plan-attestation: true

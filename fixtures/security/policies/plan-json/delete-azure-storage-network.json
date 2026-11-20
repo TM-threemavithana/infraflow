@@ -1,0 +1,18 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "azurerm_storage_account_network_rules.exposed_rules",
+      "type": "azurerm_storage_account_network_rules",
+      "name": "exposed_rules",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "storage_account_name": "activecorpstorage"
+        },
+        "after": null
+      }
+    }
+  ]
+}

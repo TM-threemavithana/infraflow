@@ -1,0 +1,18 @@
+# ==============================================================================
+# InfraFlow Repository Codeowners
+# Defines ownership and review requirements for security-critical platform paths.
+# Applied via GitHub Pull Request reviews when code owner reviews are enabled.
+# ==============================================================================
+
+# Default fallback
+* @TM-threemavithana
+
+# Critical CI/CD and Reusable Workflows
+/.github/workflows/ @TM-threemavithana
+
+# Platform Trust Root, Anchors, and Key Revocation Lists
+/policies/trust/ @TM-threemavithana
+
+# Cryptographic Plan Integrity, Attestation, and Verification Scripts
+/scripts/verify-plan-integrity.py @TM-threemavithana
+/scripts/analyze-plan.py @TM-threemavithana

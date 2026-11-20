@@ -1,0 +1,49 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "custom_cloud_asset.gateway",
+      "type": "custom_cloud_asset",
+      "name": "gateway",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "standard_name": "gateway-production-01",
+          "custom_endpoint": "SuperConfidentialVaultPassword999_Hidden_Secret",
+          "app_options": {
+            "internal_route": "https://api.internal.net",
+            "upstream_target": "Confidential_Enterprise_License_Key_XYZ"
+          }
+        },
+        "before_sensitive": {},
+        "after_sensitive": {
+          "custom_endpoint": true,
+          "app_options": {
+            "upstream_target": true
+          }
+        },
+        "after_unknown": {
+          "id": true
+        }
+      }
+    }
+  ],
+  "output_changes": {
+    "database_connection": {
+      "actions": ["create"],
+      "before": null,
+      "after": "postgres://admin:SuperSecretDatabasePassword123@db.internal:5432/app",
+      "before_sensitive": false,
+      "after_sensitive": true
+    },
+    "public_hostname": {
+      "actions": ["create"],
+      "before": null,
+      "after": "app.example.com",
+      "before_sensitive": false,
+      "after_sensitive": false
+    }
+  }
+}

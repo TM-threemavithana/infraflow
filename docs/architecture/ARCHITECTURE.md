@@ -14,7 +14,7 @@ Rather than duplicating GitHub Actions YAML pipelines across dozens of repositor
 2. **Tier 2 — Modular Cloud Adapters (Future AWS, Azure, GCP Extensions)**:
    - Encapsulates cloud-specific OIDC authentication (AWS AssumeRoleWithWebIdentity, Azure Federated Credentials, GCP Workload Identity Federation).
    - Manages remote state backends (S3/DynamoDB, Azure Blob, GCS) and state locking.
-   - Orchestrates speculative planning (`terraform plan`) and controlled approvals/applies.
+   - Orchestrates speculative planning (`terraform plan`), verified policy gate governance, and controlled applies.
    - Plugs into the Tier 1 core without modifying provider-neutral logic.
 
 ---
@@ -31,7 +31,7 @@ flowchart TD
         R3["Repo C: Data Platform\n(.github/workflows/ci.yml)"]
     end
 
-    subgraph InfraFlowCore["InfraFlow Platform — Tier 1 (Provider-Neutral Core)"]
+    subgraph InfraFlowCore["InfraFlow Platform — Tier 1 (Provider-Neutral Core & DevSecOps Gates)"]
         direction TB
         InputGuard["Input Sanitization & Security Guard"]
         Toolchain["Terraform Toolchain Setup (SHA Pinned)"]
@@ -39,6 +39,14 @@ flowchart TD
         InitStep["terraform init -backend=false"]
         ValStep["terraform validate"]
         TestStep["terraform test (Native .tftest.hcl)"]
+
+        subgraph DevSecOps["DevSecOps Security Pipeline (reusable-tf-security.yml)"]
+            TFLint["TFLint (Static Analysis & Naming)"]
+            Zizmor["Zizmor (Workflow & Supply Chain Security)"]
+            Trivy["Trivy (IaC Misconfiguration Scanner)"]
+            Conftest["Conftest / OPA (Enterprise Rego Policy Gate)"]
+        end
+
         Summary["Structured Status & Summary Emission"]
 
         InputGuard --> Toolchain
@@ -47,6 +55,13 @@ flowchart TD
         InitStep --> ValStep
         ValStep --> TestStep
         TestStep --> Summary
+
+        InputGuard --> TFLint
+        InputGuard --> Zizmor
+        TFLint --> Trivy
+        Zizmor --> Trivy
+        Trivy --> Conftest
+        Conftest --> Summary
     end
 
     subgraph Tier2Adapters["Future Tier 2 Adapters (Milestone G03+)"]
@@ -155,7 +170,75 @@ This guarantees that caller PRs from forks or internal branches cannot modify re
 
 ---
 
-## 4. Input Sanitization & Security Guard
+## 4. Reusable Security Specification: `reusable-tf-security.yml`
+
+Introduced in **Milestone G03**, this reusable workflow provides dedicated DevSecOps quality gates.
+
+### 4.1 Inputs Schema
+
+| Input Name | Type | Required | Default | Description & Constraint |
+|---|---|---|---|---|
+| `terraform-version` | `string` | No | `'1.10.4'` | Version of Terraform to initialize for HCL parsing. Must be `>= 1.6.0`. |
+| `working-directory` | `string` | No | `'.'` | Directory containing Terraform configuration to scan. |
+| `severity-threshold` | `string` | No | `'HIGH,CRITICAL'` | Severities that trigger failure. |
+| `enable-tflint` | `boolean` | No | `true` | Executes TFLint static analysis. |
+| `enable-trivy` | `boolean` | No | `true` | Executes Trivy IaC misconfiguration scanning. |
+| `enable-conftest` | `boolean` | No | `true` | Evaluates Rego policies via Conftest. |
+| `enable-zizmor` | `boolean` | No | `false` | Executes Zizmor on `.github/workflows` (if present). |
+| `policy-directory` | `string` | No | `'policies'` | Path to policy directory containing Rego files. |
+
+### 4.2 Outputs Schema
+
+| Output Name | Type | Description |
+|---|---|---|
+| `tflint-status` | `string` | Outcome of TFLint: `success`, `failure`, or `skipped`. |
+| `trivy-status` | `string` | Outcome of Trivy: `success`, `failure`, or `skipped`. |
+| `conftest-status` | `string` | Outcome of Conftest: `success`, `failure`, or `skipped`. |
+| `zizmor-status` | `string` | Outcome of Zizmor: `success`, `failure`, or `skipped`. |
+| `security-summary` | `string` | Formatted summary of all security findings. |
+
+---
+
+## 5. Reusable Planning & Governance Specification: `reusable-tf-plan.yml`
+
+Introduced in **Milestone G04**, this reusable workflow provides speculative planning, change analysis, dual static security scanning (Trivy + Conftest/OPA), cryptographic attestation, and automated verified policy gate governance.
+
+### 5.1 Inputs Schema
+
+| Input Name | Type | Required | Default | Description & Constraint |
+|---|---|---|---|---|
+| `terraform-version` | `string` | No | `'1.10.4'` | Version of Terraform to execute. Must be `>= 1.6.0`. |
+| `working-directory` | `string` | No | `'.'` | Directory containing Terraform configuration to plan. |
+| `var-file` | `string` | No | `''` | Optional relative path to `.tfvars` file. |
+| `environment` | `string` | No | `'production'` | Target deployment environment context for policy evaluation and audit logging. |
+| `enable-policy-evaluation` | `boolean` | No | `true` | Evaluates Conftest / OPA policies against plan JSON. |
+| `policy-directory` | `string` | No | `'policies'` | Path to enterprise Rego policies root. |
+| `enable-trivy` | `boolean` | No | `true` | Executes Trivy IaC static scan. |
+| `severity-threshold` | `string` | No | `'HIGH,CRITICAL'` | Severities triggering hard scan failure. |
+| `fail-on-destructive` | `boolean` | No | `false` | When true, fails plan generation if deletions or replacements occur. |
+| `upload-plan-attestation` | `boolean` | No | `true` | Uploads sanitized summary and attestation manifest. |
+
+> [!NOTE]
+> `platform-repository` and `platform-ref` inputs were **removed** in the G04 Trust-Boundary Hardening.
+> The platform toolchain repository and commit are now derived internally from `github.workflow_repository` and `github.workflow_sha`
+> (the immutable SHA of the reusable workflow itself). Consumers cannot substitute a rogue toolchain repository or mutable tag.
+
+### 5.2 Outputs Schema
+
+| Output Name | Type | Description |
+|---|---|---|
+| `plan-status` | `string` | Speculative plan generation outcome (`success`, `failure`, `skipped`). |
+| `analysis-status` | `string` | Change classification outcome (`success`, `failure`, `skipped`). |
+| `security-status` | `string` | Aggregated security scan outcome (`success`, `failure`, `skipped`). |
+| `authorization-status` | `string` | Automated verified policy gate status (`authorized`, `rejected`). |
+| `approval-status` | `string` | Deprecated alias for `authorization-status`. |
+| `has-changes` | `string` | String boolean indicating whether modifying changes are planned. |
+| `has-destructive-changes` | `string` | String boolean indicating whether deletions/replacements are planned. |
+| `total-changes` | `string` | Total count of modifying resource changes. |
+
+---
+
+## 6. Input Sanitization & Security Guard
 
 To prevent shell injection and path traversal, every invocation evaluates inputs inside an isolated POSIX bash guard before Terraform runs:
 
@@ -186,7 +269,7 @@ fi
 
 ---
 
-## 5. Versioning & Consumer Release Strategy
+## 7. Versioning & Consumer Release Strategy
 
 Reusable workflows in GitHub Actions follow an immutable release strategy:
 

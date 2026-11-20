@@ -1,0 +1,17 @@
+name: "Template Injection Fixture"
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  injection-job:
+    runs-on: ubuntu-latest
+    steps:
+      # Insecure: Untrusted user input expanded directly into shell context
+      - name: "Vulnerable echo step"
+        run: |
+          echo "Issue title was: ${{ github.event.issue.title }}"

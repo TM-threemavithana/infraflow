@@ -1,0 +1,9 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "malformed_entry",
+      "change": INVALID_JSON_PAYLOAD_HERE
+    }
+  ]
+}
