@@ -2958,9 +2958,10 @@ def test_summary(val_res, aws_res, aws_plan_st, aws_auth_st, aws_sec_st, cf_res,
 rc1, l1 = test_summary('failure', 'skipped', 'skipped', 'disabled', 'skipped', 'skipped', 'skipped', 'skipped', 'false')
 assert l1['authorization-status'] == 'rejected' and l1['plan-status'] == 'failure' and rc1 != 0
 
-# 2. Cloud-free success -> authorized
+# 2. Cloud-free success -> not-applicable (offline CI valid, non-deployment status)
 rc2, l2 = test_summary('success', 'skipped', 'skipped', 'disabled', 'skipped', 'success', 'success', 'success', 'false')
-assert l2['authorization-status'] == 'authorized' and l2['plan-status'] == 'success' and rc2 == 0
+assert l2['authorization-status'] == 'not-applicable' and l2['plan-status'] == 'success' and rc2 == 0
+assert l2['authorization-status'] != 'authorized', "Cloud-free mode must never emit authorization-status=authorized"
 
 # 3. Cloud-free validation failure -> rejected
 rc3, l3 = test_summary('success', 'skipped', 'skipped', 'disabled', 'skipped', 'failure', 'failure', 'failure', 'false')
@@ -3129,6 +3130,32 @@ else
   record_fail "AWS OIDC Policy [3/3]: Malformed ID rejection" "Conftest unexpectedly accepted malformed non-numeric IDs"
 fi
 rm -f "${MALFORMED_TEST_JSON}"
+
+# Test 15.21: AWS Adapter: Cloud-free mode non-deployment authorization semantics
+CLOUDFREE_NON_DEPLOY_VERIFIED=false
+if python3 -c "
+import yaml
+
+with open('${AWS_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+
+on_block = data.get('on') or data.get(True) or {}
+out_desc = on_block.get('workflow_call', {}).get('outputs', {}).get('authorization-status', {}).get('description', '')
+assert 'not-applicable' in out_desc, 'Output authorization-status description missing not-applicable'
+
+summary_step = [s for s in data['jobs']['summary']['steps'] if s.get('id') == 'aggregate'][0]['run']
+assert 'AUTHORIZATION_STATUS=\"not-applicable\"' in summary_step, 'Summary step missing not-applicable assignment'
+assert 'AUTHORIZATION_STATUS=\"authorized\"' in summary_step, 'Summary step missing authorized assignment'
+assert 'ENABLE_AWS_AUTH' in summary_step, 'Summary step missing ENABLE_AWS_AUTH check'
+" >/dev/null 2>&1; then
+  CLOUDFREE_NON_DEPLOY_VERIFIED=true
+fi
+
+if [[ "${CLOUDFREE_NON_DEPLOY_VERIFIED}" == "true" ]]; then
+  record_pass "AWS Authorization Semantics: Cloud-free mode emits not-applicable and reserves authorized for authenticated plans"
+else
+  record_fail "AWS Authorization Semantics: Non-deployment status" "reusable-tf-aws.yml failed non-deployment authorization semantics check"
+fi
 
 # --- 16. Summary Report ---
 log_header "Summary of Validation Results"

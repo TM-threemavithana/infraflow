@@ -99,7 +99,7 @@ on:
         description: "Outcome of security scanning and policy evaluation"
         value: ${{ jobs.summary.outputs.security-status }}
       authorization-status:
-        description: "Outcome of the verified adapter gate (authorized, rejected)"
+        description: "Outcome of the verified adapter gate (authorized, not-applicable, rejected)"
         value: ${{ jobs.summary.outputs.authorization-status }}
       has-changes:
         description: "Whether the plan contains modifying resource changes"
@@ -878,7 +878,7 @@ jobs:
               TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
 
               if [[ "${PLAN_STATUS}" == "success" && "${SEC_STATUS}" == "success" ]]; then
-                AUTHORIZATION_STATUS="authorized"
+                AUTHORIZATION_STATUS="not-applicable"
               else
                 AUTHORIZATION_STATUS="rejected"
               fi
@@ -905,7 +905,14 @@ jobs:
           echo "  total-changes:        ${TOTAL_CHANGES}"
           echo "::endgroup::"
 
-          if [[ "${AUTHORIZATION_STATUS}" != "authorized" ]]; then
-            echo "::error::InfraFlow AWS Adapter Gate: Authorization REJECTED. One or more validation, planning, or security gates failed."
-            exit 1
+          if [[ "${ENABLE_AWS_AUTH}" == "true" ]]; then
+            if [[ "${AUTHORIZATION_STATUS}" != "authorized" ]]; then
+              echo "::error::InfraFlow AWS Adapter Gate: Authorization REJECTED. Authenticated AWS planning or security gates failed."
+              exit 1
+            fi
+          else
+            if [[ "${AUTHORIZATION_STATUS}" == "rejected" ]]; then
+              echo "::error::InfraFlow AWS Adapter Gate: Validation REJECTED. Cloud-free validation gates failed."
+              exit 1
+            fi
           fi
