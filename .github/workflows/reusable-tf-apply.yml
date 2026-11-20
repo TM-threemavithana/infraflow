@@ -382,6 +382,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: "Install Cryptographic Toolchain Dependencies"
+        run: |
+          python3 -m pip install --no-cache-dir cryptography
+
       - name: "Execute Pre-Execution Authorization Verifier"
         id: lifecycle
         env:
