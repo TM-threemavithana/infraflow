@@ -517,7 +517,33 @@ jobs:
           TRIVY_STATUS="passed"
           if [[ "${ENABLE_TRIVY}" == "true" ]]; then
             echo "::group::Executing Trivy IaC Misconfiguration Scan"
-            if trivy config . --severity "${SEVERITY}" --exit-code 1 --no-progress; then
+            for var in $(env | grep -E '^TRIVY_' | cut -d= -f1 || true); do
+              unset "${var}"
+            done
+            unset XDG_CACHE_HOME || true
+
+            TRIVY_CACHE="${RUNNER_TEMP}/infraflow-trivy-cache"
+            TRIVY_CONF="${RUNNER_TEMP}/infraflow-trivy.yaml"
+            mkdir -p "${TRIVY_CACHE}"
+            mkdir -p "${HOME}/.trivy/policy"
+            mkdir -p "${HOME}/.trivy/modules"
+
+            printf '%s\n' \
+              'ignorefile: ""' \
+              'rego:' \
+              '  skip-check-update: false' \
+              'misconfiguration:' \
+              '  scanners:' \
+              '    - terraform' > "${TRIVY_CONF}"
+
+            if trivy config \
+              --config "${TRIVY_CONF}" \
+              --cache-dir "${TRIVY_CACHE}" \
+              --ignorefile "" \
+              --severity "${SEVERITY}" \
+              --exit-code 1 \
+              --format table \
+              .; then
               echo "Trivy scan passed cleanly."
             else
               echo "::error::Trivy detected misconfigurations matching severity '${SEVERITY}'."
