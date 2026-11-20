@@ -91,22 +91,22 @@ on:
     outputs:
       plan-status:
         description: "Outcome of speculative plan generation (success, failure, skipped)"
-        value: ${{ jobs.aws-plan.outputs.plan-status || jobs.cloud-free-plan.outputs.plan-status }}
+        value: ${{ jobs.summary.outputs.plan-status }}
       aws-auth-status:
         description: "Outcome of AWS authentication (success, skipped, disabled)"
-        value: ${{ jobs.aws-plan.outputs.aws-auth-status || (inputs.enable-aws-auth && 'skipped' || 'disabled') }}
+        value: ${{ jobs.summary.outputs.aws-auth-status }}
       security-status:
         description: "Outcome of security scanning and policy evaluation"
-        value: ${{ jobs.aws-plan.outputs.security-status || jobs.cloud-free-plan.outputs.security-status }}
+        value: ${{ jobs.summary.outputs.security-status }}
       has-changes:
         description: "Whether the plan contains modifying resource changes"
-        value: ${{ jobs.aws-plan.outputs.has-changes || jobs.cloud-free-plan.outputs.has-changes }}
+        value: ${{ jobs.summary.outputs.has-changes }}
       has-destructive-changes:
         description: "Whether the plan contains deletions or replacements"
-        value: ${{ jobs.aws-plan.outputs.has-destructive-changes || jobs.cloud-free-plan.outputs.has-destructive-changes }}
+        value: ${{ jobs.summary.outputs.has-destructive-changes }}
       total-changes:
         description: "Total count of modifying resource changes"
-        value: ${{ jobs.aws-plan.outputs.total-changes || jobs.cloud-free-plan.outputs.total-changes }}
+        value: ${{ jobs.summary.outputs.total-changes }}
 
 permissions:
   contents: read
@@ -617,3 +617,79 @@ jobs:
             echo "has-destructive-changes=false"
             echo "total-changes=0"
           } >> "${GITHUB_OUTPUT}"
+
+  summary:
+    name: "AWS Adapter Execution Summary"
+    needs: [validate-inputs, aws-plan, cloud-free-plan]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+
+    outputs:
+      plan-status: ${{ steps.aggregate.outputs.plan-status }}
+      aws-auth-status: ${{ steps.aggregate.outputs.aws-auth-status }}
+      security-status: ${{ steps.aggregate.outputs.security-status }}
+      has-changes: ${{ steps.aggregate.outputs.has-changes }}
+      has-destructive-changes: ${{ steps.aggregate.outputs.has-destructive-changes }}
+      total-changes: ${{ steps.aggregate.outputs.total-changes }}
+
+    steps:
+      - name: "Aggregate Adapter Outputs"
+        id: aggregate
+        env:
+          VALIDATE_RESULT: ${{ needs.validate-inputs.result }}
+          AWS_PLAN_RESULT: ${{ needs.aws-plan.result }}
+          AWS_PLAN_STATUS: ${{ needs.aws-plan.outputs.plan-status }}
+          AWS_AUTH_STATUS: ${{ needs.aws-plan.outputs.aws-auth-status }}
+          AWS_SEC_STATUS: ${{ needs.aws-plan.outputs.security-status }}
+          AWS_HAS_CHANGES: ${{ needs.aws-plan.outputs.has-changes }}
+          AWS_HAS_DESTRUCTIVE: ${{ needs.aws-plan.outputs.has-destructive-changes }}
+          AWS_TOTAL_CHANGES: ${{ needs.aws-plan.outputs.total-changes }}
+          CF_PLAN_RESULT: ${{ needs.cloud-free-plan.result }}
+          CF_PLAN_STATUS: ${{ needs.cloud-free-plan.outputs.plan-status }}
+          CF_SEC_STATUS: ${{ needs.cloud-free-plan.outputs.security-status }}
+          CF_HAS_CHANGES: ${{ needs.cloud-free-plan.outputs.has-changes }}
+          CF_HAS_DESTRUCTIVE: ${{ needs.cloud-free-plan.outputs.has-destructive-changes }}
+          CF_TOTAL_CHANGES: ${{ needs.cloud-free-plan.outputs.total-changes }}
+          ENABLE_AWS_AUTH: ${{ inputs.enable-aws-auth }}
+        run: |
+          set -euo pipefail
+          echo "::group::Aggregating Adapter Execution Outputs"
+
+          PLAN_STATUS="failure"
+          AUTH_STATUS="disabled"
+          SEC_STATUS="failure"
+          HAS_CHANGES="false"
+          HAS_DESTRUCTIVE="false"
+          TOTAL_CHANGES="0"
+
+          if [[ "${VALIDATE_RESULT}" != "success" ]]; then
+            PLAN_STATUS="failure"
+            SEC_STATUS="failure"
+          elif [[ "${ENABLE_AWS_AUTH}" == "true" ]]; then
+            PLAN_STATUS="${AWS_PLAN_STATUS:-${AWS_PLAN_RESULT}}"
+            AUTH_STATUS="${AWS_AUTH_STATUS:-skipped}"
+            SEC_STATUS="${AWS_SEC_STATUS:-${AWS_PLAN_RESULT}}"
+            HAS_CHANGES="${AWS_HAS_CHANGES:-false}"
+            HAS_DESTRUCTIVE="${AWS_HAS_DESTRUCTIVE:-false}"
+            TOTAL_CHANGES="${AWS_TOTAL_CHANGES:-0}"
+          else
+            PLAN_STATUS="${CF_PLAN_STATUS:-${CF_PLAN_RESULT}}"
+            AUTH_STATUS="disabled"
+            SEC_STATUS="${CF_SEC_STATUS:-${CF_PLAN_RESULT}}"
+            HAS_CHANGES="${CF_HAS_CHANGES:-false}"
+            HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
+            TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
+          fi
+
+          {
+            echo "plan-status=${PLAN_STATUS}"
+            echo "aws-auth-status=${AUTH_STATUS}"
+            echo "security-status=${SEC_STATUS}"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+            echo "total-changes=${TOTAL_CHANGES}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "::endgroup::"
