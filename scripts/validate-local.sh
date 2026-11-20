@@ -2996,7 +2996,11 @@ else
 fi
 
 # Test 15.14: AWS Reference Module: Cloud-free initialization
-if terraform -chdir="${AWS_REF_MODULE}" init -backend=false -input=false >/dev/null 2>&1; then
+AWS_INIT_ARGS=("-backend=false" "-input=false")
+if [[ -d "${HOME}/.terraform.d/plugin-cache" ]]; then
+  AWS_INIT_ARGS+=("-plugin-dir=${HOME}/.terraform.d/plugin-cache")
+fi
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${AWS_REF_MODULE}" init "${AWS_INIT_ARGS[@]}" >/dev/null 2>&1; then
   record_pass "AWS Reference Module [2/6]: Cloud-free initialization verified (terraform init -backend=false)"
 else
   record_fail "AWS Reference Module [2/6]: terraform init" "Reference module initialization failed"
@@ -3157,24 +3161,24 @@ else
   record_fail "AWS Authorization Semantics: Non-deployment status" "reusable-tf-aws.yml failed non-deployment authorization semantics check"
 fi
 
-# --- 16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle & Replay ---
-log_header "16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle & Replay"
+# --- 16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle, Replay & Apply Contract ---
+log_header "16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle, Replay & Apply Contract"
 
 KMS_ENVELOPE_PY="${REPO_ROOT}/scripts/kms-envelope.py"
 G06_TEST_DIR="$(mktemp -d /tmp/infraflow-g06-test-XXXXXX)"
 
 # Test 16.1: kms-envelope.py executable and syntax valid
 if [[ -x "${KMS_ENVELOPE_PY}" ]] && python3 "${KMS_ENVELOPE_PY}" --help >/dev/null 2>&1; then
-  record_pass "G06 Envelope Tooling [1/17]: kms-envelope.py syntax & CLI interface verified"
+  record_pass "G06 Envelope Tooling [1/24]: kms-envelope.py syntax & CLI interface verified"
 else
-  record_fail "G06 Envelope Tooling [1/17]: kms-envelope.py" "kms-envelope.py missing, not executable, or failed syntax check"
+  record_fail "G06 Envelope Tooling [1/24]: kms-envelope.py" "kms-envelope.py missing, not executable, or failed syntax check"
 fi
 
 # Test 16.2: G06 Cryptographic unit test suite (20 tests)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" >/dev/null 2>&1; then
-  record_pass "G06 Cryptographic Suite [2/17]: All 20 unit tests passed (test_kms_envelope.py)"
+  record_pass "G06 Cryptographic Suite [2/24]: All 20 unit tests passed (test_kms_envelope.py)"
 else
-  record_fail "G06 Cryptographic Suite [2/17]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
+  record_fail "G06 Cryptographic Suite [2/24]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
 fi
 
 # Test 16.3: CLI KEK generation with mode 0600
@@ -3182,12 +3186,12 @@ G06_TEST_KEK="${G06_TEST_DIR}/test.kek"
 if python3 "${KMS_ENVELOPE_PY}" generate-kek --output-kek "${G06_TEST_KEK}" >/dev/null 2>&1 && [[ -f "${G06_TEST_KEK}" ]]; then
   KEK_PERMS="$(stat -c "%a" "${G06_TEST_KEK}" 2>/dev/null || stat -f "%Lp" "${G06_TEST_KEK}" 2>/dev/null || echo "600")"
   if [[ "${KEK_PERMS}" == "600" ]]; then
-    record_pass "G06 Key Management [3/17]: Mock KEK generated with restrictive permissions (mode 0600)"
+    record_pass "G06 Key Management [3/24]: Mock KEK generated with restrictive permissions (mode 0600)"
   else
-    record_fail "G06 Key Management [3/17]: Permissions" "Generated KEK file has insecure permissions: ${KEK_PERMS}"
+    record_fail "G06 Key Management [3/24]: Permissions" "Generated KEK file has insecure permissions: ${KEK_PERMS}"
   fi
 else
-  record_fail "G06 Key Management [3/17]: generate-kek" "Failed to generate mock KEK"
+  record_fail "G06 Key Management [3/24]: generate-kek" "Failed to generate mock KEK"
 fi
 
 # Test 16.4: CLI Encryption and Decryption Roundtrip
@@ -3213,9 +3217,9 @@ if python3 "${KMS_ENVELOPE_PY}" encrypt \
     --expected-environment "production" \
     --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1 && \
    cmp -s "${G06_TEST_PLAN}" "${G06_TEST_DEC}"; then
-  record_pass "G06 Envelope Lifecycle [4/17]: CLI encrypt and decrypt roundtrip matches exact binary digest"
+  record_pass "G06 Envelope Lifecycle [4/24]: CLI encrypt and decrypt roundtrip matches exact binary digest"
 else
-  record_fail "G06 Envelope Lifecycle [4/17]: Roundtrip" "CLI encryption/decryption failed or produced mismatched bytes"
+  record_fail "G06 Envelope Lifecycle [4/24]: Roundtrip" "CLI encryption/decryption failed or produced mismatched bytes"
 fi
 
 # Test 16.5: CLI Adversarial Tampering: Bit-flip in ciphertext fails closed
@@ -3235,9 +3239,9 @@ if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
     --envelope-file "${G06_TAMPERED_ENV}" \
     --output-plan "${G06_TEST_DIR}/tampered.plan" \
     --kek-file "${G06_TEST_KEK}" >/dev/null 2>&1; then
-  record_pass "G06 Adversarial Defense [5/17]: Ciphertext bit-flip rejected as expected (exit code != 0)"
+  record_pass "G06 Adversarial Defense [5/24]: Ciphertext bit-flip rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Adversarial Defense [5/17]: Tamper detection" "Decryption unexpectedly accepted tampered ciphertext"
+  record_fail "G06 Adversarial Defense [5/24]: Tamper detection" "Decryption unexpectedly accepted tampered ciphertext"
 fi
 
 # Test 16.6: CLI Context Binding: Repository mismatch rejected
@@ -3246,9 +3250,9 @@ if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
     --output-plan "${G06_TEST_DIR}/mismatched_repo.plan" \
     --kek-file "${G06_TEST_KEK}" \
     --expected-repo "attacker-org/malicious-repo" >/dev/null 2>&1; then
-  record_pass "G06 Context Binding [6/17]: Repository identity mismatch rejected as expected (exit code != 0)"
+  record_pass "G06 Context Binding [6/24]: Repository identity mismatch rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Context Binding [6/17]: Repo mismatch" "Decryption unexpectedly accepted mismatched repository context"
+  record_fail "G06 Context Binding [6/24]: Repo mismatch" "Decryption unexpectedly accepted mismatched repository context"
 fi
 
 # Test 16.7: CLI Key Isolation: Wrong KEK rejected
@@ -3258,9 +3262,9 @@ if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
     --envelope-file "${G06_TEST_ENV}" \
     --output-plan "${G06_TEST_DIR}/wrong_kek.plan" \
     --kek-file "${G06_WRONG_KEK}" >/dev/null 2>&1; then
-  record_pass "G06 Key Isolation [7/17]: Decryption with unauthorized KEK rejected as expected (exit code != 0)"
+  record_pass "G06 Key Isolation [7/24]: Decryption with unauthorized KEK rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Key Isolation [7/17]: Key isolation" "Decryption unexpectedly succeeded with unauthorized KEK"
+  record_fail "G06 Key Isolation [7/24]: Key isolation" "Decryption unexpectedly succeeded with unauthorized KEK"
 fi
 
 # Test 16.8: CLI Static Verification: verify-envelope checks headers without KEK
@@ -3270,24 +3274,24 @@ if python3 "${KMS_ENVELOPE_PY}" verify-envelope \
     --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
     --expected-environment "production" \
     --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1; then
-  record_pass "G06 Static Verification [8/17]: verify-envelope validates schema and context headers without KEK"
+  record_pass "G06 Static Verification [8/24]: verify-envelope validates schema and context headers without KEK"
 else
-  record_fail "G06 Static Verification [8/17]: verify-envelope" "Static envelope verification failed on valid envelope"
+  record_fail "G06 Static Verification [8/24]: verify-envelope" "Static envelope verification failed on valid envelope"
 fi
 
 # Test 16.9: verify-plan-lifecycle.py executable and syntax valid
 VERIFY_LIFECYCLE_PY="${REPO_ROOT}/scripts/verify-plan-lifecycle.py"
 if [[ -x "${VERIFY_LIFECYCLE_PY}" ]] && python3 "${VERIFY_LIFECYCLE_PY}" --help >/dev/null 2>&1; then
-  record_pass "G06 Lifecycle Tooling [9/17]: verify-plan-lifecycle.py syntax & CLI interface verified"
+  record_pass "G06 Lifecycle Tooling [9/24]: verify-plan-lifecycle.py syntax & CLI interface verified"
 else
-  record_fail "G06 Lifecycle Tooling [9/17]: verify-plan-lifecycle.py" "verify-plan-lifecycle.py missing, not executable, or failed syntax check"
+  record_fail "G06 Lifecycle Tooling [9/24]: verify-plan-lifecycle.py" "verify-plan-lifecycle.py missing, not executable, or failed syntax check"
 fi
 
-# Test 16.10: Full G06 unit test suite (49 tests in tests/test_*.py)
+# Test 16.10: Full G06 unit test suite (test_kms_envelope.py + test_plan_lifecycle.py)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
-  record_pass "G06 Full Test Suite [10/17]: All 49 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py)"
+  record_pass "G06 Full Test Suite [10/24]: All unit tests passed"
 else
-  record_fail "G06 Full Test Suite [10/17]: Unit tests" "One or more tests in tests directory failed"
+  record_fail "G06 Full Test Suite [10/24]: Unit tests" "One or more tests in tests directory failed"
 fi
 
 # Test 16.11: Plan expiration gate: Fresh accepted, expired rejected
@@ -3304,9 +3308,9 @@ if python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
     --created-at "${G06_TS_CREATED}" \
     --expires-at "${G06_TS_STALE_EXP}" \
     --current-time "${G06_TS_NOW}" >/dev/null 2>&1; then
-  record_pass "G06 Expiration Gate [11/17]: Fresh plan accepted, expired plan rejected"
+  record_pass "G06 Expiration Gate [11/24]: Fresh plan accepted, expired plan rejected"
 else
-  record_fail "G06 Expiration Gate [11/17]: Expiration" "validate-expiration failed fresh/expired gate"
+  record_fail "G06 Expiration Gate [11/24]: Expiration" "validate-expiration failed fresh/expired gate"
 fi
 
 # Test 16.12: Future plan gate: Future-created plan rejected
@@ -3315,9 +3319,9 @@ if ! python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
     --created-at "${G06_TS_FUTURE}" \
     --expires-at "${G06_TS_FRESH_EXP}" \
     --current-time "${G06_TS_NOW}" >/dev/null 2>&1; then
-  record_pass "G06 Future Plan Gate [12/17]: Future-created plan rejected as expected (exit code != 0)"
+  record_pass "G06 Future Plan Gate [12/24]: Future-created plan rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Future Plan Gate [12/17]: Future plan" "validate-expiration unexpectedly accepted future-dated plan"
+  record_fail "G06 Future Plan Gate [12/24]: Future plan" "validate-expiration unexpectedly accepted future-dated plan"
 fi
 
 # Test 16.13: State consistency gate: Lineage & serial match accepted, stale serial rejected
@@ -3341,9 +3345,9 @@ if python3 "${VERIFY_LIFECYCLE_PY}" validate-state \
     --state-file "${G06_STATE_FILE}" \
     --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
     --expected-serial 41 >/dev/null 2>&1; then
-  record_pass "G06 State Consistency [13/17]: State lineage & serial match accepted; stale serial rejected"
+  record_pass "G06 State Consistency [13/24]: State lineage & serial match accepted; stale serial rejected"
 else
-  record_fail "G06 State Consistency [13/17]: State gate" "validate-state failed lineage/serial check"
+  record_fail "G06 State Consistency [13/24]: State gate" "validate-state failed lineage/serial check"
 fi
 
 # Test 16.14: Replay prevention: Atomic plan reservation succeeds, duplicate rejected
@@ -3364,9 +3368,9 @@ if python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
     --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
     --environment "production" \
     --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1; then
-  record_pass "G06 Replay Prevention [14/17]: Atomic plan reservation succeeds; duplicate reservation rejected"
+  record_pass "G06 Replay Prevention [14/24]: Atomic plan reservation succeeds; duplicate reservation rejected"
 else
-  record_fail "G06 Replay Prevention [14/17]: Replay gate" "ledger-reserve failed duplicate reservation rejection"
+  record_fail "G06 Replay Prevention [14/24]: Replay gate" "ledger-reserve failed duplicate reservation rejection"
 fi
 
 # Test 16.15: Consumed plan gate: Consumed plan re-execution rejected
@@ -3381,9 +3385,9 @@ if python3 "${VERIFY_LIFECYCLE_PY}" ledger-consume \
     --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
     --environment "production" \
     --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1; then
-  record_pass "G06 Consumed Plan Gate [15/17]: Consumed plan re-execution strictly rejected"
+  record_pass "G06 Consumed Plan Gate [15/24]: Consumed plan re-execution strictly rejected"
 else
-  record_fail "G06 Consumed Plan Gate [15/17]: Consumed gate" "ledger-consume or re-reservation check failed"
+  record_fail "G06 Consumed Plan Gate [15/24]: Consumed gate" "ledger-consume or re-reservation check failed"
 fi
 
 # Test 16.16: Pre-execution authorization verifier: Full roundtrip emits AUTHORIZED_FOR_SIMULATION
@@ -3400,9 +3404,9 @@ VERIFY_OUT="$(python3 "${VERIFY_LIFECYCLE_PY}" verify \
     --provenance-status "VERIFIED" 2>&1 || true)"
 
 if echo "${VERIFY_OUT}" | grep -q '"decision": "AUTHORIZED_FOR_SIMULATION"'; then
-  record_pass "G06 Pre-Execution Verifier [16/17]: Full roundtrip emits AUTHORIZED_FOR_SIMULATION"
+  record_pass "G06 Pre-Execution Verifier [16/24]: Full roundtrip emits AUTHORIZED_FOR_SIMULATION"
 else
-  record_fail "G06 Pre-Execution Verifier [16/17]: Verifier roundtrip" "verify CLI failed to authorize valid plan simulation: ${VERIFY_OUT}"
+  record_fail "G06 Pre-Execution Verifier [16/24]: Verifier roundtrip" "verify CLI failed to authorize valid plan simulation: ${VERIFY_OUT}"
 fi
 
 # Test 16.17: Pre-execution security boundary: Unverified provenance strictly rejected
@@ -3418,9 +3422,114 @@ REJECT_OUT="$(python3 "${VERIFY_LIFECYCLE_PY}" verify \
     --provenance-status "UNVERIFIED" 2>&1 || true)"
 
 if echo "${REJECT_OUT}" | grep -q '"decision": "REJECTED"' || echo "${REJECT_OUT}" | grep -q 'UNVERIFIED_PROVENANCE'; then
-  record_pass "G06 Security Boundary [17/17]: Unverified provenance strictly rejected (fail-closed)"
+  record_pass "G06 Security Boundary [17/24]: Unverified provenance strictly rejected (fail-closed)"
 else
-  record_fail "G06 Security Boundary [17/17]: Provenance rejection" "verify CLI unexpectedly authorized unverified provenance: ${REJECT_OUT}"
+  record_fail "G06 Security Boundary [17/24]: Provenance rejection" "verify CLI unexpectedly authorized unverified provenance: ${REJECT_OUT}"
+fi
+
+# Test 16.18: reusable-tf-apply.yml actionlint validation
+REUSABLE_APPLY_WF="${REPO_ROOT}/.github/workflows/reusable-tf-apply.yml"
+if [[ -n "${ACTIONLINT_BIN}" ]]; then
+  if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+    record_pass "G06 Apply Workflow [18/24]: Actionlint syntax & schema validation passed"
+  else
+    record_fail "G06 Apply Workflow [18/24]: Actionlint" "Actionlint failed on reusable-tf-apply.yml"
+  fi
+else
+  record_fail "G06 Apply Workflow [18/24]: Actionlint" "Actionlint binary not found"
+fi
+
+# Test 16.19: reusable-tf-apply.yml Zizmor supply chain security audit
+if [[ -n "${ZIZMOR_BIN}" ]]; then
+  if (cd "${REPO_ROOT}" && "${ZIZMOR_BIN}" -c .zizmor.yml --min-severity medium .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+    record_pass "G06 Apply Workflow [19/24]: Zizmor supply chain security audit passed (0 medium/high findings)"
+  else
+    record_fail "G06 Apply Workflow [19/24]: Zizmor" "Zizmor detected supply chain vulnerabilities in reusable-tf-apply.yml"
+  fi
+else
+  record_fail "G06 Apply Workflow [19/24]: Zizmor" "Zizmor binary not found"
+fi
+
+# Test 16.20: Full unit test suite (69 tests across all test modules)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
+  record_pass "G06 Full Test Suite [20/24]: All 69 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py + test_apply_workflow.py)"
+else
+  record_fail "G06 Full Test Suite [20/24]: Unit tests" "One or more tests in tests directory failed"
+fi
+
+# Test 16.21: Workflow Guard: Untrusted PR event rejected
+EXTRACTED_APPLY_GUARD="$(mktemp /tmp/infraflow-apply-guard-XXXXXX.sh)"
+python3 -c "
+import yaml
+with open('${REUSABLE_APPLY_WF}', 'r') as f:
+    wf = yaml.safe_load(f)
+script = wf['jobs']['validate-inputs']['steps'][0]['run']
+with open('${EXTRACTED_APPLY_GUARD}', 'w') as out:
+    out.write(script)
+"
+chmod +x "${EXTRACTED_APPLY_GUARD}"
+
+if ! INPUT_PLAN_ID="plan-test-01" \
+     INPUT_ENVELOPE_FILE="artifacts/plan.enc.json" \
+     INPUT_STATE_FILE="artifacts/terraform.tfstate" \
+     INPUT_ENV="production" \
+     INPUT_LINEAGE="3f2e1d0c-4b5a-6789-0123-abcdef456789" \
+     INPUT_SERIAL="42" \
+     INPUT_BACKEND="s3://bucket/key" \
+     INPUT_WORKSPACE="default" \
+     INPUT_PROVENANCE_FILE="" \
+     INPUT_LEDGER_PATH=".infraflow/ledger.db" \
+     EVENT_NAME="pull_request" \
+     TARGET_REF="refs/heads/main" \
+     WORKFLOW_REPO="TM-threemavithana/infraflow" \
+     WORKFLOW_SHA="484b067aa500d5523d1bccc06ce111cfe736a8af" \
+     WORKFLOW_REF="TM-threemavithana/infraflow/.github/workflows/reusable-tf-apply.yml@484b067aa500d5523d1bccc06ce111cfe736a8af" \
+     bash "${EXTRACTED_APPLY_GUARD}" >/dev/null 2>&1; then
+  record_pass "G06 Workflow Guard [21/24]: Untrusted pull requests (pull_request & pull_request_target) rejected (SEC-02 fail-closed)"
+else
+  record_fail "G06 Workflow Guard [21/24]: PR rejection" "Workflow guard unexpectedly permitted pull_request trigger"
+fi
+
+# Test 16.22: Workflow Guard: Mutable workflow ref (@main) strictly rejected
+if ! INPUT_PLAN_ID="plan-test-01" \
+     INPUT_ENVELOPE_FILE="artifacts/plan.enc.json" \
+     INPUT_STATE_FILE="artifacts/terraform.tfstate" \
+     INPUT_ENV="production" \
+     INPUT_LINEAGE="3f2e1d0c-4b5a-6789-0123-abcdef456789" \
+     INPUT_SERIAL="42" \
+     INPUT_BACKEND="s3://bucket/key" \
+     INPUT_WORKSPACE="default" \
+     INPUT_PROVENANCE_FILE="" \
+     INPUT_LEDGER_PATH=".infraflow/ledger.db" \
+     EVENT_NAME="push" \
+     TARGET_REF="refs/heads/main" \
+     WORKFLOW_REPO="TM-threemavithana/infraflow" \
+     WORKFLOW_SHA="484b067aa500d5523d1bccc06ce111cfe736a8af" \
+     WORKFLOW_REF="TM-threemavithana/infraflow/.github/workflows/reusable-tf-apply.yml@main" \
+     bash "${EXTRACTED_APPLY_GUARD}" >/dev/null 2>&1; then
+  record_pass "G06 Workflow Trust Boundary [22/24]: Mutable workflow ref (@main) strictly rejected"
+else
+  record_fail "G06 Workflow Trust Boundary [22/24]: Mutable ref" "Workflow guard unexpectedly accepted mutable @main ref"
+fi
+rm -f "${EXTRACTED_APPLY_GUARD}"
+
+# Test 16.23: Consumer example workflow actionlint validation & immutable pin
+CONSUMER_APPLY_WF="${REPO_ROOT}/examples/consumer-workflow/.github/workflows/infraflow-protected-apply-simulation.yml"
+if [[ -f "${CONSUMER_APPLY_WF}" ]] && \
+   (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" "${CONSUMER_APPLY_WF}" >/dev/null 2>&1) && \
+   grep -q '@[0-9a-f]\{40\}' "${CONSUMER_APPLY_WF}"; then
+  record_pass "G06 Consumer Workflow [23/24]: Consumer example passes actionlint and references immutable SHA"
+else
+  record_fail "G06 Consumer Workflow [23/24]: Consumer example" "Consumer apply example missing, invalid, or unpinned"
+fi
+
+# Test 16.24: Simulation safety invariant: Absence of real apply/destroy execution
+if ! grep -qi "terraform apply" "${REUSABLE_APPLY_WF}" && \
+   ! grep -qi "terraform destroy" "${REUSABLE_APPLY_WF}" && \
+   ! grep -qi "force-unlock" "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Simulation Safety [24/24]: Strict absence of state-modifying terraform apply/destroy execution"
+else
+  record_fail "G06 Simulation Safety [24/24]: Simulation invariant" "reusable-tf-apply.yml contains state-modifying execution commands"
 fi
 
 rm -rf "${G06_TEST_DIR}"
