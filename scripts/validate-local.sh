@@ -3450,9 +3450,9 @@ else
   record_fail "G06 Apply Workflow [19/24]: Zizmor" "Zizmor binary not found"
 fi
 
-# Test 16.20: Full unit test suite (69 tests across all test modules)
+# Test 16.20: Full unit test suite (94 tests across all test modules)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
-  record_pass "G06 Full Test Suite [20/24]: All 69 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py + test_apply_workflow.py)"
+  record_pass "G06 Full Test Suite [20/24]: All 94 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py + test_apply_workflow.py + test_destruction_recovery.py)"
 else
   record_fail "G06 Full Test Suite [20/24]: Unit tests" "One or more tests in tests directory failed"
 fi
@@ -3527,9 +3527,226 @@ fi
 if ! grep -qi "terraform apply" "${REUSABLE_APPLY_WF}" && \
    ! grep -qi "terraform destroy" "${REUSABLE_APPLY_WF}" && \
    ! grep -qi "force-unlock" "${REUSABLE_APPLY_WF}"; then
-  record_pass "G06 Simulation Safety [24/24]: Strict absence of state-modifying terraform apply/destroy execution"
+  record_pass "G06 Simulation Safety [24/34]: Strict absence of state-modifying terraform apply/destroy execution"
 else
-  record_fail "G06 Simulation Safety [24/24]: Simulation invariant" "reusable-tf-apply.yml contains state-modifying execution commands"
+  record_fail "G06 Simulation Safety [24/34]: Simulation invariant" "reusable-tf-apply.yml contains state-modifying execution commands"
+fi
+
+# Test 16.25: assess-destruction.py syntax & CLI interface
+ASSESS_DESTRUCTION_PY="${REPO_ROOT}/scripts/assess-destruction.py"
+if [[ -x "${ASSESS_DESTRUCTION_PY}" ]] && python3 "${ASSESS_DESTRUCTION_PY}" --help >/dev/null 2>&1; then
+  record_pass "G06 Destruction Tooling [25/34]: assess-destruction.py syntax & CLI interface verified"
+else
+  record_fail "G06 Destruction Tooling [25/34]: assess-destruction.py" "assess-destruction.py missing, not executable, or failed CLI check"
+fi
+
+# Test 16.26: Destruction & Recovery Unit Test Suite (25 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_destruction_recovery.py" >/dev/null 2>&1; then
+  record_pass "G06 Destruction Test Suite [26/34]: All 25 unit tests passed (test_destruction_recovery.py)"
+else
+  record_fail "G06 Destruction Test Suite [26/34]: Unit tests" "One or more tests in tests/test_destruction_recovery.py failed"
+fi
+
+# Setup fixtures for CLI destruction tests
+G06_DESTRUCT_PLAN="${G06_TEST_DIR}/destruct_plan.json"
+cat << 'EOF' > "${G06_DESTRUCT_PLAN}"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "aws_instance.worker1",
+      "type": "aws_instance",
+      "name": "worker1",
+      "change": {
+        "actions": ["delete"]
+      }
+    },
+    {
+      "address": "aws_instance.worker2",
+      "type": "aws_instance",
+      "name": "worker2",
+      "change": {
+        "actions": ["delete"]
+      }
+    },
+    {
+      "address": "aws_instance.manager",
+      "type": "aws_instance",
+      "name": "manager",
+      "change": {
+        "actions": ["update"]
+      }
+    }
+  ]
+}
+EOF
+
+# Test 16.27: Blast Radius: Plan exceeding deletion limit rejected
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 1 >/dev/null 2>&1; then
+  record_pass "G06 Blast Radius [27/34]: Plan with deletions exceeding blast-radius threshold rejected (DELETION_LIMIT_EXCEEDED)"
+else
+  record_fail "G06 Blast Radius [27/34]: Deletion limit" "assess-destruction.py unexpectedly authorized plan exceeding deletion limit"
+fi
+
+# Test 16.28: Missing confirmation rejected for destructive plan
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 >/dev/null 2>&1; then
+  record_pass "G06 Destruction Confirmation [28/34]: Plan with destructive changes and missing confirmation rejected (MISSING_DESTRUCTION_CONFIRMATION)"
+else
+  record_fail "G06 Destruction Confirmation [28/34]: Missing confirmation" "assess-destruction.py unexpectedly authorized destructive changes without confirmation"
+fi
+
+# Test 16.29: Generic confirmation token strictly rejected
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-token "yes" >/dev/null 2>&1; then
+  record_pass "G06 Destruction Confirmation [29/34]: Generic confirmation string ('yes') strictly rejected (INVALID_CONFIRMATION_TOKEN)"
+else
+  record_fail "G06 Destruction Confirmation [29/34]: Generic token" "assess-destruction.py unexpectedly accepted generic 'yes' confirmation"
+fi
+
+# Test 16.30: Confirmation bound to another plan rejected
+G06_MISMATCH_CONF="${G06_TEST_DIR}/mismatch_conf.json"
+python3 "${ASSESS_DESTRUCTION_PY}" create-confirmation \
+  --plan-id "wrong-plan-id" \
+  --plan-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "staging" \
+  --pure-deletions 2 \
+  --replacements 0 \
+  --authorized-by "security-lead@infraflow.local" \
+  --output-file "${G06_MISMATCH_CONF}" >/dev/null 2>&1
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-file "${G06_MISMATCH_CONF}" >/dev/null 2>&1; then
+  record_pass "G06 Confirmation Binding [30/34]: Confirmation bound to mismatched plan ID rejected (CONFIRMATION_PLAN_MISMATCH)"
+else
+  record_fail "G06 Confirmation Binding [30/34]: Plan ID mismatch" "assess-destruction.py unexpectedly accepted mismatched plan confirmation"
+fi
+
+# Test 16.31: Expired confirmation token rejected
+G06_EXPIRED_CONF="${G06_TEST_DIR}/expired_conf.json"
+python3 "${ASSESS_DESTRUCTION_PY}" create-confirmation \
+  --plan-id "plan-test-01" \
+  --plan-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "staging" \
+  --pure-deletions 2 \
+  --replacements 0 \
+  --authorized-by "security-lead@infraflow.local" \
+  --ttl-seconds -10 \
+  --output-file "${G06_EXPIRED_CONF}" >/dev/null 2>&1
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-file "${G06_EXPIRED_CONF}" >/dev/null 2>&1; then
+  record_pass "G06 Confirmation Expiration [31/34]: Expired confirmation token rejected (CONFIRMATION_EXPIRED)"
+else
+  record_fail "G06 Confirmation Expiration [31/34]: Expired token" "assess-destruction.py unexpectedly accepted expired confirmation token"
+fi
+
+# Test 16.32: State-wide destroy attempt rejected
+G06_STATEWIDE_PLAN="${G06_TEST_DIR}/statewide_plan.json"
+cat << 'EOF' > "${G06_STATEWIDE_PLAN}"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {"address": "aws_instance.node1", "type": "aws_instance", "change": {"actions": ["delete"]}},
+    {"address": "aws_instance.node2", "type": "aws_instance", "change": {"actions": ["delete"]}}
+  ]
+}
+EOF
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_STATEWIDE_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 10 >/dev/null 2>&1; then
+  record_pass "G06 State-Wide Destroy [32/34]: Plan deleting all active resources rejected (STATE_WIDE_DESTROY_BLOCKED)"
+else
+  record_fail "G06 State-Wide Destroy [32/34]: State-wide destroy" "assess-destruction.py unexpectedly permitted state-wide destroy"
+fi
+
+# Test 16.33: Security-critical resource deletion blocked
+G06_CRITICAL_PLAN="${G06_TEST_DIR}/critical_plan.json"
+cat << 'EOF' > "${G06_CRITICAL_PLAN}"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {"address": "aws_kms_key.app_vault", "type": "aws_kms_key", "change": {"actions": ["delete"]}},
+    {"address": "aws_instance.node", "type": "aws_instance", "change": {"actions": ["update"]}}
+  ]
+}
+EOF
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_CRITICAL_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 10 >/dev/null 2>&1; then
+  record_pass "G06 Security-Critical Assets [33/34]: Deletion of security-critical resources rejected (SECURITY_CRITICAL_DESTRUCTION_BLOCKED)"
+else
+  record_fail "G06 Security-Critical Assets [33/34]: Security-critical" "assess-destruction.py unexpectedly allowed deletion of KMS key"
+fi
+
+# Test 16.34: Valid plan with valid confirmation authorized
+G06_VALID_CONF="${G06_TEST_DIR}/valid_conf.json"
+python3 "${ASSESS_DESTRUCTION_PY}" create-confirmation \
+  --plan-id "plan-test-01" \
+  --plan-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "staging" \
+  --pure-deletions 2 \
+  --replacements 0 \
+  --authorized-by "security-lead@infraflow.local" \
+  --ttl-seconds 3600 \
+  --output-file "${G06_VALID_CONF}" >/dev/null 2>&1
+
+if python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-file "${G06_VALID_CONF}" >/dev/null 2>&1; then
+  record_pass "G06 Authorized Destruction [34/34]: Valid plan with matching confirmation authorized (AUTHORIZED_SIMULATION_WITH_CONFIRMATION)"
+else
+  record_fail "G06 Authorized Destruction [34/34]: Valid confirmation" "assess-destruction.py failed to authorize valid plan with matching confirmation"
 fi
 
 rm -rf "${G06_TEST_DIR}"

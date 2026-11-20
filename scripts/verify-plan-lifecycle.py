@@ -58,17 +58,29 @@ DECISION_REJECTED = "REJECTED"
 
 # Replay ledger states
 STATUS_AVAILABLE = "AVAILABLE"
+STATUS_NOT_STARTED = "NOT_STARTED"
 STATUS_RESERVED = "RESERVED"
 STATUS_CONSUMED = "CONSUMED"
+STATUS_SIMULATION_COMPLETED = "SIMULATION_COMPLETED"
 STATUS_FAILED = "FAILED"
+STATUS_SIMULATION_FAILED = "SIMULATION_FAILED"
 STATUS_INTERRUPTED = "INTERRUPTED"
+STATUS_OUTCOME_UNCERTAIN = "OUTCOME_UNCERTAIN"
+STATUS_VERIFICATION_FAILED = "VERIFICATION_FAILED"
+STATUS_REJECTED = "REJECTED"
 
 VALID_LEDGER_STATUSES = {
     STATUS_AVAILABLE,
+    STATUS_NOT_STARTED,
     STATUS_RESERVED,
     STATUS_CONSUMED,
+    STATUS_SIMULATION_COMPLETED,
     STATUS_FAILED,
+    STATUS_SIMULATION_FAILED,
     STATUS_INTERRUPTED,
+    STATUS_OUTCOME_UNCERTAIN,
+    STATUS_VERIFICATION_FAILED,
+    STATUS_REJECTED,
 }
 
 # Regex validators
@@ -471,7 +483,7 @@ class PlanReplayLedger:
                     existing_status = existing["status"]
                     existing_id = existing["plan_id"]
 
-                    if existing_status == STATUS_CONSUMED:
+                    if existing_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
                         raise PlanReplayError(
                             f"ALREADY_CONSUMED: Plan '{existing_id}' (digest {plan_digest_sha256}) was already consumed at {existing['consumed_at']}"
                         )
@@ -479,7 +491,7 @@ class PlanReplayLedger:
                         raise PlanReplayError(
                             f"DUPLICATE_RESERVATION: Plan '{existing_id}' is currently reserved for execution (reserved at {existing['reserved_at']})"
                         )
-                    elif existing_status in (STATUS_FAILED, STATUS_INTERRUPTED):
+                    elif existing_status in (STATUS_FAILED, STATUS_INTERRUPTED, STATUS_SIMULATION_FAILED, STATUS_OUTCOME_UNCERTAIN):
                         raise PlanReplayError(
                             f"UNCERTAIN_EXECUTION_STATE: Plan '{existing_id}' previously ended in '{existing_status}' state; re-execution strictly blocked without manual investigation"
                         )
@@ -565,6 +577,47 @@ class PlanReplayLedger:
                 cursor.execute(
                     "UPDATE plan_executions SET status = ? WHERE plan_id = ?",
                     (new_status, plan_id),
+                )
+
+    def record_outcome(
+        self,
+        plan_id: str,
+        status: str,
+        current_time: Optional[datetime.datetime] = None,
+    ) -> None:
+        """
+        Transitions a RESERVED plan to a final or recovery outcome status.
+        Supports: SIMULATION_COMPLETED, SIMULATION_FAILED, OUTCOME_UNCERTAIN, CONSUMED, FAILED, INTERRUPTED.
+        """
+        if status not in VALID_LEDGER_STATUSES:
+            raise ValueError(f"Invalid ledger status: '{status}'")
+
+        now = get_current_utc_time(current_time)
+        now_iso = now.isoformat()
+
+        with self._lock:
+            with self._conn:
+                cursor = self._conn.cursor()
+                cursor.execute(
+                    "SELECT status FROM plan_executions WHERE plan_id = ?",
+                    (plan_id,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{plan_id}' does not exist in ledger")
+
+                current_status = row["status"]
+                if current_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                    raise PlanReplayError(f"ALREADY_CONSUMED: Plan '{plan_id}' has already been consumed")
+
+                consumed_at = now_iso if status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED) else None
+                cursor.execute(
+                    """
+                    UPDATE plan_executions
+                    SET status = ?, consumed_at = COALESCE(?, consumed_at)
+                    WHERE plan_id = ?
+                    """,
+                    (status, consumed_at, plan_id),
                 )
 
     def get_plan_status(self, plan_id: str) -> Optional[Dict[str, Any]]:

@@ -68,6 +68,36 @@ on:
         required: false
         default: 60
         type: number
+      destruction-policy-file:
+        description: "Optional relative path to trusted JSON destruction blast-radius policy"
+        required: false
+        default: ""
+        type: string
+      destruction-confirmation-file:
+        description: "Optional relative path to plan-specific destruction confirmation contract JSON"
+        required: false
+        default: ""
+        type: string
+      destruction-confirmation-token:
+        description: "Optional inline JSON destruction confirmation contract string"
+        required: false
+        default: ""
+        type: string
+      max-deletions:
+        description: "Optional caller-specified maximum deletions limit (cannot exceed policy)"
+        required: false
+        default: -1
+        type: number
+      max-replacements:
+        description: "Optional caller-specified maximum replacements limit (cannot exceed policy)"
+        required: false
+        default: -1
+        type: number
+      plan-json-file:
+        description: "Optional relative path to unencrypted plan JSON for destructive change analysis"
+        required: false
+        default: ""
+        type: string
 
     outputs:
       plan-verification-status:
@@ -82,6 +112,12 @@ on:
       replay-status:
         description: "Outcome of replay ledger atomic reservation (reserved, duplicate, consumed, failed)"
         value: ${{ jobs.summary.outputs.replay-status }}
+      destruction-status:
+        description: "Outcome of destructive change assessment (safe, authorized, rejected, not-applicable)"
+        value: ${{ jobs.summary.outputs.destruction-status }}
+      destruction-summary:
+        description: "JSON summary of deletions, replacements, and affected resources"
+        value: ${{ jobs.summary.outputs.destruction-summary }}
       authorization-status:
         description: "Final pre-execution authorization outcome (AUTHORIZED_FOR_SIMULATION, REJECTED)"
         value: ${{ jobs.summary.outputs.authorization-status }}
@@ -114,6 +150,12 @@ jobs:
           INPUT_WORKSPACE: ${{ inputs.expected-workspace }}
           INPUT_PROVENANCE_FILE: ${{ inputs.provenance-file }}
           INPUT_LEDGER_PATH: ${{ inputs.ledger-db-path }}
+          INPUT_DESTRUCTION_POLICY: ${{ inputs.destruction-policy-file }}
+          INPUT_DESTRUCTION_CONF_FILE: ${{ inputs.destruction-confirmation-file }}
+          INPUT_DESTRUCTION_CONF_TOKEN: ${{ inputs.destruction-confirmation-token }}
+          INPUT_MAX_DELETIONS: ${{ inputs.max-deletions }}
+          INPUT_MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
+          INPUT_PLAN_JSON: ${{ inputs.plan-json-file }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ github.ref }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
@@ -233,6 +275,37 @@ jobs:
             exit 1
           fi
 
+          # 11. Validate Destruction Blast-Radius & Confirmation Inputs
+          for opt_file in "${INPUT_DESTRUCTION_POLICY}" "${INPUT_DESTRUCTION_CONF_FILE}" "${INPUT_PLAN_JSON}"; do
+            if [[ -n "${opt_file}" ]]; then
+              if [[ "${opt_file}" =~ ^/ ]] || [[ "${opt_file}" =~ ^~ ]] || [[ "${opt_file}" =~ \.\. ]]; then
+                echo "::error::Security Violation: Path traversal or absolute paths prohibited in file path: '${opt_file}'."
+                exit 1
+              fi
+              if [[ ! "${opt_file}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+                echo "::error::Security Violation: File path contains forbidden characters: '${opt_file}'."
+                exit 1
+              fi
+            fi
+          done
+
+          # Check destruction limits format
+          for limit_val in "${INPUT_MAX_DELETIONS}" "${INPUT_MAX_REPLACEMENTS}"; do
+            if [[ -n "${limit_val}" && ! "${limit_val}" =~ ^-?[0-9]+$ ]]; then
+              echo "::error::Security Violation: Destruction limits must be valid integers."
+              exit 1
+            fi
+          done
+
+          # Check destruction confirmation token for generic blocklist
+          if [[ -n "${INPUT_DESTRUCTION_CONF_TOKEN}" ]]; then
+            TRIMMED_TOKEN="$(echo "${INPUT_DESTRUCTION_CONF_TOKEN}" | tr '[:upper:]' '[:lower:]' | xargs)"
+            if [[ "${TRIMMED_TOKEN}" =~ ^(yes|y|true|1|destroy|apply|confirm|confirmed|approved|ok|proceed|force|override|default)$ ]]; then
+              echo "::error::Security Violation: Generic confirmation token '${TRIMMED_TOKEN}' is strictly prohibited. Requires structured JSON confirmation contract bound to plan digest."
+              exit 1
+            fi
+          fi
+
           echo "Input sanitization and trust boundary checks passed successfully."
           echo "::endgroup::"
 
@@ -249,6 +322,8 @@ jobs:
       provenance-status: ${{ steps.lifecycle.outputs.provenance-status }}
       state-consistency-status: ${{ steps.lifecycle.outputs.state-consistency-status }}
       replay-status: ${{ steps.lifecycle.outputs.replay-status }}
+      destruction-status: ${{ steps.lifecycle.outputs.destruction-status }}
+      destruction-summary: ${{ steps.lifecycle.outputs.destruction-summary }}
       authorization-status: ${{ steps.lifecycle.outputs.authorization-status }}
       plan-digest: ${{ steps.lifecycle.outputs.plan-digest }}
 
@@ -288,6 +363,12 @@ jobs:
           ALLOW_INITIAL_STATE: ${{ inputs.allow-initial-state }}
           MAX_TTL: ${{ inputs.max-ttl-seconds }}
           CLOCK_SKEW: ${{ inputs.clock-skew-seconds }}
+          DESTRUCTION_POLICY: ${{ inputs.destruction-policy-file }}
+          DESTRUCTION_CONF_FILE: ${{ inputs.destruction-confirmation-file }}
+          DESTRUCTION_CONF_TOKEN: ${{ inputs.destruction-confirmation-token }}
+          MAX_DELETIONS: ${{ inputs.max-deletions }}
+          MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
+          PLAN_JSON_FILE: ${{ inputs.plan-json-file }}
           REPO_NAME: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
@@ -366,12 +447,93 @@ jobs:
           PLAN_DIGEST=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.plan_digest_sha256 // ""')
           REPLAY_STATUS=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.replay_status // "failed"')
 
+          # 6. Destructive Change Assessment & Blast-Radius Evaluation (Milestone G06.4)
+          DESTRUCT_STATUS="not-applicable"
+          DESTRUCT_SUMMARY="{}"
+
+          ACTIVE_PLAN_JSON=""
+          if [[ -n "${PLAN_JSON_FILE}" && -f "${PLAN_JSON_FILE}" ]]; then
+            ACTIVE_PLAN_JSON="${PLAN_JSON_FILE}"
+          elif [[ -f "plan.json" ]]; then
+            ACTIVE_PLAN_JSON="plan.json"
+          fi
+
+          if [[ -n "${ACTIVE_PLAN_JSON}" ]]; then
+            echo "Assessing plan for destructive changes using: ${ACTIVE_PLAN_JSON}"
+            ASSESS_PY=".infraflow-platform/scripts/assess-destruction.py"
+            ASSESS_OUT_JSON="assess_decision.json"
+            ASSESS_ARGS=(
+              "assess"
+              "--plan-file" "${ACTIVE_PLAN_JSON}"
+              "--expected-plan-id" "${PLAN_ID}"
+              "--expected-digest" "${PLAN_DIGEST}"
+              "--expected-repo" "${REPO_NAME}"
+              "--environment" "${TARGET_ENV}"
+              "--output-json" "${ASSESS_OUT_JSON}"
+            )
+
+            if [[ -n "${DESTRUCTION_POLICY}" && -f "${DESTRUCTION_POLICY}" ]]; then
+              ASSESS_ARGS+=("--policy-file" "${DESTRUCTION_POLICY}")
+            fi
+
+            if [[ -n "${DESTRUCTION_CONF_FILE}" && -f "${DESTRUCTION_CONF_FILE}" ]]; then
+              ASSESS_ARGS+=("--confirmation-file" "${DESTRUCTION_CONF_FILE}")
+            elif [[ -n "${DESTRUCTION_CONF_TOKEN}" ]]; then
+              ASSESS_ARGS+=("--confirmation-token" "${DESTRUCTION_CONF_TOKEN}")
+            fi
+
+            if [[ "${MAX_DELETIONS}" -ge 0 ]]; then
+              ASSESS_ARGS+=("--max-deletions" "${MAX_DELETIONS}")
+            fi
+
+            if [[ "${MAX_REPLACEMENTS}" -ge 0 ]]; then
+              ASSESS_ARGS+=("--max-replacements" "${MAX_REPLACEMENTS}")
+            fi
+
+            echo "Executing: python3 ${ASSESS_PY} ${ASSESS_ARGS[*]}"
+            python3 "${ASSESS_PY}" "${ASSESS_ARGS[@]}" || true
+
+            if [[ -f "${ASSESS_OUT_JSON}" ]]; then
+              ASSESS_DECISION=$(jq -r '.decision // "REJECTED"' "${ASSESS_OUT_JSON}")
+              ASSESS_CODE=$(jq -r '.decision_code // "UNKNOWN"' "${ASSESS_OUT_JSON}")
+              HAS_DESTRUCTIVE=$(jq -r '.has_destructive_changes // false' "${ASSESS_OUT_JSON}")
+              DESTRUCT_SUMMARY=$(jq -c '.metrics // {}' "${ASSESS_OUT_JSON}")
+              rm -f "${ASSESS_OUT_JSON}"
+
+              if [[ "${ASSESS_DECISION}" == "AUTHORIZED_FOR_SIMULATION" ]]; then
+                if [[ "${HAS_DESTRUCTIVE}" == "true" ]]; then
+                  DESTRUCT_STATUS="authorized"
+                else
+                  DESTRUCT_STATUS="safe"
+                fi
+                echo "Destruction assessment passed: ${DESTRUCT_STATUS}"
+              else
+                DESTRUCT_STATUS="rejected"
+                echo "::error::Destruction assessment rejected: ${ASSESS_CODE}"
+                DECISION="REJECTED"
+                DECISION_CODE="DESTRUCTION_ASSESSMENT_REJECTED_${ASSESS_CODE}"
+              fi
+            else
+              DESTRUCT_STATUS="rejected"
+              echo "::error::Destruction assessment failed to generate decision output."
+              DECISION="REJECTED"
+              DECISION_CODE="DESTRUCTION_ASSESSMENT_FAILED"
+            fi
+          elif [[ -n "${DESTRUCTION_POLICY}" || -n "${DESTRUCTION_CONF_FILE}" || -n "${DESTRUCTION_CONF_TOKEN}" ]]; then
+            echo "::error::Destruction policy or confirmation was supplied, but plan JSON file was not found."
+            DESTRUCT_STATUS="rejected"
+            DECISION="REJECTED"
+            DECISION_CODE="MISSING_PLAN_JSON"
+          fi
+
           if [[ "${DECISION}" == "AUTHORIZED_FOR_SIMULATION" ]]; then
             {
               echo "plan-verification-status=success"
               echo "provenance-status=${PROV_STATUS}"
               echo "state-consistency-status=success"
               echo "replay-status=${REPLAY_STATUS}"
+              echo "destruction-status=${DESTRUCT_STATUS}"
+              echo "destruction-summary=${DESTRUCT_SUMMARY}"
               echo "authorization-status=AUTHORIZED_FOR_SIMULATION"
               echo "plan-digest=${PLAN_DIGEST}"
             } >> "$GITHUB_OUTPUT"
@@ -382,6 +544,8 @@ jobs:
               echo "provenance-status=${PROV_STATUS}"
               echo "state-consistency-status=failure"
               echo "replay-status=failed"
+              echo "destruction-status=${DESTRUCT_STATUS}"
+              echo "destruction-summary=${DESTRUCT_SUMMARY}"
               echo "authorization-status=REJECTED"
               echo "plan-digest="
             } >> "$GITHUB_OUTPUT"
@@ -403,6 +567,8 @@ jobs:
       provenance-status: ${{ steps.eval.outputs.provenance-status }}
       state-consistency-status: ${{ steps.eval.outputs.state-consistency-status }}
       replay-status: ${{ steps.eval.outputs.replay-status }}
+      destruction-status: ${{ steps.eval.outputs.destruction-status }}
+      destruction-summary: ${{ steps.eval.outputs.destruction-summary }}
       authorization-status: ${{ steps.eval.outputs.authorization-status }}
       simulation-status: "simulated-only"
 
@@ -416,6 +582,8 @@ jobs:
           PROV_STATUS: ${{ needs.verify-plan.outputs.provenance-status }}
           STATE_STATUS: ${{ needs.verify-plan.outputs.state-consistency-status }}
           REPLAY_STATUS: ${{ needs.verify-plan.outputs.replay-status }}
+          DESTRUCT_STATUS: ${{ needs.verify-plan.outputs.destruction-status }}
+          DESTRUCT_SUMMARY: ${{ needs.verify-plan.outputs.destruction-summary }}
           AUTH_STATUS: ${{ needs.verify-plan.outputs.authorization-status }}
           PLAN_DIGEST: ${{ needs.verify-plan.outputs.plan-digest }}
           PLAN_ID: ${{ inputs.plan-id }}
@@ -425,11 +593,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Fail-Closed Evaluation: Both prerequisite jobs must have succeeded
+          # Fail-Closed Evaluation: Both prerequisite jobs must have succeeded and destruction assessment passed
           FINAL_AUTH="REJECTED"
           FINAL_SIMULATION="simulated-only"
 
-          if [[ "${GUARD_RESULT}" == "success" && "${VERIFY_RESULT}" == "success" && "${AUTH_STATUS}" == "AUTHORIZED_FOR_SIMULATION" ]]; then
+          if [[ "${GUARD_RESULT}" == "success" && "${VERIFY_RESULT}" == "success" && "${AUTH_STATUS}" == "AUTHORIZED_FOR_SIMULATION" && "${DESTRUCT_STATUS}" != "rejected" ]]; then
             FINAL_AUTH="AUTHORIZED_FOR_SIMULATION"
           else
             FINAL_AUTH="REJECTED"
@@ -440,6 +608,8 @@ jobs:
             echo "provenance-status=${PROV_STATUS:-unverified}"
             echo "state-consistency-status=${STATE_STATUS:-failure}"
             echo "replay-status=${REPLAY_STATUS:-failed}"
+            echo "destruction-status=${DESTRUCT_STATUS:-not-applicable}"
+            echo "destruction-summary=${DESTRUCT_SUMMARY:-{}}"
             echo "authorization-status=${FINAL_AUTH}"
             echo "simulation-status=${FINAL_SIMULATION}"
           } >> "$GITHUB_OUTPUT"
@@ -459,12 +629,14 @@ jobs:
             echo "| **Provenance Attestation** | \`${PROV_STATUS:-unverified}\` |"
             echo "| **State Consistency** | \`${STATE_STATUS:-failure}\` |"
             echo "| **Replay Ledger Reservation** | \`${REPLAY_STATUS:-failed}\` |"
+            echo "| **Destruction Assessment** | \`${DESTRUCT_STATUS:-not-applicable}\` |"
+            echo "| **Destruction Metrics** | \`${DESTRUCT_SUMMARY:-{}}\` |"
             echo "| **Execution Mode** | \`simulated-only\` (No infrastructure changes) |"
             echo "| **Final Authorization Decision** | **\`${FINAL_AUTH}\`** |"
             echo ""
             if [[ "${FINAL_AUTH}" == "AUTHORIZED_FOR_SIMULATION" ]]; then
               echo "### ✅ Plan Authorized for Simulation"
-              echo "The Terraform execution plan successfully satisfied all pre-execution cryptographic integrity, expiration, state consistency, and replay reservation checks."
+              echo "The Terraform execution plan successfully satisfied all pre-execution cryptographic integrity, expiration, state consistency, replay reservation, and blast-radius destruction checks."
               echo ""
               echo "> [!NOTE]"
               echo "> This workflow executes in simulation-only mode ($0.00 cloud spend, zero cloud credentials). No state-modifying execution (application or destruction) occurred."
