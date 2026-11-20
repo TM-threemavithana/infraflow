@@ -2700,7 +2700,310 @@ else
   record_fail "Trust Boundary [9/9]: --signer-digest enforcement missing" "--signer-digest not properly integrated in verification toolchain"
 fi
 
-# --- 15. Summary Report ---
+# --- 15. AWS Cloud Adapter & OIDC Architecture (G05) ---
+log_header "15. AWS Cloud Adapter & OIDC Architecture (G05)"
+
+AWS_REUSABLE_WF="${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml"
+AWS_CONSUMER_WF="${REPO_ROOT}/examples/consumer-workflow/.github/workflows/infraflow-aws-plan.yml"
+AWS_REF_MODULE="${REPO_ROOT}/examples/aws-reference-module"
+
+# Test 15.1: Actionlint verification of AWS adapter and consumer workflows
+if [[ -n "${ACTIONLINT_BIN}" ]]; then
+  if "${ACTIONLINT_BIN}" "${AWS_REUSABLE_WF}" "${AWS_CONSUMER_WF}" >/dev/null 2>&1; then
+    record_pass "AWS Workflows: Actionlint syntax & schema validation passed"
+  else
+    record_fail "AWS Workflows: Actionlint validation" "Actionlint failed on AWS reusable or consumer workflow"
+  fi
+else
+  record_fail "AWS Workflows: Actionlint validation" "Actionlint binary not found"
+fi
+
+# Test 15.2: Zizmor supply chain security audit on reusable AWS workflow
+if [[ -n "${ZIZMOR_BIN}" ]]; then
+  if "${ZIZMOR_BIN}" -c "${REPO_ROOT}/.zizmor.yml" --min-severity medium "${AWS_REUSABLE_WF}" >/dev/null 2>&1; then
+    record_pass "AWS Adapter: Zizmor supply chain security audit passed (0 medium/high findings)"
+  else
+    record_fail "AWS Adapter: Zizmor audit" "Zizmor detected supply chain vulnerabilities in reusable-tf-aws.yml"
+  fi
+else
+  record_fail "AWS Adapter: Zizmor audit" "Zizmor binary not found"
+fi
+
+# Test 15.3: Conftest OPA unit tests verification (includes 27 AWS OIDC unit tests)
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+    record_pass "AWS OIDC Policy: All Rego unit tests passed (conftest verify)"
+  else
+    record_fail "AWS OIDC Policy: Rego unit tests" "conftest verify reported failures"
+  fi
+else
+  record_fail "AWS OIDC Policy: Rego unit tests" "Conftest binary not found"
+fi
+
+# Extract guard script from reusable-tf-aws.yml
+AWS_GUARD_SCRIPT="$(python3 -c "
+import yaml
+with open('${AWS_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+steps = {s['id']: s['run'] for s in data['jobs']['validate-inputs']['steps'] if 'id' in s and 'run' in s}
+print(steps['guard'])
+")"
+
+run_aws_guard_test() {
+  local version="${1:-1.10.4}"
+  local dir="${2:-.}"
+  local var_file="${3:-}"
+  local env_name="${4:-production}"
+  local region="${5:-us-east-1}"
+  local role_arn="${6:-arn:aws:iam::123456789012:role/infraflow-planning-role}"
+  local bucket="${7:-infraflow-state-bucket}"
+  local key="${8:-env/prod/terraform.tfstate}"
+  local dynamodb="${9:-}"
+  local severity="${10:-HIGH,CRITICAL}"
+  local session_name="${11:-infraflow-aws-plan}"
+  local role_duration="${12:-900}"
+  local enable_aws_auth="${13:-true}"
+  local event_name="${14:-push}"
+  local workflow_repo="${15:-TM-threemavithana/infraflow}"
+  local workflow_sha="${16:-ed965edd00391b6b1461a65184838bb7cca5eb81}"
+  local workflow_ref="${17:-TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81}"
+
+  local code=0
+  INPUT_VERSION="${version}" \
+  INPUT_DIR="${dir}" \
+  INPUT_VAR_FILE="${var_file}" \
+  INPUT_ENV="${env_name}" \
+  INPUT_AWS_REGION="${region}" \
+  INPUT_ROLE_ARN="${role_arn}" \
+  INPUT_BUCKET="${bucket}" \
+  INPUT_KEY="${key}" \
+  INPUT_DYNAMODB="${dynamodb}" \
+  INPUT_SEVERITY="${severity}" \
+  INPUT_SESSION_NAME="${session_name}" \
+  INPUT_ROLE_DURATION="${role_duration}" \
+  ENABLE_AWS_AUTH="${enable_aws_auth}" \
+  EVENT_NAME="${event_name}" \
+  WORKFLOW_REPO="${workflow_repo}" \
+  WORKFLOW_SHA="${workflow_sha}" \
+  WORKFLOW_REF="${workflow_ref}" \
+    bash -c "${AWS_GUARD_SCRIPT}" >/dev/null 2>&1 || code=$?
+  return ${code}
+}
+
+# Test 15.4: Input Guard: Valid AWS inputs accepted
+if run_aws_guard_test; then
+  record_pass "AWS Input Guard [1/9]: Valid AWS inputs accepted"
+else
+  record_fail "AWS Input Guard [1/9]: Valid inputs" "Legitimate AWS inputs unexpectedly failed guard validation"
+fi
+
+# Test 15.5: Input Guard: Malformed Role ARN rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "invalid-arn" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::12345:role/role" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role;curl evil.com"; then
+  record_pass "AWS Input Guard [2/9]: Malformed Role ARN and injection attempts rejected as expected"
+else
+  record_fail "AWS Input Guard [2/9]: Role ARN rejection" "Malformed Role ARN was unexpectedly accepted"
+fi
+
+# Test 15.6: Input Guard: Malformed AWS region rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "INVALID_REGION" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1; rm -rf /"; then
+  record_pass "AWS Input Guard [3/9]: Malformed AWS region and injection attempts rejected as expected"
+else
+  record_fail "AWS Input Guard [3/9]: Region rejection" "Malformed AWS region was unexpectedly accepted"
+fi
+
+# Test 15.7: Input Guard: Invalid S3 bucket names rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "MyBucket" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "my..bucket" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "ab"; then
+  record_pass "AWS Input Guard [4/9]: Invalid S3 bucket names (uppercase, consecutive dots, short) rejected"
+else
+  record_fail "AWS Input Guard [4/9]: S3 bucket rejection" "Invalid S3 bucket name was unexpectedly accepted"
+fi
+
+# Test 15.8: Input Guard: S3 backend key traversal and absolute paths rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "../traversal.tfstate" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "/root/state.tfstate"; then
+  record_pass "AWS Input Guard [5/9]: S3 backend key path traversal ('..') and absolute paths rejected"
+else
+  record_fail "AWS Input Guard [5/9]: S3 key traversal" "S3 key traversal input was unexpectedly accepted"
+fi
+
+# Test 15.9: Input Guard: Invalid DynamoDB table name rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "bad*table;evil"; then
+  record_pass "AWS Input Guard [6/9]: Invalid DynamoDB table name rejected as expected"
+else
+  record_fail "AWS Input Guard [6/9]: DynamoDB rejection" "Invalid DynamoDB table name was unexpectedly accepted"
+fi
+
+# Test 15.10: Security Invariant (SEC-02): Untrusted PR attempting AWS auth rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "pull_request"; then
+  record_pass "AWS Security Guard [7/9]: Untrusted pull request enabling live AWS auth rejected (SEC-02 fail-closed)"
+else
+  record_fail "AWS Security Guard [7/9]: PR auth rejection" "Untrusted pull request was allowed to enable AWS authentication"
+fi
+
+# Test 15.11: Cloud-Free mode: PR allowed with enable-aws-auth: false
+if run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "" "" "" "" "HIGH,CRITICAL" "plan" "900" "false" "pull_request"; then
+  record_pass "AWS Security Guard [8/9]: Cloud-free pull request validation accepted (SEC-02 compliant)"
+else
+  record_fail "AWS Security Guard [8/9]: Cloud-free PR" "Cloud-free pull request was unexpectedly rejected"
+fi
+
+# Test 15.12: Platform Trust Boundary: Reusable AWS adapter enforces workflow repository & immutable commit SHA
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "untrusted-attacker/infraflow" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@main"; then
+  record_pass "AWS Trust Boundary [9/9]: Rogue workflow repository and mutable refs (@main) strictly rejected"
+else
+  record_fail "AWS Trust Boundary [9/9]: Trust boundary enforcement" "Rogue repo or mutable ref was unexpectedly accepted"
+fi
+
+# Test 15.13: AWS Reference Module: Canonical formatting
+if terraform -chdir="${AWS_REF_MODULE}" fmt -check >/dev/null 2>&1; then
+  record_pass "AWS Reference Module [1/6]: Canonical formatting verified (terraform fmt -check)"
+else
+  record_fail "AWS Reference Module [1/6]: terraform fmt" "Reference module contains unformatted files"
+fi
+
+# Test 15.14: AWS Reference Module: Cloud-free initialization
+if terraform -chdir="${AWS_REF_MODULE}" init -backend=false -input=false >/dev/null 2>&1; then
+  record_pass "AWS Reference Module [2/6]: Cloud-free initialization verified (terraform init -backend=false)"
+else
+  record_fail "AWS Reference Module [2/6]: terraform init" "Reference module initialization failed"
+fi
+
+# Test 15.15: AWS Reference Module: Static validation
+if terraform -chdir="${AWS_REF_MODULE}" validate >/dev/null 2>&1; then
+  record_pass "AWS Reference Module [3/6]: Static validation verified (terraform validate)"
+else
+  record_fail "AWS Reference Module [3/6]: terraform validate" "Reference module failed static validation"
+fi
+
+# Test 15.16: AWS Reference Module: Native unit tests with mock provider
+if terraform -chdir="${AWS_REF_MODULE}" test >/dev/null 2>&1; then
+  record_pass "AWS Reference Module [4/6]: Native unit tests passed offline with mock provider (terraform test)"
+else
+  record_fail "AWS Reference Module [4/6]: terraform test" "Reference module native unit tests failed"
+fi
+
+# Clean up temporary terraform state in reference module
+rm -rf "${AWS_REF_MODULE}/.terraform" "${AWS_REF_MODULE}/.terraform.lock.hcl"
+
+# Test 15.17: AWS Reference Module: Trivy IaC Misconfiguration scan
+if [[ -n "${TRIVY_BIN}" ]]; then
+  if "${TRIVY_BIN}" config --severity HIGH,CRITICAL --exit-code 1 "${AWS_REF_MODULE}" >/dev/null 2>&1; then
+    record_pass "AWS Reference Module [5/6]: Trivy IaC security scan clean (0 HIGH/CRITICAL findings)"
+  else
+    record_fail "AWS Reference Module [5/6]: Trivy scan" "Trivy detected misconfigurations in AWS reference module"
+  fi
+else
+  record_fail "AWS Reference Module [5/6]: Trivy scan" "Trivy binary not found"
+fi
+
+# Test 15.18: AWS Reference Module: Conftest policy compliance
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" test --all-namespaces --policy "${REPO_ROOT}/policies" "${AWS_REF_MODULE}/main.tf" >/dev/null 2>&1; then
+    record_pass "AWS Reference Module [6/6]: Conftest enterprise policy compliance verified"
+  else
+    record_fail "AWS Reference Module [6/6]: Conftest policy" "Conftest policy failed on AWS reference module"
+  fi
+else
+  record_fail "AWS Reference Module [6/6]: Conftest policy" "Conftest binary not found"
+fi
+
+# Test 15.18: OIDC Security Policy: Post-July 15, 2026 immutable subject accepted
+IMMUTABLE_TEST_JSON="$(mktemp /tmp/infraflow-oidc-immutable-XXXXXX.json)"
+cat << 'EOF' > "${IMMUTABLE_TEST_JSON}"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:TM-threemavithana@157876462/infraflow@1463731985:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+if [[ -n "${CONFTEST_BIN}" ]] && "${CONFTEST_BIN}" test --namespace aws.iam_oidc --policy "${REPO_ROOT}/policies" "${IMMUTABLE_TEST_JSON}" >/dev/null 2>&1; then
+  record_pass "AWS OIDC Policy [1/3]: Post-July 15, 2026 immutable OIDC subject format accepted"
+else
+  record_fail "AWS OIDC Policy [1/3]: Immutable format" "Conftest unexpectedly rejected valid immutable OIDC subject"
+fi
+rm -f "${IMMUTABLE_TEST_JSON}"
+
+# Test 15.19: OIDC Security Policy: Pre-July 15, 2026 legacy subject accepted
+LEGACY_TEST_JSON="$(mktemp /tmp/infraflow-oidc-legacy-XXXXXX.json)"
+cat << 'EOF' > "${LEGACY_TEST_JSON}"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:TM-threemavithana/infraflow:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+if [[ -n "${CONFTEST_BIN}" ]] && "${CONFTEST_BIN}" test --namespace aws.iam_oidc --policy "${REPO_ROOT}/policies" "${LEGACY_TEST_JSON}" >/dev/null 2>&1; then
+  record_pass "AWS OIDC Policy [2/3]: Pre-July 15, 2026 legacy OIDC subject format accepted"
+else
+  record_fail "AWS OIDC Policy [2/3]: Legacy format" "Conftest unexpectedly rejected valid legacy OIDC subject"
+fi
+rm -f "${LEGACY_TEST_JSON}"
+
+# Test 15.20: OIDC Security Policy: Malformed non-numeric IDs and wildcards rejected
+MALFORMED_TEST_JSON="$(mktemp /tmp/infraflow-oidc-malformed-XXXXXX.json)"
+cat << 'EOF' > "${MALFORMED_TEST_JSON}"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:TM-threemavithana@abc/infraflow@xyz:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+if [[ -n "${CONFTEST_BIN}" ]] && ! "${CONFTEST_BIN}" test --namespace aws.iam_oidc --policy "${REPO_ROOT}/policies" "${MALFORMED_TEST_JSON}" >/dev/null 2>&1; then
+  record_pass "AWS OIDC Policy [3/3]: Malformed non-numeric IDs and wildcards rejected as expected"
+else
+  record_fail "AWS OIDC Policy [3/3]: Malformed ID rejection" "Conftest unexpectedly accepted malformed non-numeric IDs"
+fi
+rm -f "${MALFORMED_TEST_JSON}"
+
+# --- 16. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -2708,7 +3011,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

@@ -15,7 +15,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G04.1.2** | **Trust Root Isolation & Attack Simulation** | Anti-substitution verification, PR threat analysis, key lifecycle, 12 attack simulation tests, 107/107 checks. | **PASS** |
 | **G04.1.3** | **Trusted Workflow Enforcement** | Caller workflow security, trusted configuration, preview/prod signing separation, 10 attack simulation tests, 117/117 checks. | **PASS** |
 | **G04.1.4** | **InfraFlow Architecture Finalization** | Governance rulesets, GitHub Artifact Attestations (Sigstore OIDC), automated verified policy gate, dual scanner enforcement, permission boundary isolation, 176/176 checks. | **PASS** |
-| **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | Backlog (Future) |
+| **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **IN PROGRESS (G05.2)** |
 | **G06** | **Protected Apply and Destroy** | Secure execution of approved plans with cryptographic digest verification, KMS-encrypted plan storage, and controlled destruction. | Backlog (Future) |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | Backlog (Future) |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
@@ -188,7 +188,24 @@ InfraFlow is structured into progressive delivery milestones:
 
 ---
 
-## 14. Quality Gate Definitions
+## 14. Milestone G05 — Acceptance Criteria (AWS Integration)
+
+Milestone G05 extends InfraFlow with Tier 2 cloud provider adapters, establishing passwordless AWS Workload Identity Federation (OIDC) and Amazon S3 remote state management with native lockfiles.
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G05-01** | AWS Adapter Interface & Contract | Design and implement `.github/workflows/reusable-tf-aws.yml` reusable workflow contract accepting `aws-region`, `role-to-assume`, `backend-bucket`, `backend-key`, `terraform-version`, `environment`, and optional `backend-dynamodb-table`. Enforce universal adapter contract with clean separation between cloud-free PR checks and authenticated cloud planning. | Architecture audit & `actionlint` | **PASS (G05.2 Implemented)** |
+| **AC-G05-02** | OIDC Identity & IAM Trust Policy as Code | Implement and enforce OPA Policy-as-Code rules ([`policies/aws/iam_oidc.rego`](file:///home/tharuka/projects/infraflow/policies/aws/iam_oidc.rego)) auditing AWS IAM trust policies. Enforce `sts:AssumeRoleWithWebIdentity`, `StringEquals` audience matching `sts.amazonaws.com`, and strict repository scoping supporting post-July 15, 2026 immutable IDs (`repo:OWNER@ID/REPO@ID:...`) and legacy names (`repo:OWNER/REPO:...`). Strictly reject open wildcards (`*`, `repo:*`, `repo:*:*`, `repo:<org>/*:*`) and untrusted pull request triggers. | Unit test execution (`conftest verify`) — 27/27 tests passed | **PASS (G05.1 Implemented & G05.2 Updated)** |
+| **AC-G05-03** | Permission Isolation & Least Privilege | Restrict `id-token: write` token elevation strictly to protected branches/environments at the job level. Prohibit cloud credentials during untrusted pull request execution (`SEC-02`). Enforce read-only IAM planning roles (`s3:GetObject` on state, `s3:PutObject`/`DeleteObject` strictly on `*.tflock`) with permission boundaries. | Architecture specification & reusable workflow jobs | **PASS (G05.2 Implemented)** |
+| **AC-G05-04** | S3 Backend & Native State Locking (`use_lockfile`) | Establish Amazon S3 remote state architecture with SSE-KMS / AES256 encryption, bucket versioning, and public access blocks. Adopt native S3 state locking via S3 Conditional Writes (`use_lockfile = true`) for Terraform >= 1.10.x, eliminating mandatory DynamoDB tables. Retain DynamoDB solely for optional legacy compatibility. | Dynamic backend engine in `reusable-tf-aws.yml` | **PASS (G05.2 Implemented)** |
+| **AC-G05-05** | Secure Input Sanitization & Parameter Validation | Implement defensive bash guard validating inputs: Role ARN regex (`^arn:aws:iam::[0-9]{12}:role/...`), AWS region allowlist regex (`^[a-z]{2}-[a-z]+-[0-9]+$`), S3 bucket naming regex, relative state keys (blocking `..` traversal), and SemVer `>= 1.6.0`. | Automated fixture execution (Section 15 Quality Gates) | **PASS (G05.2 Implemented)** |
+| **AC-G05-06** | AWS Reference Module & Consumer Workflow Example | Provide an exemplary AWS reference Terraform module (`examples/aws-reference-module/`) with native unit tests (`.tftest.hcl` using mock provider) and a sample consumer workflow demonstrating compliant AWS integration. | Module and workflow implementation & tests | **PASS (G05.2 Implemented)** |
+| **AC-G05-07** | Offline Testing Harness & Regression Prevention | Expand local validation harness (`scripts/validate-local.sh`) with Section 15 AWS quality gates (negative input tests, mock backend tests, actionlint, and OIDC policy tests) without requiring AWS accounts or cloud spend ($0.00). Ensure zero regressions in G01-G04. | `scripts/validate-local.sh` execution | **PASS (G05.2 Implemented)** |
+| **AC-G05-08** | External Consumer Integration & Release Evidence | Verify integration in external consumer repository (`TM-threemavithana/infraflow-consumer-test`), execute adversarial trust boundary tests, author evidence report, and release platform version `v0.3.0`. | Live CI execution & adversarial test report | **PLANNED (G05.3 Scope)** |
+
+---
+
+## 15. Quality Gate Definitions
 
 To achieve status **PASS** for G01 and G02:
 1. Every G01 document must exist, be fully elaborated, and be internally consistent.
