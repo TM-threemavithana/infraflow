@@ -85,7 +85,7 @@ on:
       fail-on-destructive:
         description: "Whether to fail plan generation if deletions or replacements occur"
         required: false
-        default: false
+        default: true
         type: boolean
 
     outputs:
@@ -98,6 +98,9 @@ on:
       security-status:
         description: "Outcome of security scanning and policy evaluation"
         value: ${{ jobs.summary.outputs.security-status }}
+      authorization-status:
+        description: "Outcome of the verified adapter gate (authorized, rejected)"
+        value: ${{ jobs.summary.outputs.authorization-status }}
       has-changes:
         description: "Whether the plan contains modifying resource changes"
         value: ${{ jobs.summary.outputs.has-changes }}
@@ -133,6 +136,9 @@ jobs:
           INPUT_SESSION_NAME: ${{ inputs.session-name }}
           INPUT_ROLE_DURATION: ${{ inputs.role-duration-seconds }}
           ENABLE_AWS_AUTH: ${{ inputs.enable-aws-auth }}
+          ENABLE_POLICY_EVAL: ${{ inputs.enable-policy-evaluation }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ github.ref }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
@@ -205,19 +211,43 @@ jobs:
             exit 1
           fi
 
-          # 10. Validate session name
+          # 10. Enforce mandatory policy evaluation (cannot be disabled)
+          if [[ "${ENABLE_POLICY_EVAL}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory policy evaluation (enable-policy-evaluation: false) is prohibited. Security policies are strictly enforced on all plans."
+            exit 1
+          fi
+
+          # 11. Enforce mandatory Trivy IaC scanning (cannot be disabled)
+          if [[ "${ENABLE_TRIVY}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Trivy IaC scanning (enable-trivy: false) is prohibited. Vulnerability scanning is strictly enforced on all plans."
+            exit 1
+          fi
+
+          # 12. Validate policy-directory if provided
+          if [[ -n "${INPUT_POLICY_DIR}" ]]; then
+            if [[ "${INPUT_POLICY_DIR}" =~ ^/ ]] || [[ "${INPUT_POLICY_DIR}" =~ ^~ ]] || [[ "${INPUT_POLICY_DIR}" =~ \.\. ]]; then
+              echo "::error::Security Violation: policy-directory must be a relative path: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_POLICY_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: policy-directory contains forbidden characters: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+          fi
+
+          # 13. Validate session name
           if [[ ! "${INPUT_SESSION_NAME}" =~ ^[a-zA-Z0-9+=,.@_-]{2,64}$ ]]; then
             echo "::error::Security Violation: Invalid session-name '${INPUT_SESSION_NAME}'. Must be 2-64 safe alphanumeric/symbol characters."
             exit 1
           fi
 
-          # 11. Validate role duration seconds (between 900 and 3600)
+          # 14. Validate role duration seconds (between 900 and 3600)
           if [[ ! "${INPUT_ROLE_DURATION}" =~ ^[0-9]+$ ]] || (( INPUT_ROLE_DURATION < 900 )) || (( INPUT_ROLE_DURATION > 3600 )); then
             echo "::error::Security Violation: Invalid role-duration-seconds '${INPUT_ROLE_DURATION}'. Must be an integer between 900 and 3600 seconds."
             exit 1
           fi
 
-          # 12. Authentication Mode Validation & Untrusted PR / Context Gate
+          # 15. Authentication Mode Validation & Untrusted PR / Context Gate
           if [[ "${ENABLE_AWS_AUTH}" == "true" ]]; then
             # Fail closed on untrusted PR triggers attempting cloud authentication
             if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "pull_request_target" ]]; then
@@ -225,12 +255,17 @@ jobs:
               exit 1
             fi
 
+            # Reject unauthorized events attempting live AWS authentication
+            if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" && "${EVENT_NAME}" != "release" ]]; then
+              echo "::error::Security Violation: Event '${EVENT_NAME}' is unauthorized for AWS authentication. Only 'push', 'workflow_dispatch', or 'release' are permitted."
+              exit 1
+            fi
+
             # Reject arbitrary, unprotected branches; enforce protected branch or release tag execution
-            if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
-              if [[ ! "${TARGET_REF}" =~ ^refs/heads/(main|master|release/.*)$ ]] && [[ ! "${TARGET_REF}" =~ ^refs/tags/v.* ]]; then
-                echo "::error::Security Violation: AWS authentication can only be requested from protected branches (main, release/*) or release tags (v*). Target ref '${TARGET_REF}' is an arbitrary, unprotected branch."
-                exit 1
-              fi
+            # No workflow_dispatch bypass: target ref MUST be a protected branch or release tag
+            if [[ ! "${TARGET_REF}" =~ ^refs/heads/(main|master|release/.*)$ ]] && [[ ! "${TARGET_REF}" =~ ^refs/tags/v.* ]]; then
+              echo "::error::Security Violation: AWS authentication can only be requested from protected branches (main, release/*) or release tags (v*). Target ref '${TARGET_REF}' is an arbitrary, unprotected branch."
+              exit 1
             fi
 
             # Validate Role ARN format
@@ -317,14 +352,17 @@ jobs:
       inputs.enable-aws-auth == true &&
       github.event_name != 'pull_request' &&
       github.event_name != 'pull_request_target' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release') &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     outputs:
       plan-status: ${{ steps.summary.outputs.plan-status }}
-      aws-auth-status: ${{ steps.set_auth_status.outputs.auth-status }}
+      aws-auth-status: ${{ steps.summary.outputs.aws-auth-status }}
       security-status: ${{ steps.summary.outputs.security-status }}
+      trivy-status: ${{ steps.summary.outputs.trivy-status }}
+      conftest-status: ${{ steps.summary.outputs.conftest-status }}
       has-changes: ${{ steps.analyze.outputs.has-changes }}
       has-destructive-changes: ${{ steps.analyze.outputs.has-destructive-changes }}
       total-changes: ${{ steps.analyze.outputs.total-changes }}
@@ -394,10 +432,6 @@ jobs:
           role-session-name: ${{ inputs.session-name }}
           role-duration-seconds: ${{ inputs.role-duration-seconds }}
           audience: sts.amazonaws.com
-
-      - name: "Set Auth Status Output"
-        id: set_auth_status
-        run: echo "auth-status=success" >> "${GITHUB_OUTPUT}"
 
       - name: "Install Terraform CLI"
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
@@ -469,25 +503,151 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
           echo "::endgroup::"
 
-      - name: "Policy Evaluation: Conftest / OPA"
+      - name: "Install & Run Trivy (IaC Scan)"
+        id: trivy
+        if: inputs.enable-trivy
+        env:
+          TARGET_DIR: ${{ inputs.working-directory }}
+          SEVERITY: ${{ inputs.severity-threshold }}
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Trivy (SHA256 Verified)"
+          if ! command -v /tmp/bin/trivy >/dev/null 2>&1; then
+            if command -v trivy >/dev/null 2>&1; then
+              mkdir -p /tmp/bin
+              cp "$(command -v trivy)" /tmp/bin/trivy
+            else
+              TRIVY_VER="0.76.2"
+              TRIVY_SHA="bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
+              curl -fsSL -o trivy.tar.gz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_Linux-64bit.tar.gz"
+              echo "${TRIVY_SHA}  trivy.tar.gz" | sha256sum -c -
+              mkdir -p /tmp/bin
+              tar -xzf trivy.tar.gz -C /tmp/bin trivy
+              chmod +x /tmp/bin/trivy
+            fi
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Executing Trivy IaC Scan"
+          for var in $(env | grep -E '^TRIVY_' | cut -d= -f1 || true); do
+            unset "${var}"
+          done
+          unset XDG_CACHE_HOME || true
+
+          TRIVY_CACHE="${RUNNER_TEMP}/infraflow-trivy-cache"
+          TRIVY_CONF="${RUNNER_TEMP}/infraflow-trivy.yaml"
+          mkdir -p "${TRIVY_CACHE}"
+          mkdir -p "${HOME}/.trivy/policy"
+          mkdir -p "${HOME}/.trivy/modules"
+
+          printf '%s\n' \
+            'ignorefile: ""' \
+            'rego:' \
+            '  skip-check-update: false' \
+            'misconfiguration:' \
+            '  scanners:' \
+            '    - terraform' > "${TRIVY_CONF}"
+
+          /tmp/bin/trivy config \
+            --config "${TRIVY_CONF}" \
+            --cache-dir "${TRIVY_CACHE}" \
+            --ignorefile "" \
+            --severity "HIGH,CRITICAL" \
+            --exit-code 1 \
+            --format table \
+            "${TARGET_DIR}"
+          echo "::endgroup::"
+
+      - name: "Install & Run Conftest (OPA Plan Evaluation)"
         id: conftest
-        if: inputs.enable-policy-evaluation == true
+        if: inputs.enable-policy-evaluation
         working-directory: ${{ inputs.working-directory }}
         env:
+          POLICY_DIR: ${{ inputs.policy-directory }}
           PLATFORM_DIR: ${{ runner.temp }}/infraflow-platform
         run: |
           set -euo pipefail
           echo "::group::Evaluating OPA Policies on Plan JSON"
-          conftest test tfplan.json --policy "${PLATFORM_DIR}/policies"
+          if ! command -v /tmp/bin/conftest >/dev/null 2>&1; then
+            if command -v conftest >/dev/null 2>&1; then
+              mkdir -p /tmp/bin
+              cp "$(command -v conftest)" /tmp/bin/conftest
+            else
+              CONFTEST_VER="0.71.1"
+              CONFTEST_SHA="c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985"
+              curl -sSL -o conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VER}/conftest_${CONFTEST_VER}_Linux_x86_64.tar.gz"
+              echo "${CONFTEST_SHA}  conftest.tar.gz" | sha256sum -c -
+              mkdir -p /tmp/bin
+              tar -xzf conftest.tar.gz -C /tmp/bin conftest
+              chmod +x /tmp/bin/conftest
+            fi
+          fi
+
+          PLATFORM_POLICY_DIR="${PLATFORM_DIR}/policies"
+          if [[ ! -d "${PLATFORM_POLICY_DIR}" ]]; then
+            echo "::error::Security Policy Violation: Mandatory platform OPA policies not found at '${PLATFORM_POLICY_DIR}'. Platform policies are immutable and strictly required. Failing closed."
+            exit 1
+          fi
+
+          CONFTEST_CMD=("/tmp/bin/conftest" "test" "--all-namespaces" "--policy" "${PLATFORM_POLICY_DIR}")
+
+          if [[ -n "${POLICY_DIR}" ]]; then
+            CONSUMER_POLICY_DIR="${GITHUB_WORKSPACE}/${POLICY_DIR}"
+            if [[ -d "${CONSUMER_POLICY_DIR}" ]]; then
+              REAL_PLATFORM=$(realpath "${PLATFORM_POLICY_DIR}")
+              REAL_CONSUMER=$(realpath "${CONSUMER_POLICY_DIR}")
+              if [[ "${REAL_PLATFORM}" != "${REAL_CONSUMER}" ]]; then
+                echo "Including additional consumer OPA policies from: ${CONSUMER_POLICY_DIR}"
+                CONFTEST_CMD+=("--policy" "${CONSUMER_POLICY_DIR}")
+              fi
+            elif [[ "${POLICY_DIR}" != "policies" ]]; then
+              echo "::error::Security Policy Violation: Specified consumer policy directory '${POLICY_DIR}' was not found in workspace. Failing closed."
+              exit 1
+            fi
+          fi
+
+          "${CONFTEST_CMD[@]}" tfplan.json
           echo "::endgroup::"
 
       - name: "Record AWS Plan Summary"
         id: summary
         if: always()
+        env:
+          AUTH_OUTCOME: ${{ steps.auth.outcome }}
+          INIT_OUTCOME: ${{ steps.init.outcome }}
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+          ANALYSIS_OUTCOME: ${{ steps.analyze.outcome }}
+          TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
         run: |
+          set -euo pipefail
+          AUTH_STATUS="${AUTH_OUTCOME:-skipped}"
+          INIT_STATUS="${INIT_OUTCOME:-skipped}"
+          PLAN_STATUS="${PLAN_OUTCOME:-skipped}"
+          ANALYSIS_STATUS="${ANALYSIS_OUTCOME:-skipped}"
+          TRIVY_STATUS="${TRIVY_OUTCOME:-skipped}"
+          CONFTEST_STATUS="${CONFTEST_OUTCOME:-skipped}"
+
+          # Plan generation requires successful backend init, plan generation, and analysis
+          if [[ "${INIT_STATUS}" == "success" && "${PLAN_STATUS}" == "success" && "${ANALYSIS_STATUS}" == "success" ]]; then
+            OVERALL_PLAN="success"
+          else
+            OVERALL_PLAN="failure"
+          fi
+
+          # Dual scanner enforcement: BOTH Trivy and Conftest must succeed.
+          if [[ "${TRIVY_STATUS}" == "success" && "${CONFTEST_STATUS}" == "success" ]]; then
+            SECURITY_STATUS="success"
+          else
+            SECURITY_STATUS="failure"
+          fi
+
           {
-            echo "plan-status=success"
-            echo "security-status=success"
+            echo "plan-status=${OVERALL_PLAN}"
+            echo "aws-auth-status=${AUTH_STATUS}"
+            echo "security-status=${SECURITY_STATUS}"
+            echo "trivy-status=${TRIVY_STATUS}"
+            echo "conftest-status=${CONFTEST_STATUS}"
           } >> "${GITHUB_OUTPUT}"
 
   cloud-free-plan:
@@ -603,10 +763,27 @@ jobs:
       - name: "Record Cloud-Free Summary"
         id: summary
         if: always()
+        env:
+          INIT_OUTCOME: ${{ steps.init.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
         run: |
+          set -euo pipefail
+          INIT_STATUS="${INIT_OUTCOME:-skipped}"
+          VALIDATE_STATUS="${VALIDATE_OUTCOME:-skipped}"
+          TEST_STATUS="${TEST_OUTCOME:-skipped}"
+
+          if [[ "${INIT_STATUS}" == "success" && "${VALIDATE_STATUS}" == "success" && ("${TEST_STATUS}" == "success" || "${TEST_STATUS}" == "skipped") ]]; then
+            PLAN_STATUS="success"
+            SEC_STATUS="success"
+          else
+            PLAN_STATUS="failure"
+            SEC_STATUS="failure"
+          fi
+
           {
-            echo "plan-status=success"
-            echo "security-status=success"
+            echo "plan-status=${PLAN_STATUS}"
+            echo "security-status=${SEC_STATUS}"
             echo "has-changes=false"
             echo "has-destructive-changes=false"
             echo "total-changes=0"
@@ -625,6 +802,7 @@ jobs:
       plan-status: ${{ steps.aggregate.outputs.plan-status }}
       aws-auth-status: ${{ steps.aggregate.outputs.aws-auth-status }}
       security-status: ${{ steps.aggregate.outputs.security-status }}
+      authorization-status: ${{ steps.aggregate.outputs.authorization-status }}
       has-changes: ${{ steps.aggregate.outputs.has-changes }}
       has-destructive-changes: ${{ steps.aggregate.outputs.has-destructive-changes }}
       total-changes: ${{ steps.aggregate.outputs.total-changes }}
@@ -655,35 +833,79 @@ jobs:
           PLAN_STATUS="failure"
           AUTH_STATUS="disabled"
           SEC_STATUS="failure"
+          AUTHORIZATION_STATUS="rejected"
           HAS_CHANGES="false"
           HAS_DESTRUCTIVE="false"
           TOTAL_CHANGES="0"
 
           if [[ "${VALIDATE_RESULT}" != "success" ]]; then
             PLAN_STATUS="failure"
-            SEC_STATUS="failure"
-          elif [[ "${ENABLE_AWS_AUTH}" == "true" ]]; then
-            PLAN_STATUS="${AWS_PLAN_STATUS:-${AWS_PLAN_RESULT}}"
-            AUTH_STATUS="${AWS_AUTH_STATUS:-skipped}"
-            SEC_STATUS="${AWS_SEC_STATUS:-${AWS_PLAN_RESULT}}"
-            HAS_CHANGES="${AWS_HAS_CHANGES:-false}"
-            HAS_DESTRUCTIVE="${AWS_HAS_DESTRUCTIVE:-false}"
-            TOTAL_CHANGES="${AWS_TOTAL_CHANGES:-0}"
-          else
-            PLAN_STATUS="${CF_PLAN_STATUS:-${CF_PLAN_RESULT}}"
             AUTH_STATUS="disabled"
-            SEC_STATUS="${CF_SEC_STATUS:-${CF_PLAN_RESULT}}"
-            HAS_CHANGES="${CF_HAS_CHANGES:-false}"
-            HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
-            TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
+            SEC_STATUS="failure"
+            AUTHORIZATION_STATUS="rejected"
+          elif [[ "${ENABLE_AWS_AUTH}" == "true" ]]; then
+            if [[ "${AWS_PLAN_RESULT}" != "success" ]]; then
+              PLAN_STATUS="failure"
+              AUTH_STATUS="${AWS_AUTH_STATUS:-failed}"
+              SEC_STATUS="failure"
+              AUTHORIZATION_STATUS="rejected"
+            else
+              PLAN_STATUS="${AWS_PLAN_STATUS:-failure}"
+              AUTH_STATUS="${AWS_AUTH_STATUS:-success}"
+              SEC_STATUS="${AWS_SEC_STATUS:-failure}"
+              HAS_CHANGES="${AWS_HAS_CHANGES:-false}"
+              HAS_DESTRUCTIVE="${AWS_HAS_DESTRUCTIVE:-false}"
+              TOTAL_CHANGES="${AWS_TOTAL_CHANGES:-0}"
+
+              if [[ "${PLAN_STATUS}" == "success" && "${SEC_STATUS}" == "success" && "${AUTH_STATUS}" == "success" ]]; then
+                AUTHORIZATION_STATUS="authorized"
+              else
+                AUTHORIZATION_STATUS="rejected"
+              fi
+            fi
+          else
+            if [[ "${CF_PLAN_RESULT}" != "success" ]]; then
+              PLAN_STATUS="failure"
+              AUTH_STATUS="disabled"
+              SEC_STATUS="failure"
+              AUTHORIZATION_STATUS="rejected"
+            else
+              PLAN_STATUS="${CF_PLAN_STATUS:-failure}"
+              AUTH_STATUS="disabled"
+              SEC_STATUS="${CF_SEC_STATUS:-failure}"
+              HAS_CHANGES="${CF_HAS_CHANGES:-false}"
+              HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
+              TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
+
+              if [[ "${PLAN_STATUS}" == "success" && "${SEC_STATUS}" == "success" ]]; then
+                AUTHORIZATION_STATUS="authorized"
+              else
+                AUTHORIZATION_STATUS="rejected"
+              fi
+            fi
           fi
 
           {
             echo "plan-status=${PLAN_STATUS}"
             echo "aws-auth-status=${AUTH_STATUS}"
             echo "security-status=${SEC_STATUS}"
+            echo "authorization-status=${AUTHORIZATION_STATUS}"
             echo "has-changes=${HAS_CHANGES}"
             echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
             echo "total-changes=${TOTAL_CHANGES}"
           } >> "${GITHUB_OUTPUT}"
+
+          echo "Execution Summary:"
+          echo "  plan-status:          ${PLAN_STATUS}"
+          echo "  aws-auth-status:      ${AUTH_STATUS}"
+          echo "  security-status:      ${SEC_STATUS}"
+          echo "  authorization-status: ${AUTHORIZATION_STATUS}"
+          echo "  has-changes:          ${HAS_CHANGES}"
+          echo "  has-destructive:      ${HAS_DESTRUCTIVE}"
+          echo "  total-changes:        ${TOTAL_CHANGES}"
           echo "::endgroup::"
+
+          if [[ "${AUTHORIZATION_STATUS}" != "authorized" ]]; then
+            echo "::error::InfraFlow AWS Adapter Gate: Authorization REJECTED. One or more validation, planning, or security gates failed."
+            exit 1
+          fi

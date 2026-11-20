@@ -2768,6 +2768,9 @@ run_aws_guard_test() {
   local workflow_sha="${16:-ed965edd00391b6b1461a65184838bb7cca5eb81}"
   local workflow_ref="${17:-TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81}"
   local target_ref="${18:-refs/heads/main}"
+  local enable_policy_eval="${19:-true}"
+  local enable_trivy="${20:-true}"
+  local policy_dir="${21:-policies}"
 
   local code=0
   INPUT_VERSION="${version}" \
@@ -2783,6 +2786,9 @@ run_aws_guard_test() {
   INPUT_SESSION_NAME="${session_name}" \
   INPUT_ROLE_DURATION="${role_duration}" \
   ENABLE_AWS_AUTH="${enable_aws_auth}" \
+  ENABLE_POLICY_EVAL="${enable_policy_eval}" \
+  ENABLE_TRIVY="${enable_trivy}" \
+  INPUT_POLICY_DIR="${policy_dir}" \
   EVENT_NAME="${event_name}" \
   TARGET_REF="${target_ref}" \
   WORKFLOW_REPO="${workflow_repo}" \
@@ -2848,12 +2854,17 @@ else
   record_fail "AWS Security Guard [7/10]: PR auth rejection" "Untrusted pull request or pull_request_target was allowed to enable AWS authentication"
 fi
 
-# Test 15.11: Arbitrary branch scoping: Arbitrary feature branches rejected; protected release branches accepted
+# Test 15.11: Arbitrary branch scoping & No workflow_dispatch bypass:
+# Arbitrary feature branches rejected for both push and workflow_dispatch; protected branches and release tags accepted
 if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/feature/untrusted-branch" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "workflow_dispatch" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/feature/untrusted-branch" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "schedule" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/main" && \
+   run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "workflow_dispatch" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/main" && \
+   run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "workflow_dispatch" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/tags/v1.0.0" && \
    run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/release/v1.0"; then
-  record_pass "AWS Security Guard [8/10]: Arbitrary branch rejected and protected release branch accepted for live auth"
+  record_pass "AWS Security Guard [8/10]: Arbitrary branch and unauthorized event rejected; workflow_dispatch on arbitrary branch strictly rejected"
 else
-  record_fail "AWS Security Guard [8/10]: Branch scoping" "Arbitrary branch was accepted or protected branch rejected"
+  record_fail "AWS Security Guard [8/10]: Branch scoping" "Arbitrary branch was accepted or workflow_dispatch bypass detected"
 fi
 
 # Test 15.12: Cloud-Free mode: PR allowed with enable-aws-auth: false
@@ -2869,6 +2880,111 @@ if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::1
   record_pass "AWS Trust Boundary [10/10]: Rogue workflow repository and mutable refs (@main) strictly rejected"
 else
   record_fail "AWS Trust Boundary [10/10]: Trust boundary enforcement" "Rogue repo or mutable ref was unexpectedly accepted"
+fi
+
+# Test 15.14: Mandatory Security Gates: Rejection of bypass attempts (enable-policy-evaluation: false and enable-trivy: false)
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "" "" "" "" "HIGH,CRITICAL" "plan" "900" "false" "pull_request" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/main" "false" "true" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "" "" "" "" "HIGH,CRITICAL" "plan" "900" "false" "pull_request" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/main" "true" "false" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "" "" "" "" "HIGH,CRITICAL" "plan" "900" "false" "pull_request" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/main" "true" "true" "../../etc"; then
+  record_pass "AWS Security Gates [1/3]: Disabling mandatory policy evaluation or Trivy scanning is strictly rejected"
+else
+  record_fail "AWS Security Gates [1/3]: Mandatory gate bypass" "Disabling policy evaluation or Trivy was unexpectedly permitted"
+fi
+
+# Test 15.15: Dual Scanner & Destructive Plan Defaults in reusable-tf-aws.yml
+AWS_WF_GATES_VERIFIED=false
+if python3 -c "
+import yaml
+with open('${AWS_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+on_block = data.get('on') or data.get(True)
+inputs = on_block['workflow_call']['inputs']
+assert inputs['fail-on-destructive']['default'] is True, 'fail-on-destructive must default to true'
+assert inputs['enable-trivy']['default'] is True, 'enable-trivy must default to true'
+assert inputs['enable-policy-evaluation']['default'] is True, 'enable-policy-evaluation must default to true'
+steps = [s['id'] for s in data['jobs']['aws-plan']['steps'] if 'id' in s]
+assert 'trivy' in steps, 'aws-plan must contain trivy step'
+assert 'conftest' in steps, 'aws-plan must contain conftest step'
+aws_plan_if = data['jobs']['aws-plan']['if']
+assert 'workflow_dispatch' in aws_plan_if
+assert 'refs/heads/main' in aws_plan_if
+" >/dev/null 2>&1; then
+  AWS_WF_GATES_VERIFIED=true
+fi
+
+if [[ "${AWS_WF_GATES_VERIFIED}" == "true" ]]; then
+  record_pass "AWS Security Gates [2/3]: Workflow enforces dual scanners (Trivy + Conftest) and blocks destructive plans by default"
+else
+  record_fail "AWS Security Gates [2/3]: Workflow security gates" "reusable-tf-aws.yml missing dual scanners or fail-on-destructive default"
+fi
+
+# Test 15.16: Failure Propagation & Output Aggregation Logic
+AWS_FAILURE_PROP_VERIFIED=false
+if python3 -c "
+import yaml, subprocess, tempfile
+
+with open('${AWS_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+
+summary_step = [s for s in data['jobs']['summary']['steps'] if s.get('id') == 'aggregate'][0]['run']
+
+def test_summary(val_res, aws_res, aws_plan_st, aws_auth_st, aws_sec_st, cf_res, cf_plan_st, cf_sec_st, enable_auth):
+    with tempfile.NamedTemporaryFile('w', delete=False) as out_f:
+        out_path = out_f.name
+    env = {
+        'GITHUB_OUTPUT': out_path,
+        'VALIDATE_RESULT': val_res,
+        'AWS_PLAN_RESULT': aws_res,
+        'AWS_PLAN_STATUS': aws_plan_st,
+        'AWS_AUTH_STATUS': aws_auth_st,
+        'AWS_SEC_STATUS': aws_sec_st,
+        'AWS_HAS_CHANGES': 'false',
+        'AWS_HAS_DESTRUCTIVE': 'false',
+        'AWS_TOTAL_CHANGES': '0',
+        'CF_PLAN_RESULT': cf_res,
+        'CF_PLAN_STATUS': cf_plan_st,
+        'CF_SEC_STATUS': cf_sec_st,
+        'CF_HAS_CHANGES': 'false',
+        'CF_HAS_DESTRUCTIVE': 'false',
+        'CF_TOTAL_CHANGES': '0',
+        'ENABLE_AWS_AUTH': enable_auth,
+    }
+    p = subprocess.run(['bash', '-c', summary_step], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with open(out_path) as f:
+        lines = dict(line.strip().split('=', 1) for line in f if '=' in line)
+    return p.returncode, lines
+
+# 1. Validation failure -> rejected
+rc1, l1 = test_summary('failure', 'skipped', 'skipped', 'disabled', 'skipped', 'skipped', 'skipped', 'skipped', 'false')
+assert l1['authorization-status'] == 'rejected' and l1['plan-status'] == 'failure' and rc1 != 0
+
+# 2. Cloud-free success -> authorized
+rc2, l2 = test_summary('success', 'skipped', 'skipped', 'disabled', 'skipped', 'success', 'success', 'success', 'false')
+assert l2['authorization-status'] == 'authorized' and l2['plan-status'] == 'success' and rc2 == 0
+
+# 3. Cloud-free validation failure -> rejected
+rc3, l3 = test_summary('success', 'skipped', 'skipped', 'disabled', 'skipped', 'failure', 'failure', 'failure', 'false')
+assert l3['authorization-status'] == 'rejected' and rc3 != 0
+
+# 4. AWS Plan auth failure -> rejected
+rc4, l4 = test_summary('success', 'failure', 'failure', 'failed', 'failure', 'skipped', 'skipped', 'skipped', 'true')
+assert l4['authorization-status'] == 'rejected' and l4['aws-auth-status'] == 'failed' and rc4 != 0
+
+# 5. AWS Plan security scanner failure -> rejected
+rc5, l5 = test_summary('success', 'failure', 'success', 'success', 'failure', 'skipped', 'skipped', 'skipped', 'true')
+assert l5['authorization-status'] == 'rejected' and l5['security-status'] == 'failure' and rc5 != 0
+
+# 6. AWS Plan complete success -> authorized
+rc6, l6 = test_summary('success', 'success', 'success', 'success', 'success', 'skipped', 'skipped', 'skipped', 'true')
+assert l6['authorization-status'] == 'authorized' and l6['plan-status'] == 'success' and rc6 == 0
+" >/dev/null 2>&1; then
+  AWS_FAILURE_PROP_VERIFIED=true
+fi
+
+if [[ "${AWS_FAILURE_PROP_VERIFIED}" == "true" ]]; then
+  record_pass "AWS Security Gates [3/3]: Output aggregation and failure propagation verified (positive & negative test matrix)"
+else
+  record_fail "AWS Security Gates [3/3]: Failure propagation" "Summary output aggregation or failure propagation failed test matrix"
 fi
 
 # Test 15.13: AWS Reference Module: Canonical formatting
