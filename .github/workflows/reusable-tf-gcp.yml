@@ -503,9 +503,39 @@ jobs:
           ANALYZER_PY="${PLATFORM_DIR}/scripts/analyze-plan.py"
           python3 "${ANALYZER_PY}" --plan-json tfplan.json --output-json plan-metrics.json --output-markdown plan-summary.md
 
-          TOTAL_CHANGES=$(jq -r '.total_changes // 0' plan-metrics.json)
-          HAS_CHANGES=$(jq -r '.has_changes // false' plan-metrics.json)
-          HAS_DESTRUCTIVE=$(jq -r '.has_destructive_changes // false' plan-metrics.json)
+          if [[ ! -s plan-metrics.json ]]; then
+            echo "::error::Plan metrics file 'plan-metrics.json' is missing or empty."
+            exit 1
+          fi
+
+          TOTAL_CHANGES=$(jq -r '.metrics.total_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+          HAS_CHANGES=$(jq -r '.has_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+          HAS_DESTRUCTIVE=$(jq -r '.has_destructive_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+
+          if [[ -z "${TOTAL_CHANGES}" || "${TOTAL_CHANGES}" == "null" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Security Violation: 'metrics.total_changes' is missing or not a non-negative integer: '${TOTAL_CHANGES}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" != "true" && "${HAS_CHANGES}" != "false" ]]; then
+            echo "::error::Security Violation: 'has_changes' is missing or not a boolean: '${HAS_CHANGES}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_DESTRUCTIVE}" != "true" && "${HAS_DESTRUCTIVE}" != "false" ]]; then
+            echo "::error::Security Violation: 'has_destructive_changes' is missing or not a boolean: '${HAS_DESTRUCTIVE}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" == "true" && "${TOTAL_CHANGES}" -le 0 ]]; then
+            echo "::error::Security Violation: Inconsistent plan metrics: has-changes is true but total-changes is ${TOTAL_CHANGES} (must be > 0)"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" == "false" && "${TOTAL_CHANGES}" -ne 0 ]]; then
+            echo "::error::Security Violation: Inconsistent plan metrics: has-changes is false but total-changes is ${TOTAL_CHANGES} (must be == 0)"
+            exit 1
+          fi
 
           {
             echo "TOTAL_CHANGES=${TOTAL_CHANGES}"
@@ -587,12 +617,25 @@ jobs:
       - name: "Record Cloud-Free Outputs"
         id: summary
         run: |
+          if [[ -z "${TOTAL_CHANGES:-}" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Internal Error: TOTAL_CHANGES is invalid or unset: '${TOTAL_CHANGES:-}'"
+            exit 1
+          fi
+          if [[ "${HAS_CHANGES:-}" != "true" && "${HAS_CHANGES:-}" != "false" ]]; then
+            echo "::error::Internal Error: HAS_CHANGES is invalid or unset: '${HAS_CHANGES:-}'"
+            exit 1
+          fi
+          if [[ "${HAS_DESTRUCTIVE:-}" != "true" && "${HAS_DESTRUCTIVE:-}" != "false" ]]; then
+            echo "::error::Internal Error: HAS_DESTRUCTIVE is invalid or unset: '${HAS_DESTRUCTIVE:-}'"
+            exit 1
+          fi
+
           {
             echo "plan-status=success"
             echo "security-status=success"
-            echo "has-changes=${HAS_CHANGES:-false}"
-            echo "has-destructive-changes=${HAS_DESTRUCTIVE:-false}"
-            echo "total-changes=${TOTAL_CHANGES:-0}"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+            echo "total-changes=${TOTAL_CHANGES}"
           } >> "${GITHUB_OUTPUT}"
 
   summary:
@@ -658,6 +701,24 @@ jobs:
               HAS_CHANGES="${CF_HAS_CHANGES:-false}"
               HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
               TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
+
+              # Validate metric consistency in aggregator
+              if [[ ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+                echo "::error::Security Violation: Aggregated total-changes '${TOTAL_CHANGES}' is not a non-negative integer."
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              elif [[ "${HAS_CHANGES}" == "true" && "${TOTAL_CHANGES}" -le 0 ]]; then
+                echo "::error::Security Violation: Aggregated metrics inconsistent: has-changes is true but total-changes is ${TOTAL_CHANGES}"
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              elif [[ "${HAS_CHANGES}" == "false" && "${TOTAL_CHANGES}" -ne 0 ]]; then
+                echo "::error::Security Violation: Aggregated metrics inconsistent: has-changes is false but total-changes is ${TOTAL_CHANGES}"
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              fi
             else
               PLAN_STATUS="failure"
               SEC_STATUS="failure"
