@@ -21,6 +21,10 @@ import sqlite3
 import sys
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+# Platform Hard Guardrail Ceilings
+PLATFORM_MAX_DELETIONS_CEILING = 25
+PLATFORM_MAX_REPLACEMENTS_CEILING = 50
+
 # Schema Versions
 DESTRUCTION_POLICY_SCHEMA_VERSION = "infraflow-destruction-policy-v1"
 DESTRUCTION_CONFIRMATION_SCHEMA_VERSION = "infraflow-destruction-confirmation-v1"
@@ -318,7 +322,9 @@ class DestructivePlanClassifier:
 
     @classmethod
     def analyze_plan_file(cls, plan_path: str) -> Dict[str, Any]:
-        """Loads and analyzes a plan JSON file."""
+        """Loads and analyzes a plan JSON file, enforcing symlink rejection."""
+        if os.path.islink(plan_path):
+            raise MalformedPlanError(f"Symlinks are strictly prohibited for plan files: '{plan_path}'")
         if not os.path.exists(plan_path):
             raise FileNotFoundError(f"Plan file not found: '{plan_path}'")
         try:
@@ -340,6 +346,8 @@ class BlastRadiusPolicy:
     - Strict protection of security-critical resources
     - Environment scoping (Production defaults to 0 deletions)
     - Untrusted caller overrides strictly bounded
+    - Trusted authorizer allowlist verification
+    - Platform hard guardrail ceilings (preventing rogue policy elevation)
     """
 
     def __init__(
@@ -351,6 +359,7 @@ class BlastRadiusPolicy:
         allow_state_wide_destroy: bool = False,
         require_confirmation: bool = True,
         protected_types: Optional[Set[str]] = None,
+        trusted_authorizers: Optional[Set[str]] = None,
     ):
         self.environment = environment.lower().strip()
         self.is_production = self.environment in ("production", "prod")
@@ -372,10 +381,15 @@ class BlastRadiusPolicy:
         self.allow_state_wide_destroy = allow_state_wide_destroy
         self.require_confirmation = require_confirmation
         self.protected_types = set(protected_types) if protected_types else set(SECURITY_CRITICAL_RESOURCE_TYPES)
+        self.trusted_authorizers = set(trusted_authorizers) if trusted_authorizers else None
 
     @classmethod
     def from_file(cls, policy_path: str, environment: str = "production") -> "BlastRadiusPolicy":
-        """Loads policy from a trusted JSON file."""
+        """Loads policy from a trusted JSON file, rejecting symlinks and enforcing platform ceilings."""
+        if os.path.islink(policy_path):
+            raise DestructionAssessmentError(
+                f"Symlinks are strictly prohibited for policy files: '{policy_path}'", "SYMLINK_PROHIBITED"
+            )
         if not os.path.exists(policy_path):
             raise DestructionAssessmentError(
                 f"Destruction policy file not found: '{policy_path}'", "POLICY_NOT_FOUND"
@@ -406,14 +420,40 @@ class BlastRadiusPolicy:
                 "POLICY_ENV_MISMATCH",
             )
 
+        max_del = data.get("max_deletions")
+        max_rep = data.get("max_replacements")
+        is_prod = req_env in ("production", "prod")
+
+        # Enforce Platform Hard Ceilings against Consumer Elevation
+        if is_prod:
+            if max_del is not None and max_del > PLATFORM_MAX_DELETIONS_CEILING:
+                raise DestructionAssessmentError(
+                    f"Policy max_deletions ({max_del}) exceeds platform production ceiling of {PLATFORM_MAX_DELETIONS_CEILING}",
+                    "POLICY_CEILING_EXCEEDED",
+                )
+            if max_rep is not None and max_rep > PLATFORM_MAX_REPLACEMENTS_CEILING:
+                raise DestructionAssessmentError(
+                    f"Policy max_replacements ({max_rep}) exceeds platform production ceiling of {PLATFORM_MAX_REPLACEMENTS_CEILING}",
+                    "POLICY_CEILING_EXCEEDED",
+                )
+            if data.get("allow_state_wide_destroy", False) is True:
+                raise DestructionAssessmentError(
+                    "State-wide destruction cannot be enabled via repository policy file in production",
+                    "POLICY_CEILING_EXCEEDED",
+                )
+
+        raw_auth = data.get("trusted_authorizers")
+        trusted_auth = set(raw_auth) if isinstance(raw_auth, list) else None
+
         return cls(
             environment=environment,
-            max_deletions=data.get("max_deletions"),
-            max_replacements=data.get("max_replacements"),
+            max_deletions=max_del,
+            max_replacements=max_rep,
             allow_security_critical_destruction=data.get("allow_security_critical_destruction", False),
             allow_state_wide_destroy=data.get("allow_state_wide_destroy", False),
             require_confirmation=data.get("require_confirmation", True),
             protected_types=set(data.get("protected_types", SECURITY_CRITICAL_RESOURCE_TYPES)),
+            trusted_authorizers=trusted_auth,
         )
 
     def apply_caller_bounds(self, caller_max_del: Optional[int], caller_max_rep: Optional[int]) -> "BlastRadiusPolicy":
@@ -437,6 +477,7 @@ class BlastRadiusPolicy:
             allow_state_wide_destroy=self.allow_state_wide_destroy,
             require_confirmation=self.require_confirmation,
             protected_types=self.protected_types,
+            trusted_authorizers=self.trusted_authorizers,
         )
 
     def evaluate(self, metrics: Dict[str, Any]) -> Tuple[bool, str, str]:
@@ -541,6 +582,7 @@ class DestructionConfirmationValidator:
         expected_environment: str,
         actual_pure_deletions: int,
         actual_replacements: int,
+        trusted_authorizers: Optional[Set[str]] = None,
         current_time: Optional[datetime.datetime] = None,
     ) -> Tuple[bool, str, str]:
         """
@@ -644,6 +686,14 @@ class DestructionConfirmationValidator:
         authorized_by = str(token_data.get("authorized_by", "")).strip()
         if not authorized_by or authorized_by.lower() in GENERIC_CONFIRMATION_BLOCKLIST:
             return False, "INVALID_AUTHORIZER", "Confirmation token missing valid 'authorized_by' identity"
+
+        if trusted_authorizers is not None and len(trusted_authorizers) > 0:
+            if authorized_by not in trusted_authorizers:
+                return (
+                    False,
+                    "UNAUTHORIZED_AUTHORIZER",
+                    f"Authorizer '{authorized_by}' is not in policy trusted authorizers allowlist",
+                )
 
         # 9. Expiration check
         expires_at_str = token_data.get("expires_at")
@@ -909,6 +959,7 @@ class DestructivePlanAssessmentEngine:
                 expected_environment=environment,
                 actual_pure_deletions=pure_deletions,
                 actual_replacements=replacements,
+                trusted_authorizers=active_policy.trusted_authorizers,
                 current_time=current_time,
             )
 
@@ -982,6 +1033,7 @@ def main():
     assess_parser.add_argument("--environment", default="production", help="Deployment environment context")
     assess_parser.add_argument("--max-deletions", type=int, default=None, help="Caller-specified maximum deletions limit")
     assess_parser.add_argument("--max-replacements", type=int, default=None, help="Caller-specified maximum replacements limit")
+    assess_parser.add_argument("--trusted-authorizers", default=None, help="Comma-separated allowlist of trusted authorizers")
     assess_parser.add_argument("--output-json", default=None, help="Path to write assessment decision JSON")
 
     # Subcommand: create-confirmation
@@ -1021,19 +1073,33 @@ def main():
 
     elif args.command == "assess":
         try:
-            # 1. Load plan
+            # 1. Reject symlinks on all input files
+            for fp, desc in [
+                (args.plan_file, "plan file"),
+                (args.policy_file, "policy file"),
+                (args.confirmation_file, "confirmation file"),
+            ]:
+                if fp and os.path.islink(fp):
+                    print(json.dumps({
+                        "decision": DECISION_REJECTED,
+                        "decision_code": "SYMLINK_PROHIBITED",
+                        "reason": f"Symlinks are strictly prohibited for {desc}: '{fp}'"
+                    }, indent=2))
+                    sys.exit(1)
+
+            # 2. Load plan
             if not os.path.exists(args.plan_file):
                 print(json.dumps({
                     "decision": DECISION_REJECTED,
                     "decision_code": "PLAN_FILE_NOT_FOUND",
                     "reason": f"Plan file not found: {args.plan_file}"
-                }))
+                }, indent=2))
                 sys.exit(1)
 
             with open(args.plan_file, "r", encoding="utf-8") as f:
                 plan_data = json.load(f)
 
-            # 2. Load policy
+            # 3. Load policy
             policy: Optional[BlastRadiusPolicy] = None
             if args.policy_file:
                 policy = BlastRadiusPolicy.from_file(args.policy_file, environment=args.environment)
@@ -1043,7 +1109,15 @@ def main():
             # Apply caller bounds (min(policy, caller))
             policy = policy.apply_caller_bounds(args.max_deletions, args.max_replacements)
 
-            # 3. Load confirmation token if provided
+            # Apply trusted authorizers if passed via CLI
+            if args.trusted_authorizers:
+                auth_set = {a.strip() for a in args.trusted_authorizers.split(",") if a.strip()}
+                if policy.trusted_authorizers:
+                    policy.trusted_authorizers = policy.trusted_authorizers.intersection(auth_set)
+                else:
+                    policy.trusted_authorizers = auth_set
+
+            # 4. Load confirmation token if provided
             token_input: Optional[Any] = None
             if args.confirmation_file and os.path.exists(args.confirmation_file):
                 with open(args.confirmation_file, "r", encoding="utf-8") as cf:
@@ -1051,7 +1125,7 @@ def main():
             elif args.confirmation_token:
                 token_input = args.confirmation_token
 
-            # 4. Assess
+            # 5. Assess
             assessment = DestructivePlanAssessmentEngine.assess(
                 plan_data=plan_data,
                 expected_plan_id=args.expected_plan_id,

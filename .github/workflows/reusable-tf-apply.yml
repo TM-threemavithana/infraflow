@@ -98,6 +98,11 @@ on:
         required: false
         default: ""
         type: string
+      trusted-authorizers:
+        description: "Optional comma-separated allowlist of trusted destruction authorizers"
+        required: false
+        default: ""
+        type: string
 
     outputs:
       plan-verification-status:
@@ -156,6 +161,7 @@ jobs:
           INPUT_MAX_DELETIONS: ${{ inputs.max-deletions }}
           INPUT_MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
           INPUT_PLAN_JSON: ${{ inputs.plan-json-file }}
+          INPUT_TRUSTED_AUTHORIZERS: ${{ inputs.trusted-authorizers }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ github.ref }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
@@ -188,7 +194,7 @@ jobs:
             exit 1
           fi
 
-          # 4. Path traversal prevention for file paths
+          # 4. Path traversal and symlink prevention for file paths
           for file_var in "${INPUT_ENVELOPE_FILE}" "${INPUT_STATE_FILE}" "${INPUT_LEDGER_PATH}"; do
             if [[ -z "${file_var}" ]]; then
               echo "::error::Security Violation: Required file path is empty."
@@ -202,6 +208,10 @@ jobs:
               echo "::error::Security Violation: File path contains forbidden characters: '${file_var}'."
               exit 1
             fi
+            if [[ -L "${file_var}" ]]; then
+              echo "::error::Security Violation: Symbolic links are strictly prohibited: '${file_var}'."
+              exit 1
+            fi
           done
 
           # 5. Validate optional provenance file path if specified
@@ -212,6 +222,10 @@ jobs:
             fi
             if [[ ! "${INPUT_PROVENANCE_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
               echo "::error::Security Violation: provenance-file contains forbidden characters: '${INPUT_PROVENANCE_FILE}'."
+              exit 1
+            fi
+            if [[ -L "${INPUT_PROVENANCE_FILE}" ]]; then
+              echo "::error::Security Violation: Symbolic links are strictly prohibited: '${INPUT_PROVENANCE_FILE}'."
               exit 1
             fi
           fi
@@ -286,6 +300,10 @@ jobs:
                 echo "::error::Security Violation: File path contains forbidden characters: '${opt_file}'."
                 exit 1
               fi
+              if [[ -L "${opt_file}" ]]; then
+                echo "::error::Security Violation: Symbolic links are strictly prohibited: '${opt_file}'."
+                exit 1
+              fi
             fi
           done
 
@@ -299,11 +317,17 @@ jobs:
 
           # Check destruction confirmation token for generic blocklist
           if [[ -n "${INPUT_DESTRUCTION_CONF_TOKEN}" ]]; then
-            TRIMMED_TOKEN="$(echo "${INPUT_DESTRUCTION_CONF_TOKEN}" | tr '[:upper:]' '[:lower:]' | xargs)"
+            TRIMMED_TOKEN="$(echo "${INPUT_DESTRUCTION_CONF_TOKEN}" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             if [[ "${TRIMMED_TOKEN}" =~ ^(yes|y|true|1|destroy|apply|confirm|confirmed|approved|ok|proceed|force|override|default)$ ]]; then
               echo "::error::Security Violation: Generic confirmation token '${TRIMMED_TOKEN}' is strictly prohibited. Requires structured JSON confirmation contract bound to plan digest."
               exit 1
             fi
+          fi
+
+          # 12. Validate trusted authorizers format if specified
+          if [[ -n "${INPUT_TRUSTED_AUTHORIZERS:-}" && ! "${INPUT_TRUSTED_AUTHORIZERS}" =~ ^[a-zA-Z0-9_,.-]+$ ]]; then
+            echo "::error::Security Violation: trusted-authorizers contains forbidden characters: '${INPUT_TRUSTED_AUTHORIZERS}'."
+            exit 1
           fi
 
           echo "Input sanitization and trust boundary checks passed successfully."
@@ -369,12 +393,16 @@ jobs:
           MAX_DELETIONS: ${{ inputs.max-deletions }}
           MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
           PLAN_JSON_FILE: ${{ inputs.plan-json-file }}
+          TRUSTED_AUTHORIZERS: ${{ inputs.trusted-authorizers }}
           REPO_NAME: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           echo "::group::Pre-Execution Verification Pipeline"
+
+          ASSESS_OUT_JSON="assess_decision.json"
+          trap 'rm -f "${ASSESS_OUT_JSON}"' EXIT INT TERM
 
           # 1. Verify existence of required files
           if [[ ! -f "${ENVELOPE_FILE}" ]]; then
@@ -395,11 +423,49 @@ jobs:
             exit 1
           fi
 
-          # 2. Determine Provenance Status
+          # Resolve active plan JSON if provided
+          ACTIVE_PLAN_JSON=""
+          if [[ -n "${PLAN_JSON_FILE}" && -f "${PLAN_JSON_FILE}" ]]; then
+            ACTIVE_PLAN_JSON="${PLAN_JSON_FILE}"
+          elif [[ -f "plan.json" ]]; then
+            ACTIVE_PLAN_JSON="plan.json"
+          fi
+
+          # 2. Cryptographic Provenance Verification (In-toto DSSE)
           PROV_STATUS="UNVERIFIED"
-          if [[ -n "${PROVENANCE_FILE}" && -f "${PROVENANCE_FILE}" ]]; then
-            echo "Evaluating provenance attestation: ${PROVENANCE_FILE}"
-            PROV_STATUS="VERIFIED"
+          INTEGRITY_PY=".infraflow-platform/scripts/verify-plan-integrity.py"
+          if [[ -n "${PROVENANCE_FILE}" ]]; then
+            if [[ ! -f "${PROVENANCE_FILE}" ]]; then
+              echo "::error::Specified provenance file does not exist: '${PROVENANCE_FILE}'"
+              PROV_STATUS="UNVERIFIED"
+            else
+              echo "Evaluating provenance attestation cryptographically: ${PROVENANCE_FILE}"
+              PROV_ARGS=(
+                "verify-provenance"
+                "--provenance" "${PROVENANCE_FILE}"
+                "--expected-repository" "${REPO_NAME}"
+                "--expected-commit-sha" "${COMMIT_SHA}"
+              )
+              if [[ -f ".infraflow-platform/config/trusted-plan-signing-key.pem" ]]; then
+                PROV_ARGS+=("--trusted-public-key" ".infraflow-platform/config/trusted-plan-signing-key.pem")
+              elif [[ -f "policies/trust/trusted_signer.pub" ]]; then
+                PROV_ARGS+=("--trusted-public-key" "policies/trust/trusted_signer.pub")
+              fi
+              if [[ -n "${ACTIVE_PLAN_JSON}" && -f "${ACTIVE_PLAN_JSON}" ]]; then
+                PROV_ARGS+=("--plan-json" "${ACTIVE_PLAN_JSON}")
+              fi
+              if [[ "${REQUIRE_PROD_PROV}" == "true" ]]; then
+                PROV_ARGS+=("--require-production-signer")
+              fi
+
+              if python3 "${INTEGRITY_PY}" "${PROV_ARGS[@]}"; then
+                echo "Cryptographic provenance attestation verified successfully."
+                PROV_STATUS="VERIFIED"
+              else
+                echo "::error::Cryptographic provenance verification failed."
+                PROV_STATUS="UNVERIFIED"
+              fi
+            fi
           elif [[ "${REQUIRE_PROD_PROV}" == "false" ]]; then
             echo "Production provenance requirement waived for non-production environment."
             PROV_STATUS="VERIFIED"
@@ -451,17 +517,9 @@ jobs:
           DESTRUCT_STATUS="not-applicable"
           DESTRUCT_SUMMARY="{}"
 
-          ACTIVE_PLAN_JSON=""
-          if [[ -n "${PLAN_JSON_FILE}" && -f "${PLAN_JSON_FILE}" ]]; then
-            ACTIVE_PLAN_JSON="${PLAN_JSON_FILE}"
-          elif [[ -f "plan.json" ]]; then
-            ACTIVE_PLAN_JSON="plan.json"
-          fi
-
           if [[ -n "${ACTIVE_PLAN_JSON}" ]]; then
             echo "Assessing plan for destructive changes using: ${ACTIVE_PLAN_JSON}"
             ASSESS_PY=".infraflow-platform/scripts/assess-destruction.py"
-            ASSESS_OUT_JSON="assess_decision.json"
             ASSESS_ARGS=(
               "assess"
               "--plan-file" "${ACTIVE_PLAN_JSON}"
@@ -488,6 +546,10 @@ jobs:
 
             if [[ "${MAX_REPLACEMENTS}" -ge 0 ]]; then
               ASSESS_ARGS+=("--max-replacements" "${MAX_REPLACEMENTS}")
+            fi
+
+            if [[ -n "${TRUSTED_AUTHORIZERS:-}" ]]; then
+              ASSESS_ARGS+=("--trusted-authorizers" "${TRUSTED_AUTHORIZERS}")
             fi
 
             echo "Executing: python3 ${ASSESS_PY} ${ASSESS_ARGS[*]}"
@@ -597,7 +659,7 @@ jobs:
           FINAL_AUTH="REJECTED"
           FINAL_SIMULATION="simulated-only"
 
-          if [[ "${GUARD_RESULT}" == "success" && "${VERIFY_RESULT}" == "success" && "${AUTH_STATUS}" == "AUTHORIZED_FOR_SIMULATION" && "${DESTRUCT_STATUS}" != "rejected" ]]; then
+          if [[ "${GUARD_RESULT}" == "success" && "${VERIFY_RESULT}" == "success" && "${AUTH_STATUS}" == "AUTHORIZED_FOR_SIMULATION" && ( "${DESTRUCT_STATUS}" == "authorized" || "${DESTRUCT_STATUS}" == "safe" || "${DESTRUCT_STATUS}" == "not-applicable" ) ]]; then
             FINAL_AUTH="AUTHORIZED_FOR_SIMULATION"
           else
             FINAL_AUTH="REJECTED"

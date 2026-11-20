@@ -107,7 +107,9 @@ def safe_write_file(path: str, data: bytes, mode: int = 0o600) -> None:
 
 
 def safe_read_file(path: str) -> bytes:
-    """Reads complete binary content of a file, verifying existence."""
+    """Reads complete binary content of a file, verifying existence and rejecting symlinks."""
+    if os.path.islink(path):
+        raise EnvelopeError(f"Symlinks are strictly prohibited: '{path}'")
     if not os.path.isfile(path):
         raise FileNotFoundError(f"File not found: {path}")
     with open(path, "rb") as f:

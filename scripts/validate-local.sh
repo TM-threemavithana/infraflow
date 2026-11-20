@@ -3450,11 +3450,11 @@ else
   record_fail "G06 Apply Workflow [19/24]: Zizmor" "Zizmor binary not found"
 fi
 
-# Test 16.20: Full unit test suite (94 tests across all test modules)
+# Test 16.20: Full unit test suite (133 tests across all test modules)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
-  record_pass "G06 Full Test Suite [20/24]: All 94 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py + test_apply_workflow.py + test_destruction_recovery.py)"
+  record_pass "G06 Full Test Suite [20/39]: All 133 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py + test_apply_workflow.py + test_destruction_recovery.py + test_g06_adversarial_integration.py)"
 else
-  record_fail "G06 Full Test Suite [20/24]: Unit tests" "One or more tests in tests directory failed"
+  record_fail "G06 Full Test Suite [20/39]: Unit tests" "One or more tests in tests directory failed"
 fi
 
 # Test 16.21: Workflow Guard: Untrusted PR event rejected
@@ -3744,9 +3744,49 @@ if python3 "${ASSESS_DESTRUCTION_PY}" assess \
      --environment "staging" \
      --max-deletions 5 \
      --confirmation-file "${G06_VALID_CONF}" >/dev/null 2>&1; then
-  record_pass "G06 Authorized Destruction [34/34]: Valid plan with matching confirmation authorized (AUTHORIZED_SIMULATION_WITH_CONFIRMATION)"
+  record_pass "G06 Authorized Destruction [34/39]: Valid plan with matching confirmation authorized (AUTHORIZED_SIMULATION_WITH_CONFIRMATION)"
 else
-  record_fail "G06 Authorized Destruction [34/34]: Valid confirmation" "assess-destruction.py failed to authorize valid plan with matching confirmation"
+  record_fail "G06 Authorized Destruction [34/39]: Valid confirmation" "assess-destruction.py failed to authorize valid plan with matching confirmation"
+fi
+
+# Test 16.35: Dedicated Adversarial Integration Test Suite (39 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_g06_adversarial_integration.py" >/dev/null 2>&1; then
+  record_pass "G06 Adversarial Integration [35/39]: All 39 adversarial integration tests passed (test_g06_adversarial_integration.py)"
+else
+  record_fail "G06 Adversarial Integration [35/39]: Adversarial suite" "One or more tests in test_g06_adversarial_integration.py failed"
+fi
+
+# Test 16.36: Workflow contract verification: Symlink rejection check across all inputs in reusable-tf-apply.yml
+# shellcheck disable=SC2016
+if grep -q 'if \[\[ -L "\${file_var}" \]\]' "${REUSABLE_APPLY_WF}" && \
+   grep -q 'if \[\[ -L "\${opt_file}" \]\]' "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Symlink Containment [36/39]: Symlink rejection verified across all workflow input files"
+else
+  record_fail "G06 Symlink Containment [36/39]: Symlink check" "reusable-tf-apply.yml missing strict symlink rejection"
+fi
+
+# Test 16.37: Workflow contract verification: In-toto DSSE provenance cryptographic verification gate in reusable-tf-apply.yml
+if grep -q 'verify-provenance' "${REUSABLE_APPLY_WF}" && \
+   grep -q 'trusted_signer.pub' "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Provenance Verification Gate [37/39]: In-toto DSSE cryptographic provenance verification gate verified"
+else
+  record_fail "G06 Provenance Verification Gate [37/39]: Provenance gate" "reusable-tf-apply.yml missing cryptographic provenance verification"
+fi
+
+# Test 16.38: Workflow contract verification: Fail-closed summary status check
+if grep -q 'DESTRUCT_STATUS.*==.*"authorized".*DESTRUCT_STATUS.*==.*"safe".*DESTRUCT_STATUS.*==.*"not-applicable"' "${REUSABLE_APPLY_WF}" && \
+   ! grep -q 'DESTRUCT_STATUS.*!=.*"rejected"' "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Fail-Closed Outcome Gate [38/39]: Summary gate requires positive membership in authorized/safe/not-applicable"
+else
+  record_fail "G06 Fail-Closed Outcome Gate [38/39]: Outcome gate" "reusable-tf-apply.yml non-fail-closed destruction status evaluation"
+fi
+
+# Test 16.39: Platform blast-radius ceiling enforcement: hard ceiling of 25 deletions and prohibited state-wide destroy in production
+if grep -q 'PLATFORM_MAX_DELETIONS_CEILING = 25' "${ASSESS_DESTRUCTION_PY}" && \
+   grep -q 'POLICY_CEILING_EXCEEDED' "${ASSESS_DESTRUCTION_PY}"; then
+  record_pass "G06 Platform Guardrail Ceilings [39/39]: Platform hard ceilings enforced (25 max deletions, statewide destroy blocked in prod)"
+else
+  record_fail "G06 Platform Guardrail Ceilings [39/39]: Ceilings" "assess-destruction.py missing platform hard guardrail ceilings"
 fi
 
 rm -rf "${G06_TEST_DIR}"

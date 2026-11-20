@@ -934,6 +934,8 @@ def main() -> int:
             return 0
 
         elif args.command == "validate-state":
+            if os.path.islink(args.state_file):
+                raise StateConsistencyError(f"Symlinks are strictly prohibited: '{args.state_file}'")
             with open(args.state_file, "r", encoding="utf-8") as f:
                 state_data = json.load(f)
             meta = StateConsistencyValidator.validate(
@@ -979,6 +981,10 @@ def main() -> int:
             return 0
 
         elif args.command == "verify":
+            if os.path.islink(args.envelope_file):
+                raise PlanEnvelopeError(f"Symlinks are strictly prohibited: '{args.envelope_file}'")
+            if os.path.islink(args.state_file):
+                raise StateConsistencyError(f"Symlinks are strictly prohibited: '{args.state_file}'")
             with open(args.envelope_file, "r", encoding="utf-8") as f:
                 env_data = json.load(f)
             with open(args.state_file, "r", encoding="utf-8") as f:
