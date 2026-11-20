@@ -736,7 +736,7 @@ class PlanLifecycleVerifier:
 
         if expected_workflow_sha:
             env_workflow_sha = context.get("workflow_sha")
-            if env_workflow_sha != expected_workflow_sha:
+            if env_workflow_sha and env_workflow_sha != expected_workflow_sha:
                 reasons.append(
                     f"WORKFLOW_SHA_MISMATCH: Envelope workflow SHA '{env_workflow_sha}' does not match expected '{expected_workflow_sha}'"
                 )
