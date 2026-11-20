@@ -19,6 +19,7 @@ import datetime
 import hashlib
 import json
 import os
+import subprocess
 import sys
 
 from cryptography.exceptions import InvalidSignature
@@ -667,7 +668,8 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if result.returncode != 0:
-                errors.append(f"Official 'gh attestation verify' failed: {result.stderr.strip()}")
+                err_msg = result.stderr.strip() or result.stdout.strip()
+                errors.append(f"Official 'gh attestation verify' failed: {err_msg}")
             elif result.stdout:
                 try:
                     gh_output = json.loads(result.stdout)
