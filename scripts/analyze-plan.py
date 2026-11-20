@@ -246,7 +246,7 @@ def generate_markdown_summary(summary, title="Terraform Execution Plan Summary")
 
     if summary["has_destructive_changes"]:
         lines.append("> [!WARNING]")
-        lines.append("> **Destructive Actions Detected**: This plan includes resource deletions or replacements. Review carefully before approval.\n")
+        lines.append("> **Destructive Actions Detected**: This plan includes resource deletions or replacements. Evaluate carefully before policy authorization.\n")
 
     if summary["resources"]:
         lines.append("### 🔍 Planned Resource Operations\n")

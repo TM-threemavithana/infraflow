@@ -41,7 +41,7 @@ jobs:
     with:
       terraform-version: "1.10.4"
       working-directory: "terraform"
-      environment: "production-approval"
+      environment: "production"
       enable-policy-evaluation: true
       enable-trivy: true
       enable-github-attestation: true

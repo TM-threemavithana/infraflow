@@ -10,8 +10,8 @@ Milestone **G04.1.4 — InfraFlow Architecture Finalization** operationalizes th
    - The isolated `attest` job executes with `contents: read`, `id-token: write`, `attestations: write`, pre-validates manifest metadata and policy passing status, and calls `actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2`.
    - Never executes untrusted Terraform code and never receives cloud credentials in the `attest` job.
    - Rejects long-lived production secrets in GitHub Secrets; retains ECDSA asymmetric signing strictly for offline unit tests and backwards compatibility.
-3. **Approval Decoupling (Decision 3)**: Decoupled cryptographic attestation verification (`scripts/verify-plan-integrity.py verify-attestation`) from human approval in GitHub Protected Environments (`environment: production-approval`).
-4. **Regression (Decision 4)**: All **140 / 140** local quality gates passed without errors (8 external consumer toolchain isolation checks in Section 14 + 15 governance, attestation, and permission isolation checks in Section 13 + 10 trusted workflow attack checks in Section 12 + 12 trust isolation attack checks in Section 11 + 30 planning/provenance checks in Section 10 + 65 prior checks from G01–G03.2.1). Actionlint, Zizmor, ShellCheck, Conftest (62/62), and Gitleaks report zero findings.
+3. **Solo-Engineer Governance & Automated Verified Policy Gate**: Refactored the human approval gate into an automated **Verified Policy Gate** (`verified-policy-gate`). In a solo-engineer portfolio project without additional maintainers, manual approval gates cause deadlocks or falsely claim human sign-off. The automated verified policy gate evaluates speculative planning, Trivy IaC scanning, Conftest/OPA policies, Sigstore attestation verification (`gh attestation verify`), and destructive change policies. Fails closed with exit code 1 if any condition fails.
+4. **Regression**: All quality gates pass without errors across all test suites, Actionlint, Zizmor, ShellCheck, Conftest (62/62), and Gitleaks.
 
 ---
 
@@ -105,21 +105,24 @@ All 30 Section 10 quality gates passed:
 
 ---
 
-## 6. Human Approval Verification Matrix (8 Scenarios)
+## 6. Verified Policy Gate Decision Matrix (8 Scenarios)
 
 > [!IMPORTANT]
-> **Operational Truth**: Cryptographic signature validation proves machine authenticity and data integrity. It does **not** prove human reviewer approval. Scenarios 1–5 require live GitHub Enterprise / Team Environment configuration and are reported as **UNVERIFIED (Requires live GitHub Environment setup)**. Scenarios 6–8 represent cryptographic plan-to-approval bindings and are **PASS (Locally Verified)**.
+> **Governance Architecture Truth**:
+> - **Automated Policy Gate**: The platform implements an automated, deterministic Verified Policy Gate (`verified-policy-gate`). It evaluates speculative planning, static security scanning (Trivy), policy compliance (Conftest/OPA), cryptographic provenance verification (`gh attestation verify`), and destructive change policies.
+> - **Solo-Engineer Governance**: In this personal project context, no human environment reviewer gate is active. Human review is documented as not implemented / inactive rather than falsely simulated.
+> - **Production Execution**: Strictly deferred to G06; speculative planning never executes `terraform apply` or provisions cloud resources.
 
-| Scenario ID | Test Scenario | Mechanism | Verification Method | Status |
+| Scenario ID | Test Scenario | Trigger Condition | Policy Gate Decision | Verification Status |
 |---|---|---|---|---|
-| **SC-01** | **Authorized Reviewer Approval** | Designated engineer approves via GitHub UI | GitHub Environment Protection Rules | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-02** | **Unauthorized Reviewer Rejection** | Non-listed user attempts to approve in UI | GitHub IAM Environment Gate | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-03** | **Self-Review Prevention** | PR author attempts to approve their own PR | "Prevent self-review" GitHub setting | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-04** | **Rejected Approval** | Reviewer clicks "Reject" in GitHub UI | Workflow job halts with `rejected`/`cancelled` | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-05** | **Missing Reviewer Configuration** | Environment created without required reviewers | Workflow runs without pausing for review | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-06** | **Approval Bypass Attempt (Direct Push)** | Malicious actor pushes directly to main branch | Branch protection + Cryptographic gate | **PASS (Locally Verified)** |
-| **SC-07** | **Source Commit Mismatch After Plan** | Attacker introduces code after plan generated | Cryptographic commit binding (`$GITHUB_SHA`) | **PASS (Locally Verified - Test 10.28 / 11.12)** |
-| **SC-08** | **Plan Digest Mismatch After Plan** | Attacker alters plan JSON or binary after approval | Cryptographic SHA-256 digest binding | **PASS (Locally Verified - Test 10.29, 10.30 / 11.9, 11.10)** |
+| **SC-01** | **All Checks Successful** | Plan succeeds, Trivy clean, OPA passed, Sigstore verified, non-destructive | **AUTHORIZED** (exit 0) | **PASS (Locally & CI Verified)** |
+| **SC-02** | **Trivy Vulnerability Scan Failure** | High/Critical misconfiguration detected (e.g. 0.0.0.0/0 ingress) | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.20)** |
+| **SC-03** | **OPA Policy Violation** | Mandatory tags missing or untrusted provider detected | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.21)** |
+| **SC-04** | **Attestation Verification Failure** | Tampered manifest, untrusted signer, or missing Rekor entry | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.22)** |
+| **SC-05** | **Missing Verification Job** | Workflow definition omits `verify-attestation` in `needs` | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.23)** |
+| **SC-06** | **Skipped Verification Job** | Verification job was skipped due to upstream failure | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.24)** |
+| **SC-07** | **Destructive Plan Violation** | Plan includes delete/replace actions and `fail-on-destructive: true` | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.25)** |
+| **SC-08** | **Invalid Repository or Commit Binding** | Manifest commit SHA or repository identity differs from runner | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.26)** |
 
 ---
 

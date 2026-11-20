@@ -1,12 +1,18 @@
-# InfraFlow Protected Environment Approval Model
+# InfraFlow Automated Verified Policy Gate Model
 
-## 1. Purpose & Separation of Duties
+## 1. Purpose & Solo-Engineer Governance Model
 
-The **InfraFlow Approval Model** defines the operational and security criteria governing how speculative infrastructure plans advance toward deployment. It establishes strict separation of duties between change authors and approvers, combines human review with automated cryptographic provenance verification, and prevents stale, altered, or unauthorized plans from proceeding.
+The **InfraFlow Verified Policy Gate Model** defines the automated, policy-driven governance framework regulating how speculative infrastructure plans advance toward deployment authorization.
+
+In an enterprise organization with multiple engineers, deployment gates often incorporate manual peer reviews. However, in a **personal, solo-engineer portfolio project**, manual reviewer gates introduce structural challenges:
+1. **Self-Review Deadlocks**: GitHub Environment protection rules prohibit pull request authors from approving their own changes when "Prevent self-review" is enforced.
+2. **False Claims of Peer Review**: Documenting "human approval" when no other maintainers exist is misleading and undermines professional DevSecOps integrity.
+
+To establish genuine, auditable DevSecOps governance, InfraFlow refactors the human approval gate into an **Automated Verified Policy Gate** (`verified-policy-gate`). The platform evaluates cryptographically verified provenance, static security analysis, compliance policies, and change blast radiuses entirely through automated, fail-closed machine logic.
 
 ---
 
-## 2. Separation of Duties & IAM Trust Model
+## 2. Architecture & Separation of Duties
 
 ```
                     ┌────────────────────────┐
@@ -18,7 +24,9 @@ The **InfraFlow Approval Model** defines the operational and security criteria g
                     ┌────────────────────────┐
                     │ [Job: plan]            │
                     │  - Speculative Plan    │
+                    │  - Trivy IaC Scan      │
                     │  - OPA Policy Scanning │
+                    │  - Change Analysis     │
                     │  - Generate Manifest   │
                     │    (plan-manifest.json)│
                     │  - Purge Ephemeral Plan│
@@ -33,79 +41,85 @@ The **InfraFlow Approval Model** defines the operational and security criteria g
                     └───────────┬────────────┘
                                 │
                                 ▼
-    =================== APPROVAL PIPELINE ===================
-    │                                                       │
-    │  [1] Pre-Approval Machine Gate (Job: verify-attestation)
-    │      - Official 'gh attestation verify'               │
-    │      - Verify Manifest Subject SHA-256 Digest         │
-    │      - Verify Expected Source Repository & Commit     │
-    │      - Verify Expected Signer Workflow                │
-    │      - Verify GitHub Actions OIDC Issuer              │
-    │      - Verify Manifest Security Decision ('passed')   │
-    │      - Runs BEFORE human review pause                 │
-    │                                                       │
-    │  [2] Human Gate (Job: approval-gate):                 │
-    │      - Gated on verify-attestation == 'success'       │
-    │      - Environment: 'production-approval'             │
-    │      - GitHub pauses for authorized human reviewer    │
-    │      - Prevent self-review (author != reviewer)       │
-    │      - Review sanitized Step Summary diff             │
-    │                                                       │
-    =========================================================
+                    ┌────────────────────────┐
+                    │ [Job: verify-attestation]
+                    │  - Official 'gh' CLI   │
+                    │  - Verify Digest & OIDC│
+                    │  - Verify Repo & SHA   │
+                    │  - Verify Policy Status│
+                    └───────────┬────────────┘
+                                │
+                                ▼
+    ================ VERIFIED POLICY GATE ================
+    │                                                    │
+    │  [Job: verified-policy-gate]                       │
+    │  - Needs: [plan, attest, verify-attestation]       │
+    │  - Evaluates:                                      │
+    │    1. Speculative plan generation outcome          │
+    │    2. Plan change classification & unknowns        │
+    │    3. Trivy IaC misconfiguration scan outcome      │
+    │    4. Conftest / OPA policy enforcement outcome    │
+    │    5. Sigstore cryptographic attestation status    │
+    │    6. Official 'gh attestation verify' status      │
+    │    7. Destructive change policy enforcement        │
+    │  - Fails Closed: exits 1 if ANY condition fails    │
+    │  - Emits: authorization-status (authorized/rejected│
+    │  - Renders: Detailed audit trail step summary      │
+    │                                                    │
+    ======================================================
                                 │
                                 ▼
                     ┌────────────────────────┐
-                    │ Gate Completion /      │
-                    │ Downstream Delivery    │
+                    │ Authorized / Rejected  │
+                    │ Output State           │
                     └────────────────────────┘
 ```
 
 > [!NOTE]
 > **Production vs. Offline Provenance Architectures**:
-> - **Authoritative Production Mechanism**: GitHub Artifact Attestation using GitHub Actions OIDC and Sigstore (`actions/attest`) verified via official `gh attestation verify`. Eliminates static long-lived private keys and enforces transparency log verification.
+> - **Authoritative Production Mechanism**: GitHub Artifact Attestations using GitHub Actions OIDC and Sigstore (`actions/attest`) verified via official `gh attestation verify`. Eliminates static long-lived private keys and enforces Rekor transparency log verification.
 > - **Offline & Legacy Compatibility**: Asymmetric ECDSA NIST P-256 in-toto DSSE envelope signing remains available solely for offline unit testing, local attack simulations, and legacy backward compatibility. It is strictly excluded from authorizing live production approval gates.
 
 ---
 
-## 3. Critical Architectural Distinction: Cryptographic Gate vs. Human Review
+## 3. Critical Architectural Distinctions
 
 > [!IMPORTANT]
-> **Cryptographic Verification Does NOT Prove Human Reviewer Approval**:
-> - **Cryptographic Verification**: Proves machine-level data integrity, provenance authenticity, authoring workflow identity, source commit binding, and policy compliance. Rejection of an untrusted cryptographic key proves only that the artifact was signed by an unauthorized key—it does NOT prove or simulate human reviewer sign-off.
-> - **Human Reviewer Gate**: Enforced exclusively by GitHub's proprietary Environment protection rules (`environment: production-approval`).
-> - In an offline local verification harness ($0 budget, WSL2 runner), live human reviewer approval cannot be executed without a live GitHub Enterprise/Team SaaS account with configured environment reviewers.
-> - Consequently, live human reviewer interactions are documented as **UNVERIFIED (Requires live GitHub Environment setup)**, while cryptographic plan-to-approval bindings are **PASS (Locally Verified)**.
+> **Three Explicit Architectural Boundaries**:
+> 1. **Automated Cryptographic & Policy Verification (FULLY IMPLEMENTED & VERIFIED)**:
+>    - Cryptographic verification proves machine-level data integrity, provenance authenticity, authoring workflow identity, source commit binding, and policy compliance.
+>    - All planning, Trivy IaC scanning, Conftest/OPA evaluation, Sigstore signing, and `gh attestation verify` steps execute and pass automatically in both local harnesses and live GitHub Actions.
+> 2. **Human Review Gate (NOT CONFIGURED / INACTIVE)**:
+>    - Because this is a solo-engineer project, no human environment reviewer gate is active. The workflow does not pause for manual sign-off.
+>    - The system never claims human approval occurred.
+> 3. **Production Deployment Execution (DEFERRED TO G06)**:
+>    - Milestone G04 focuses strictly on speculative planning, security analysis, attestation, and policy authorization.
+>    - No cloud resources are provisioned ($0 budget preserved). `terraform apply` and `terraform destroy` are out of scope and deferred to Milestone G06.
 
 ---
 
-## 4. Eight-Scenario Human Approval Verification Matrix
+## 4. Eight-Scenario Verified Policy Gate Decision Matrix
 
-| Scenario ID | Test Scenario | Mechanism | Verification Method | Status |
+The automated verified policy gate evaluates all inputs and upstream states using a deterministic, fail-closed matrix:
+
+| Scenario ID | Test Scenario | Trigger Condition | Policy Gate Decision | Verification Status |
 |---|---|---|---|---|
-| **SC-01** | **Authorized Reviewer Approval** | Designated engineer approves via GitHub UI | GitHub Environment Protection Rules | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-02** | **Unauthorized Reviewer Rejection** | Non-listed user attempts to approve in UI | GitHub IAM Environment Gate | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-03** | **Self-Review Prevention** | PR author attempts to approve their own PR | "Prevent self-review" GitHub setting | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-04** | **Rejected Approval** | Reviewer clicks "Reject" in GitHub UI | Workflow job halts with `rejected`/`cancelled` | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-05** | **Missing Reviewer Configuration** | Environment created without required reviewers | Workflow runs without pausing for review | **UNVERIFIED (Cloud/SaaS setup required)** |
-| **SC-06** | **Approval Bypass Attempt (Direct Push)** | Malicious actor pushes directly to main branch | Branch protection + Cryptographic gate | **PASS (Locally Verified)** |
-| **SC-07** | **Source Commit Mismatch After Plan** | Attacker introduces code after plan generated | Cryptographic commit binding (`$GITHUB_SHA`) | **PASS (Locally Verified - Test 10.28 / 11.12)** |
-| **SC-08** | **Plan Digest Mismatch After Plan** | Attacker alters plan JSON or binary after approval | Cryptographic SHA-256 digest binding | **PASS (Locally Verified - Test 10.29, 10.30 / 11.9, 11.10)** |
+| **SC-01** | **All Checks Successful** | Plan succeeds, Trivy clean, OPA passed, Sigstore verified, non-destructive | **AUTHORIZED** (exit 0) | **PASS (Locally & CI Verified)** |
+| **SC-02** | **Trivy Vulnerability Scan Failure** | High/Critical misconfiguration detected (e.g. 0.0.0.0/0 ingress) | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.20)** |
+| **SC-03** | **OPA Policy Violation** | Mandatory tags missing or untrusted provider detected | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.21)** |
+| **SC-04** | **Attestation Verification Failure** | Tampered manifest, untrusted signer, or missing Rekor entry | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.22)** |
+| **SC-05** | **Missing Verification Job** | Workflow definition omits `verify-attestation` in `needs` | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.23)** |
+| **SC-06** | **Skipped Verification Job** | Verification job was skipped due to upstream failure | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.24)** |
+| **SC-07** | **Destructive Plan Violation** | Plan includes delete/replace actions and `fail-on-destructive: true` | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.25)** |
+| **SC-08** | **Invalid Repository or Commit Binding** | Manifest commit SHA or repository identity differs from runner | **REJECTED** (exit 1) | **PASS (Locally Verified - Test 14.26)** |
 
 ---
 
-## 5. Required GitHub Repository Environment Configuration
+## 5. Deployment Environment Context
 
-To activate the live human approval gate in GitHub Actions, consumer repositories must configure the target GitHub Environment:
-
-1. **Navigate to Repository Settings**:
-   `Settings` -> `Environments` -> `New environment`
-2. **Environment Name**:
-   Enter `production-approval` (matching `inputs.environment`).
-3. **Environment Protection Rules**:
-   - **Required reviewers**: Check this option and add designated platform security leads or deployment teams (e.g., `@my-org/platform-approvers`).
-   - **Prevent self-review**: Check this box. This strictly prohibits pull request authors from approving their own infrastructure modifications.
-   - **Deployment branches**: Restrict deployments to protected branches (e.g. `main` only).
-   - **Wait timer** (Optional): Add an automated soaking window (e.g. 5 minutes).
+The workflow parameter `environment` (default: `"production"`) supplies contextual metadata indicating the target deployment tier.
+- It is recorded in the job summary and audit trail to contextualize change classifications and blast radiuses.
+- It does **not** attach GitHub Environment protection rules or pause execution for manual sign-off, ensuring seamless continuous integration for the solo engineer.
 
 ---
 
@@ -119,23 +133,23 @@ To activate the live human approval gate in GitHub Actions, consumer repositorie
 
 ---
 
-## 8. Signing Identity Separation in the Approval Gate
+## 7. Signing Identity Separation in the Verified Policy Gate
 
-The approval gate strictly separates **Preview Signers** from **Production Signers**:
+The policy gate strictly separates **Preview Signers** from **Production Signers**:
 - **Preview Signing Tier**: Used for speculative pull request plan generation. Emits `signing_tier: preview`.
 - **Production Signing Tier**: Used for protected branch apply authorization. Emits `signing_tier: production` and requires signing by an authorized key in `PLATFORM_PRODUCTION_SIGNERS` (`3c27ef...`).
 - When advancing toward production deployment, the gate enforces `--require-production-signer`. An ephemeral or preview key (even if well-formed and validly signed) is rejected with exit code 1.
 
 ---
 
-## 9. Caller Workflow Security & Centrally Controlled Required Workflows
+## 8. Caller Workflow Security & Centrally Controlled Required Workflows
 
 To prevent an attacker pull request from subverting the caller workflow:
 1. **Centrally Controlled Required Workflows (GitHub Organization Rulesets)**:
    - Organization administrators enforce required workflows (e.g. `reusable-tf-security.yml`, `reusable-tf-plan.yml`) at the organization level.
    - Individual repository pull requests cannot delete or modify organization-required workflows.
 2. **Mandatory Status Check Policy (Repository Branch Protection)**:
-   - Repository settings enforce required status checks: `security` and `approval-gate`.
+   - Repository settings enforce required status checks: `security` and `verified-policy-gate`.
    - If a PR deletes the security job from its caller workflow, the required status check is missing, and GitHub strictly blocks the merge.
 3. **Least-Privilege PR Execution**:
    - Pull requests from untrusted branches or forks run strictly with `permissions: contents: read`.
@@ -143,7 +157,7 @@ To prevent an attacker pull request from subverting the caller workflow:
 
 ---
 
-## 10. Production Attestation Architecture (GitHub Artifact Attestations / Sigstore OIDC)
+## 9. Production Attestation Architecture (GitHub Artifact Attestations / Sigstore OIDC)
 
 In milestone **G04.1.4**, InfraFlow adopted **GitHub Artifact Attestations** (`actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2`) backed by GitHub OIDC and Sigstore as the authoritative production provenance model:
 
@@ -155,13 +169,12 @@ In milestone **G04.1.4**, InfraFlow adopted **GitHub Artifact Attestations** (`a
 2. **Sanitized Plan Manifest Attestation**:
    - Rather than publishing raw plans or raw JSON, the platform creates `plan-manifest.json` binding the SHA-256 digest of both the binary `tfplan` and `tfplan.json`, repository, commit, run ID, actor, workflow, and security decision (`security_decision: passed`).
    - `actions/attest` cryptographically attests the sanitized manifest file.
-3. **Strict Pre-Approval Gate Verification**:
-   - The pre-approval verification job (`verify-attestation`) verifies the Sigstore attestation and plan manifest using official `gh attestation verify` in GitHub Actions (with fallback to `scripts/verify-plan-integrity.py verify-attestation` for offline unit testing).
+3. **Strict Pre-Gate Attestation Verification**:
+   - The pre-gate verification job (`verify-attestation`) verifies the Sigstore attestation and plan manifest using official `gh attestation verify` in GitHub Actions (with fallback to `scripts/verify-plan-integrity.py verify-attestation` for offline unit testing).
    - Machine verification strictly verifies: (1) manifest subject digest, (2) expected source repository, (3) expected source commit SHA, (4) expected signer workflow, (5) GitHub Actions OIDC issuer (`https://token.actions.githubusercontent.com`), and (6) manifest security decision (`security_decision: passed`).
-   - Approval gate execution condition strictly mandates:
-     `needs.plan.result == 'success' && needs.plan.outputs.security-status == 'success' && needs.attest.result == 'success' && needs.verify-attestation.result == 'success'`.
-   - Missing, skipped, unauthenticated, tampered, or cross-repository attestations fail closed immediately before entering human review. Caller inputs cannot disable or bypass mandatory production verification.
-   - Asymmetric ECDSA preview signing is maintained strictly for offline unit tests and legacy compatibility, and is never accepted as an alternative production authorization identity (`--require-production-signer` enforced).
+   - Verified policy gate execution condition strictly mandates:
+     `needs: [plan, attest, verify-attestation]` with programmatic validation of all job results.
+   - Missing, skipped, unauthenticated, tampered, or cross-repository attestations fail closed immediately.
 4. **Attestation Scope vs. Exact-Plan Application (Future G06 Requirement)**:
    - GitHub Artifact Attestation attests `plan-manifest.json`, which contains the cryptographic digests of the binary and JSON plans (`plan_file_sha256` and `plan_json_sha256`).
    - The original binary plan (`tfplan`) is purged immediately upon completion and is **not** retained as a build artifact, strictly preventing confidential infrastructure state exposure in public repositories.
@@ -170,32 +183,27 @@ In milestone **G04.1.4**, InfraFlow adopted **GitHub Artifact Attestations** (`a
 
 ---
 
-## 11. Repository-Level Governance Ruleset & Enterprise Scaling Architecture
+## 10. Repository-Level Governance Ruleset & Enterprise Scaling Architecture
 
-### 11.1 Current Architecture: Repository-Level Rulesets
+### 10.1 Current Architecture: Solo-Maintainer Rulesets
 For the personal, public InfraFlow repositories (`TM-threemavithana/infraflow` and `TM-threemavithana/infraflow-consumer-test`), governance is enforced via repository-level GitHub Rulesets ([.github/rulesets/main-ruleset.json](file:///home/tharuka/projects/infraflow/.github/rulesets/main-ruleset.json)):
 - **Pull Request Requirement (Solo-Maintainer Compatible)**: Changes must be submitted via PR (direct push blocked). Configured with `required_approving_review_count: 0` to prevent deadlocks for a solo maintainer, where GitHub prohibits authors from approving their own PRs.
 - **Stale Approval Dismissal**: `dismiss_stale_reviews_on_push: true` automatically revokes approvals when new commits are introduced.
 - **Strict Status Checks**: Branches must be up-to-date with `main` before merging (`strict_required_status_checks_policy: true`).
-- **Enforced Check Source**: Status checks must originate from GitHub Actions (`integration_id: 15368`). Check context names must be verified against actual GitHub Actions check names during the first live PR run.
-- **CODEOWNERS Ownership & Review Routing**: [.github/CODEOWNERS](file:///home/tharuka/projects/infraflow/.github/CODEOWNERS) assigns ownership of sensitive paths (`.github/workflows/**`, `policies/trust/**`, `scripts/verify-plan-integrity.py`). It provides ownership metadata and review routing; independent approval requires another trusted maintainer.
+- **Enforced Check Source**: Status checks must originate from GitHub Actions (`integration_id: 15368`).
+- **CODEOWNERS Ownership & Review Routing**: [.github/CODEOWNERS](file:///home/tharuka/projects/infraflow/.github/CODEOWNERS) assigns ownership of sensitive paths (`.github/workflows/**`, `policies/trust/**`, `scripts/verify-plan-integrity.py`).
 - **Linear History & Force Push Blocks**: Non-fast-forward updates (`non_fast_forward`) and branch deletions (`deletion`) are blocked.
 - **Zero Bypass Actors**: `bypass_actors: []` ensures platform rules apply equally to all contributors.
 
-### 11.2 Attestation Permission Isolation (Job Separation)
-The reusable planning workflow strictly isolates elevated token permissions into an independent job:
+### 10.2 Job Permission Isolation
+The reusable planning workflow strictly isolates elevated token permissions into independent jobs:
 - **`plan` Job**: Granted `contents: read` only. Executes Terraform planning, Trivy scanner, and Conftest OPA policies. Generates sanitized `plan-manifest.json` and purges raw plans.
 - **`attest` Job**: Granted `contents: read`, `id-token: write`, `attestations: write`. Downloads only the sanitized manifest, pre-validates metadata and policy passing status, and calls `actions/attest`. Never executes untrusted Terraform code.
-- **`approval-gate` Job**: Granted `contents: read` only. Evaluates environment protection rules and verifies provenance.
+- **`verify-attestation` Job**: Granted `contents: read` only. Executes official `gh attestation verify`.
+- **`verified-policy-gate` Job**: Granted `contents: read` only. Programmatically evaluates upstream statuses and enforces fail-closed authorization.
 
-### 11.3 Future Architecture: Enterprise Centrally Controlled Rulesets
-When adopted within enterprise GitHub Organizations:
+### 10.3 Future Architecture: Enterprise Team Scaling Path
+When adopted within enterprise teams with multiple engineers:
+- The `verified-policy-gate` job can be supplemented with GitHub Environment Protection rules (`environment: production`) with `required_reviewers` and `prevent_self_review: true`.
 - Centrally controlled organization-level rulesets enforce required workflows across all consumer repositories without repository-level configuration duplication.
 - `required_approving_review_count` is elevated to 1+ with `require_code_owner_review: true` once multiple platform approvers are onboarded.
-- Requires GitHub Organization on Team or Enterprise cloud tier ($0 budget preserved; no paid plans purchased).
-
-> [!WARNING]
-> **Operational Distinctions**:
-> - **Local Ruleset Validation**: **PASS** (132/132 checks verify JSON schema, required checks, permission isolation, and security constraints).
-> - **Live GitHub Settings**: **UNVERIFIED** (Requires live repository administrative activation).
-> - **Live Human Reviewer Sign-Off**: **UNVERIFIED** (Simulated locally; requires live GitHub SaaS reviewer approval).

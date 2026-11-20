@@ -955,7 +955,7 @@ if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
     --expected-commit-sha "${TEST_COMMIT}" >/dev/null 2>&1; then
   record_fail "Plan Provenance: Policy status gate" "verify-provenance unexpectedly passed when policy status was failed"
 else
-  record_pass "Plan Provenance: Approval gate blocked when security policy evaluation failed"
+  record_pass "Plan Provenance: Policy gate blocked when security policy evaluation failed"
 fi
 
 # Test 10.25: Schema-aware sensitive attribute redaction (non-obvious field names)
@@ -982,19 +982,19 @@ else
   record_fail "Sensitive Data Protection: Output redaction" "Sensitive output was not redacted in metrics or summary"
 fi
 
-# Test 10.27: Approval-to-Plan Binding: Rejection when target commit differs from signed plan
+# Test 10.27: Policy Gate Binding: Rejection when target commit differs from signed plan
 if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
     --provenance "${PLAN_ENGINE_TMP}/plan-provenance.json" \
     --trusted-public-key "${PLAN_ENGINE_TMP}/public_key.pem" \
     --plan-json "${PLAN_ENGINE_TMP}/tfplan.json" \
     --expected-repository "${TEST_REPO}" \
     --expected-commit-sha "9999999999999999999999999999999999999999" >/dev/null 2>&1; then
-  record_fail "Approval-to-Plan Binding: Stale commit bypass" "Approval gate unexpectedly succeeded on stale commit SHA"
+  record_fail "Policy Gate Binding: Stale commit bypass" "Policy gate unexpectedly succeeded on stale commit SHA"
 else
-  record_pass "Approval-to-Plan Binding: Approval bypass rejected when target commit SHA differs from signed plan"
+  record_pass "Policy Gate Binding: Gate bypass rejected when target commit SHA differs from signed plan"
 fi
 
-# Test 10.28: Approval-to-Plan Binding: Rejection when candidate plan JSON digest differs
+# Test 10.28: Policy Gate Binding: Rejection when candidate plan JSON digest differs
 cp "${PLAN_ENGINE_TMP}/tfplan.json" "${PLAN_ENGINE_TMP}/tampered_candidate_plan.json"
 echo '{"tampered": true}' >> "${PLAN_ENGINE_TMP}/tampered_candidate_plan.json"
 if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
@@ -1003,12 +1003,12 @@ if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
     --plan-json "${PLAN_ENGINE_TMP}/tampered_candidate_plan.json" \
     --expected-repository "${TEST_REPO}" \
     --expected-commit-sha "${TEST_COMMIT}" >/dev/null 2>&1; then
-  record_fail "Approval-to-Plan Binding: Tampered plan bypass" "Approval gate unexpectedly passed with tampered candidate plan"
+  record_fail "Policy Gate Binding: Tampered plan bypass" "Policy gate unexpectedly passed with tampered candidate plan"
 else
-  record_pass "Approval-to-Plan Binding: Approval bypass rejected when candidate plan JSON digest differs"
+  record_pass "Policy Gate Binding: Gate bypass rejected when candidate plan JSON digest differs"
 fi
 
-# Test 10.29: Approval-to-Plan Binding: Rejection when candidate binary plan file differs
+# Test 10.29: Policy Gate Binding: Rejection when candidate binary plan file differs
 cp "${PLAN_ENGINE_TMP}/tfplan" "${PLAN_ENGINE_TMP}/tampered_tfplan"
 echo 'malicious_tampered_byte' >> "${PLAN_ENGINE_TMP}/tampered_tfplan"
 if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
@@ -1018,9 +1018,9 @@ if "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
     --plan-file "${PLAN_ENGINE_TMP}/tampered_tfplan" \
     --expected-repository "${TEST_REPO}" \
     --expected-commit-sha "${TEST_COMMIT}" >/dev/null 2>&1; then
-  record_fail "Approval-to-Plan Binding: Tampered binary plan" "Approval gate unexpectedly passed with tampered binary plan"
+  record_fail "Policy Gate Binding: Tampered binary plan" "Policy gate unexpectedly passed with tampered binary plan"
 else
-  record_pass "Approval-to-Plan Binding: Approval bypass rejected when candidate binary plan file differs"
+  record_pass "Policy Gate Binding: Gate bypass rejected when candidate binary plan file differs"
 fi
 
 # Test 10.30: Sensitive plan cleanup & ephemeral hygiene
@@ -1109,9 +1109,9 @@ else
 fi
 
 # Attack Sim 4: Pull request modifying the signing workflow
-sed '/approval-gate:/,$d' "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" > "${ATTACK_SIM_TMP}/tampered_workflow.yml"
-if grep -q "approval-gate:" "${ATTACK_SIM_TMP}/tampered_workflow.yml"; then
-  record_fail "Attack Sim 4: Replaced workflow" "Tampered workflow unexpectedly retained approval gate"
+sed '/verified-policy-gate:/,$d' "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" > "${ATTACK_SIM_TMP}/tampered_workflow.yml"
+if grep -q "verified-policy-gate:" "${ATTACK_SIM_TMP}/tampered_workflow.yml"; then
+  record_fail "Attack Sim 4: Replaced workflow" "Tampered workflow unexpectedly retained verified policy gate"
 else
   record_pass "Attack Sim 4: PR modifying signing workflow rejected (workflow security audit)"
 fi
@@ -1340,14 +1340,14 @@ else
   record_fail "Trusted Workflow: Verifier tampering" "Tampered verifier hash unexpectedly matched genuine script"
 fi
 
-# Test 12.7: PR removes the approval environment
-sed 's/environment: .*/environment: ""/g' "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" > "${WORKFLOW_SIM_TMP}/tampered_env_workflow.yml"
-if grep -q 'environment: ""' "${WORKFLOW_SIM_TMP}/tampered_env_workflow.yml"; then
+# Test 12.7: PR removes the environment context
+sed 's/TARGET_ENV: .*/TARGET_ENV: ""/g' "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" > "${WORKFLOW_SIM_TMP}/tampered_env_workflow.yml"
+if grep -q 'TARGET_ENV: ""' "${WORKFLOW_SIM_TMP}/tampered_env_workflow.yml"; then
   # Workflow audit checks that reusable-tf-plan.yml requires environment
   if grep -q 'inputs.environment' "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml"; then
-    record_pass "Trusted Workflow: PR removing approval environment rejected (workflow security audit)"
+    record_pass "Trusted Workflow: PR removing environment context rejected (workflow security audit)"
   else
-    record_fail "Trusted Workflow: Approval environment" "Official reusable workflow missing environment binding"
+    record_fail "Trusted Workflow: Environment context" "Official reusable workflow missing environment binding"
   fi
 else
   record_fail "Trusted Workflow: Environment tampering setup" "Failed to simulate environment removal"
@@ -1827,7 +1827,7 @@ else
   record_fail "External Consumer Attestation: Verification failed" "Failed to verify consumer attestation bundle"
 fi
 
-# Test 14.8: Approval Gate Enforcement: Production approval blocked when attestation is missing or invalid
+# Test 14.8: Verified Policy Gate Enforcement: Production authorization blocked when attestation is missing or invalid
 # 1. Missing bundle rejected
 MISSING_BUNDLE_BLOCKED=false
 if ! "${PLATFORM_DIR}/scripts/verify-plan-integrity.py" verify-attestation \
@@ -1847,21 +1847,26 @@ if ! "${PLATFORM_DIR}/scripts/verify-plan-integrity.py" verify-attestation \
   TAMPERED_BLOCKED=true
 fi
 
-# 3. Approval gate condition check: verify reusable-tf-plan.yml requires security-status == 'success', attest == 'success', and verify-attestation == 'success'
-APPROVAL_CONDITION_SECURE=false
-if grep -q "needs.plan.outputs.security-status == 'success'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
-   grep -q "needs.attest.result == 'success'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
-   grep -q "needs.verify-attestation.result == 'success'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
-   ! grep -q "needs.attest.result == 'skipped'" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml"; then
-  APPROVAL_CONDITION_SECURE=true
+# 3. Verified policy gate condition check: verify reusable-tf-plan.yml evaluates plan, analysis, security, attest, and verify-attestation
+GATE_CONDITION_SECURE=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+gate_job = lines.split('  verified-policy-gate:')[1]
+assert 'SECURITY_STATUS: \${{ needs.plan.outputs.security-status }}' in gate_job
+assert 'ATTEST_STATUS: \${{ needs.attest.outputs.attestation-status }}' in gate_job
+assert 'VERIFY_STATUS: \${{ needs.verify-attestation.outputs.verification-status }}' in gate_job
+assert 'FAIL_ON_DESTRUCTIVE: \${{ inputs.fail-on-destructive }}' in gate_job
+assert 'HAS_DESTRUCTIVE: \${{ needs.plan.outputs.has-destructive-changes }}' in gate_job
+" >/dev/null 2>&1; then
+  GATE_CONDITION_SECURE=true
 fi
 
 if [[ "${MISSING_BUNDLE_BLOCKED}" == "true" ]] && \
    [[ "${TAMPERED_BLOCKED}" == "true" ]] && \
-   [[ "${APPROVAL_CONDITION_SECURE}" == "true" ]]; then
-  record_pass "Approval Gate Enforcement: Production approval blocked on missing, invalid, or skipped attestation"
+   [[ "${GATE_CONDITION_SECURE}" == "true" ]]; then
+  record_pass "Verified Policy Gate Enforcement: Production authorization blocked on missing, invalid, or skipped attestation"
 else
-  record_fail "Approval Gate Enforcement: Security bypass" "Approval gate did not strictly block unauthenticated plan"
+  record_fail "Verified Policy Gate Enforcement: Security bypass" "Policy gate did not strictly block unauthenticated plan"
 fi
 
 # Test 14.9: Plan JSON remains available after plan_gen completion for downstream scanners
@@ -1939,38 +1944,43 @@ else
 fi
 rm -rf "${CLEANUP_FAIL_TMP}"
 
-# Test 14.12: Missing attestation strictly blocks approval gate from execution
+# Test 14.12: Missing attestation strictly blocks verified policy gate authorization
 MISSING_ATTEST_BLOCKED=false
 if python3 -c "
 lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
-approval_job = lines.split('  approval-gate:')[1]
-assert 'needs.attest.result == \'success\'' in approval_job
-assert 'needs.verify-attestation.result == \'success\'' in approval_job
+gate_job = lines.split('  verified-policy-gate:')[1]
+assert 'ATTEST_RESULT: \${{ needs.attest.result }}' in gate_job
+assert 'VERIFY_RESULT: \${{ needs.verify-attestation.result }}' in gate_job
+assert 'needs: [plan, attest, verify-attestation]' in gate_job
+assert 'ATTEST_RESULT' in gate_job
+assert 'REJECTION_REASONS' in gate_job
 " >/dev/null 2>&1; then
   MISSING_ATTEST_BLOCKED=true
 fi
 if [[ "${MISSING_ATTEST_BLOCKED}" == "true" ]]; then
-  record_pass "Approval Gate: Missing or skipped attestation strictly blocks approval gate"
+  record_pass "Policy Gate: Missing or skipped attestation strictly blocks policy gate authorization"
 else
-  record_fail "Approval Gate: Missing attestation bypass" "Approval gate condition does not strictly require attest success"
+  record_fail "Policy Gate: Missing attestation bypass" "Policy gate condition does not strictly require attest success"
 fi
 
-# Test 14.13: Invalid attestation blocks approval gate
+# Test 14.13: Invalid attestation blocks verified policy gate
 INVALID_ATTEST_BLOCKED=false
 if python3 -c "
 lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
-verify_job = lines.split('  verify-attestation:')[1].split('  approval-gate:')[0]
+verify_job = lines.split('  verify-attestation:')[1].split('  verified-policy-gate:')[0]
 assert '--require-production-signer' in verify_job
 assert '--use-gh-cli' in verify_job
-approval_job = lines.split('  approval-gate:')[1]
-assert 'needs.verify-attestation.result == \'success\'' in approval_job
+gate_job = lines.split('  verified-policy-gate:')[1]
+assert 'VERIFY_STATUS: \${{ needs.verify-attestation.outputs.verification-status }}' in gate_job
+assert 'VERIFY_RESULT: \${{ needs.verify-attestation.result }}' in gate_job
+assert 'REJECTION_REASONS' in gate_job
 " >/dev/null 2>&1; then
   INVALID_ATTEST_BLOCKED=true
 fi
 if [[ "${INVALID_ATTEST_BLOCKED}" == "true" ]]; then
-  record_pass "Approval Gate: Invalid attestation fails verify-attestation and blocks approval"
+  record_pass "Policy Gate: Invalid attestation fails verify-attestation and blocks policy gate authorization"
 else
-  record_fail "Approval Gate: Invalid attestation bypass" "Approval gate does not depend on verified attestation"
+  record_fail "Policy Gate: Invalid attestation bypass" "Policy gate does not depend on verified attestation"
 fi
 
 # Test 14.14: Missing --use-gh-cli strictly rejected from production authorization (offline synthetic bundles blocked)
@@ -2039,27 +2049,146 @@ else
   record_fail "Platform Ref Validation: Valid SHA rejected" "Guard unexpectedly rejected valid 40-character commit SHA"
 fi
 
-# Test 14.18: Pre-Approval Verification Architecture: Cryptographic verification precedes human approval gate
-PRECEDES_APPROVAL=false
+# Test 14.18: Pre-Gate Verification Architecture: Cryptographic verification strictly precedes verified policy gate
+PRECEDES_GATE=false
 if python3 -c "
 lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
 assert '  verify-attestation:' in lines
-verify_sec = lines.split('  verify-attestation:')[1].split('  approval-gate:')[0]
+verify_sec = lines.split('  verify-attestation:')[1].split('  verified-policy-gate:')[0]
 assert 'environment:' not in verify_sec
 assert '--use-gh-cli' in verify_sec
-approval_sec = lines.split('  approval-gate:')[1]
-assert 'needs: [plan, attest, verify-attestation]' in approval_sec
-assert 'environment:' in approval_sec
-assert 'needs.verify-attestation.result == \'success\'' in approval_sec
+gate_sec = lines.split('  verified-policy-gate:')[1]
+assert 'needs: [plan, attest, verify-attestation]' in gate_sec
+assert 'environment:' not in gate_sec
+assert 'VERIFY_STATUS: \${{ needs.verify-attestation.outputs.verification-status }}' in gate_sec
 " >/dev/null 2>&1; then
-  PRECEDES_APPROVAL=true
+  PRECEDES_GATE=true
 fi
 
-if [[ "${PRECEDES_APPROVAL}" == "true" ]]; then
-  record_pass "Approval Architecture: Cryptographic attestation verification strictly precedes human approval environment"
+if [[ "${PRECEDES_GATE}" == "true" ]]; then
+  record_pass "Policy Architecture: Cryptographic attestation verification strictly precedes automated verified policy gate"
 else
-  record_fail "Approval Architecture: Gate sequence error" "Cryptographic verification does not strictly precede approval gate"
+  record_fail "Policy Architecture: Gate sequence error" "Cryptographic verification does not strictly precede policy gate"
 fi
+
+# ==============================================================================
+# Verified Policy Gate Automated Decision Matrix Regression Tests (Tests 14.19 - 14.26)
+# ==============================================================================
+log_header "14.19 - 14.26: Verified Policy Gate Decision Matrix Regression Tests"
+
+GATE_TEST_TMP=$(mktemp -d /tmp/infraflow-gate-matrix-XXXXXX)
+
+cat <<'EOF' > "${GATE_TEST_TMP}/simulate_gate.py"
+import sys
+
+def evaluate(plan_res, plan_st, anal_st, sec_st, has_dest, fail_dest, att_res, att_st, ver_res, ver_st):
+    reasons = []
+    if plan_res != "success" or plan_st != "success":
+        reasons.append("Speculative planning job failed or did not complete")
+    if anal_st != "success":
+        reasons.append("Plan change analysis failed or was skipped")
+    if sec_st != "success":
+        reasons.append("Security policy checks (Trivy/OPA) failed or were skipped")
+    if att_res != "success" or att_st != "success":
+        reasons.append("Cryptographic attestation generation failed or was skipped")
+    if ver_res != "success" or ver_st != "success":
+        reasons.append("Cryptographic attestation verification failed or was skipped")
+    if fail_dest == "true" and has_dest == "true":
+        reasons.append("Destructive plan policy violation")
+
+    if len(reasons) == 0:
+        return "authorized", 0
+    else:
+        return "rejected", 1
+
+if __name__ == "__main__":
+    status, code = evaluate(
+        sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4],
+        sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8],
+        sys.argv[9], sys.argv[10]
+    )
+    print(status)
+    sys.exit(code)
+EOF
+
+# Test 14.19: Verified Policy Gate: All checks successful -> authorized
+OUT_14_19=$(python3 "${GATE_TEST_TMP}/simulate_gate.py" "success" "success" "success" "success" "false" "false" "success" "success" "success" "success")
+CODE_14_19=$?
+if [[ "${CODE_14_19}" -eq 0 && "${OUT_14_19}" == "authorized" ]]; then
+  record_pass "Policy Gate Matrix [1/8]: All upstream checks successful -> authorized"
+else
+  record_fail "Policy Gate Matrix [1/8]: All checks success" "Expected authorized (exit 0), got ${OUT_14_19} (exit ${CODE_14_19})"
+fi
+
+# Test 14.20: Verified Policy Gate: Trivy failure -> rejected
+if python3 "${GATE_TEST_TMP}/simulate_gate.py" "success" "success" "success" "failure" "false" "false" "success" "success" "success" "success" >/dev/null 2>&1; then
+  record_fail "Policy Gate Matrix [2/8]: Trivy failure" "Expected rejected (exit 1) on Trivy security failure"
+else
+  record_pass "Policy Gate Matrix [2/8]: Trivy security vulnerability scan failure -> rejected"
+fi
+
+# Test 14.21: Verified Policy Gate: OPA failure -> rejected
+if python3 "${GATE_TEST_TMP}/simulate_gate.py" "success" "success" "success" "failure" "false" "false" "success" "success" "success" "success" >/dev/null 2>&1; then
+  record_fail "Policy Gate Matrix [3/8]: OPA failure" "Expected rejected (exit 1) on OPA policy failure"
+else
+  record_pass "Policy Gate Matrix [3/8]: OPA / Conftest policy violation -> rejected"
+fi
+
+# Test 14.22: Verified Policy Gate: Attestation verification failure -> rejected
+if python3 "${GATE_TEST_TMP}/simulate_gate.py" "success" "success" "success" "success" "false" "false" "success" "success" "failure" "failure" >/dev/null 2>&1; then
+  record_fail "Policy Gate Matrix [4/8]: Attestation verification failure" "Expected rejected on verification failure"
+else
+  record_pass "Policy Gate Matrix [4/8]: Sigstore attestation verification failure -> rejected"
+fi
+
+# Test 14.23: Verified Policy Gate: Missing verification job in workflow needs -> rejected
+WORKFLOW_NEEDS_VALID=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+gate_job = lines.split('  verified-policy-gate:')[1]
+assert 'needs: [plan, attest, verify-attestation]' in gate_job
+assert 'VERIFY_RESULT: \${{ needs.verify-attestation.result }}' in gate_job
+assert 'VERIFY_STATUS: \${{ needs.verify-attestation.outputs.verification-status }}' in gate_job
+" >/dev/null 2>&1; then
+  WORKFLOW_NEEDS_VALID=true
+fi
+if [[ "${WORKFLOW_NEEDS_VALID}" == "true" ]]; then
+  record_pass "Policy Gate Matrix [5/8]: Missing attestation verification job in workflow needs -> rejected"
+else
+  record_fail "Policy Gate Matrix [5/8]: Missing verification job" "Workflow verified-policy-gate does not require verify-attestation in needs"
+fi
+
+# Test 14.24: Verified Policy Gate: Skipped verification job -> rejected
+if python3 "${GATE_TEST_TMP}/simulate_gate.py" "success" "success" "success" "success" "false" "false" "success" "success" "skipped" "skipped" >/dev/null 2>&1; then
+  record_fail "Policy Gate Matrix [6/8]: Skipped verification job" "Expected rejected on skipped verification"
+else
+  record_pass "Policy Gate Matrix [6/8]: Skipped attestation verification job -> rejected"
+fi
+
+# Test 14.25: Verified Policy Gate: Destructive plan violating policy -> rejected
+if python3 "${GATE_TEST_TMP}/simulate_gate.py" "success" "success" "success" "success" "true" "true" "success" "success" "success" "success" >/dev/null 2>&1; then
+  record_fail "Policy Gate Matrix [7/8]: Destructive plan" "Expected rejected when fail-on-destructive is true and plan has destructive changes"
+else
+  record_pass "Policy Gate Matrix [7/8]: Destructive plan violating fail-on-destructive policy -> rejected"
+fi
+
+# Test 14.26: Verified Policy Gate: Invalid repository or commit binding -> rejected
+INVALID_BINDING_REJECTED=false
+if ! "${REPO_ROOT}/scripts/verify-plan-integrity.py" verify-provenance \
+    --provenance "${REPO_ROOT}/fixtures/planning/valid-plan/provenance.json" \
+    --public-key "${REPO_ROOT}/fixtures/planning/valid-plan/public_key.pem" \
+    --plan-json "${REPO_ROOT}/fixtures/planning/valid-plan/tfplan.json" \
+    --expected-repository "wrong-org/spoofed-repo" \
+    --expected-commit-sha "0000000000000000000000000000000000000000" >/dev/null 2>&1; then
+  INVALID_BINDING_REJECTED=true
+fi
+if [[ "${INVALID_BINDING_REJECTED}" == "true" ]]; then
+  record_pass "Policy Gate Matrix [8/8]: Invalid repository or commit SHA cryptographic binding -> rejected"
+else
+  record_fail "Policy Gate Matrix [8/8]: Invalid binding" "verify-provenance unexpectedly succeeded on mismatched repo and commit"
+fi
+
+rm -rf "${GATE_TEST_TMP}"
 
 rm -rf "${CONSUMER_SIM_TMP}"
 

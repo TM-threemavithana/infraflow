@@ -1,4 +1,4 @@
-name: "InfraFlow Reusable Terraform Planning & Approval"
+name: "InfraFlow Reusable Terraform Planning & Verified Policy Gate"
 
 on:
   workflow_call:
@@ -19,9 +19,9 @@ on:
         default: ""
         type: string
       environment:
-        description: "Target GitHub Environment name for protected approval gate"
+        description: "Target deployment environment context for policy evaluation"
         required: false
-        default: "production-approval"
+        default: "production"
         type: string
       enable-policy-evaluation:
         description: "Whether to execute Conftest / OPA policy checks on plan JSON"
@@ -69,7 +69,7 @@ on:
         default: ""
         type: string
       require-production-signer:
-        description: "Whether to enforce production signing identity in the approval gate"
+        description: "Whether to enforce production signing identity in the verified policy gate"
         required: false
         default: false
         type: boolean
@@ -95,9 +95,12 @@ on:
       verification-status:
         description: "Outcome of cryptographic attestation verification (success, failure, skipped)"
         value: ${{ jobs.verify-attestation.outputs.verification-status }}
+      authorization-status:
+        description: "Outcome of the automated verified policy gate (authorized, rejected)"
+        value: ${{ jobs.verified-policy-gate.outputs.authorization-status }}
       approval-status:
-        description: "Outcome of the protected environment approval gate"
-        value: ${{ jobs.approval-gate.outputs.gate-status }}
+        description: "Deprecated alias for authorization-status"
+        value: ${{ jobs.verified-policy-gate.outputs.authorization-status }}
       has-changes:
         description: "Whether the plan contains modifying resource changes"
         value: ${{ jobs.plan.outputs.has-changes }}
@@ -739,40 +742,120 @@ jobs:
           STATUS="${VERIFY_OUTCOME:-skipped}"
           echo "verification-status=${STATUS}" >> "$GITHUB_OUTPUT"
 
-  approval-gate:
-    name: "Protected Approval Gate"
+  verified-policy-gate:
+    name: "Automated Verified Policy Gate"
     needs: [plan, attest, verify-attestation]
-    if: always() && needs.plan.result == 'success' && needs.plan.outputs.security-status == 'success' && needs.attest.result == 'success' && needs.verify-attestation.result == 'success' && inputs.environment != ''
+    if: always()
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
     permissions:
       contents: read
-    timeout-minutes: 60
+    timeout-minutes: 15
 
     outputs:
-      gate-status: ${{ steps.summary.outputs.gate-status }}
+      authorization-status: ${{ steps.gate.outputs.authorization-status }}
+      gate-status: ${{ steps.gate.outputs.authorization-status }}
 
     steps:
-      - name: "Record Approval Audit Trail"
-        id: summary
-        if: always()
+      - name: "Evaluate Verified Policy Gate"
+        id: gate
         env:
           TARGET_ENV: ${{ inputs.environment }}
-          VERIFY_STATUS: ${{ needs.verify-attestation.result }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          PLAN_STATUS: ${{ needs.plan.outputs.plan-status }}
+          ANALYSIS_STATUS: ${{ needs.plan.outputs.analysis-status }}
+          SECURITY_STATUS: ${{ needs.plan.outputs.security-status }}
+          HAS_DESTRUCTIVE: ${{ needs.plan.outputs.has-destructive-changes }}
+          TOTAL_CHANGES: ${{ needs.plan.outputs.total-changes }}
+          FAIL_ON_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
+          ATTEST_RESULT: ${{ needs.attest.result }}
+          ATTEST_STATUS: ${{ needs.attest.outputs.attestation-status }}
+          VERIFY_RESULT: ${{ needs.verify-attestation.result }}
+          VERIFY_STATUS: ${{ needs.verify-attestation.outputs.verification-status }}
         run: |
           set -euo pipefail
-          echo "gate-status=success" >> "$GITHUB_OUTPUT"
+          echo "::group::Automated Verified Policy Gate Evaluation"
+
+          REJECTION_REASONS=()
+
+          if [[ "${PLAN_RESULT}" != "success" || "${PLAN_STATUS}" != "success" ]]; then
+            REJECTION_REASONS+=("Speculative planning job failed or did not complete (result: ${PLAN_RESULT}, status: ${PLAN_STATUS:-unknown})")
+          fi
+
+          if [[ "${ANALYSIS_STATUS}" != "success" ]]; then
+            REJECTION_REASONS+=("Plan change analysis failed or was skipped (analysis-status: ${ANALYSIS_STATUS:-unknown})")
+          fi
+
+          if [[ "${SECURITY_STATUS}" != "success" ]]; then
+            REJECTION_REASONS+=("Security policy checks (Trivy/OPA) failed or were skipped (security-status: ${SECURITY_STATUS:-unknown})")
+          fi
+
+          if [[ "${ATTEST_RESULT}" != "success" || "${ATTEST_STATUS}" != "success" ]]; then
+            REJECTION_REASONS+=("Cryptographic attestation generation failed or was skipped (result: ${ATTEST_RESULT}, status: ${ATTEST_STATUS:-unknown})")
+          fi
+
+          if [[ "${VERIFY_RESULT}" != "success" || "${VERIFY_STATUS}" != "success" ]]; then
+            REJECTION_REASONS+=("Cryptographic attestation verification failed or was skipped (result: ${VERIFY_RESULT}, status: ${VERIFY_STATUS:-unknown})")
+          fi
+
+          if [[ "${FAIL_ON_DESTRUCTIVE}" == "true" && "${HAS_DESTRUCTIVE}" == "true" ]]; then
+            REJECTION_REASONS+=("Destructive plan policy violation: plan contains deletions or replacements and fail-on-destructive is enabled")
+          fi
+
+          if [[ ${#REJECTION_REASONS[@]} -eq 0 ]]; then
+            AUTH_STATUS="authorized"
+            DECISION="AUTHORIZED"
+            echo "Policy gate evaluation passed: all policy and cryptographic checks satisfied."
+          else
+            AUTH_STATUS="rejected"
+            DECISION="REJECTED"
+            echo "Policy gate evaluation failed: ${#REJECTION_REASONS[@]} policy requirement(s) violated."
+          fi
+
+          echo "authorization-status=${AUTH_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "gate-status=${AUTH_STATUS}" >> "$GITHUB_OUTPUT"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
             cat <<EOF >> "$GITHUB_STEP_SUMMARY"
-          ### 🛡️ InfraFlow Protected Environment Approval Gate
+          ### 🛡️ InfraFlow Automated Verified Policy Gate
+
           | Property | Value |
           |---|---|
-          | Environment | \`${TARGET_ENV}\` |
-          | Pre-Verification Status | **${VERIFY_STATUS}** (Cryptographically Verified Before Approval) |
-          | Verified Repository | \`${GITHUB_REPOSITORY}\` |
-          | Verified Commit SHA | \`${GITHUB_SHA}\` |
-          | Executing Actor | \`${GITHUB_ACTOR}\` |
+          | Target Environment Context | \`${TARGET_ENV}\` |
+          | Repository | \`${GITHUB_REPOSITORY}\` |
+          | Commit SHA | \`${GITHUB_SHA}\` |
           | Workflow Run ID | \`${GITHUB_RUN_ID}\` |
+          | Triggering Actor | \`${GITHUB_ACTOR}\` |
+          | Speculative Plan Status | \`${PLAN_STATUS:-unknown}\` |
+          | Planned Modifying Changes | \`${TOTAL_CHANGES:-0}\` |
+          | Destructive Changes Present | \`${HAS_DESTRUCTIVE:-false}\` |
+          | Security Policy Status | \`${SECURITY_STATUS:-unknown}\` |
+          | Cryptographic Attestation | \`${ATTEST_STATUS:-unknown}\` |
+          | Attestation Verification | \`${VERIFY_STATUS:-unknown}\` |
+          | **Authorization Decision** | **${DECISION}** |
+
           EOF
+
+            if [[ "${AUTH_STATUS}" == "authorized" ]]; then
+              cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          > [!NOTE]
+          > **Policy Gate Authorized**: All automated policy, static security (Trivy), OPA/Conftest, and cryptographic Sigstore attestation verification checks have passed successfully.
+          >
+          > *Notice: This portfolio project utilizes an automated verified policy gate tailored for solo-engineer governance. Production deployment execution (terraform apply) is managed independently in G06.*
+          EOF
+            else
+              cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          > [!CAUTION]
+          > **Policy Gate Authorization Rejected**: The speculative plan cannot be authorized for deployment due to the following policy violation(s):
+          EOF
+              for reason in "${REJECTION_REASONS[@]}"; do
+                echo "> - ${reason}" >> "$GITHUB_STEP_SUMMARY"
+              done
+            fi
+          fi
+
+          echo "::endgroup::"
+
+          if [[ "${AUTH_STATUS}" != "authorized" ]]; then
+            echo "::error::Verified Policy Gate rejected authorization for deployment."
+            exit 1
           fi

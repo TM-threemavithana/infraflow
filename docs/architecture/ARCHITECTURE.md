@@ -225,7 +225,8 @@ Introduced in **Milestone G04**, this reusable workflow provides speculative pla
 | `plan-status` | `string` | Speculative plan generation outcome (`success`, `failure`, `skipped`). |
 | `analysis-status` | `string` | Change classification outcome (`success`, `failure`, `skipped`). |
 | `security-status` | `string` | Aggregated security scan outcome (`success`, `failure`, `skipped`). |
-| `approval-status` | `string` | Protected environment approval gate status. |
+| `authorization-status` | `string` | Automated verified policy gate status (`authorized`, `rejected`). |
+| `approval-status` | `string` | Deprecated alias for `authorization-status`. |
 | `has-changes` | `string` | String boolean indicating whether modifying changes are planned. |
 | `has-destructive-changes` | `string` | String boolean indicating whether deletions/replacements are planned. |
 | `total-changes` | `string` | Total count of modifying resource changes. |

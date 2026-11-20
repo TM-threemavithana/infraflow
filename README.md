@@ -209,7 +209,7 @@ infraflow/
 │   │   └── verification-report.md     # Milestone G03 engineering verification report
 │   └── planning/                      # Planning & approval specifications (G04)
 │       ├── planning-architecture.md   # Speculative planning architecture & data flow
-│       ├── approval-model.md          # Protected environment & human approval gates
+│       ├── approval-model.md          # Automated verified policy gate & governance model
 │       ├── plan-security.md           # Secret masking, ephemeral storage & attestation
 │       └── verification-report.md     # Milestone G04 verification & test evidence
 ├── examples/
@@ -319,6 +319,6 @@ chmod +x scripts/validate-local.sh
 
 ### Planning & Approval Engine (G04)
 - [Planning Architecture](docs/planning/planning-architecture.md)
-- [Approval Model & Environment Gates](docs/planning/approval-model.md)
+- [Automated Verified Policy Gate Model](docs/planning/approval-model.md)
 - [Plan Security & Attestation](docs/planning/plan-security.md)
 - [G04 Verification Report](docs/planning/verification-report.md)

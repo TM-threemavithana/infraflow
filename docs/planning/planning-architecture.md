@@ -27,13 +27,12 @@ flowchart TD
         Guard --> Init --> Gen --> Show --> Analyze --> Policy --> Trivy --> Attest --> Clean --> Pub
     end
 
-    subgraph GateJob["Job 2: Protected Approval Gate"]
-        Env["GitHub Environment: production-approval (Required Reviewers)"]
-        Download["Download Attestation Artifact"]
-        VerifyDigest["Verify Attestation Bindings (verify-plan-integrity.py verify)"]
+    subgraph GateJob["Job 4: Automated Verified Policy Gate"]
+        Eval["Programmatic Evaluation (Plan, Security, Attestation, Destructive)"]
+        Decision["Deterministic Authorization Decision (authorized / rejected)"]
         AuditLog["Emit GitHub Step Summary Audit Trail"]
 
-        Env --> Download --> VerifyDigest --> AuditLog
+        Eval --> Decision --> AuditLog
     end
 
     Call --> PlanJob
@@ -78,7 +77,7 @@ flowchart TD
 | `terraform-version` | `string` | `"1.10.4"` | SemVer Terraform version (>= 1.6.0 enforced) |
 | `working-directory` | `string` | `"."` | Safe relative module directory |
 | `var-file` | `string` | `""` | Optional relative path to `.tfvars` file |
-| `environment` | `string` | `"production-approval"` | Target GitHub Environment for approval gate |
+| `environment` | `string` | `"production"` | Target deployment environment context for policy evaluation |
 | `enable-policy-evaluation` | `boolean` | `true` | Evaluate OPA / Conftest policies against plan JSON |
 | `policy-directory` | `string` | `"policies"` | Relative path to enterprise Rego policy root |
 | `enable-trivy` | `boolean` | `true` | Execute Trivy IaC static scan |
@@ -93,7 +92,8 @@ flowchart TD
 | `plan-status` | Speculative plan generation outcome (`success`, `failure`, `skipped`) |
 | `analysis-status` | Change classification outcome (`success`, `failure`, `skipped`) |
 | `security-status` | Aggregated security scan outcome (`success`, `failure`, `skipped`) |
-| `approval-status` | Protected environment approval gate status |
+| `authorization-status` | Automated verified policy gate status (`authorized`, `rejected`) |
+| `approval-status` | Deprecated alias for `authorization-status` |
 | `has-changes` | Boolean flag indicating whether modifying changes are planned |
 | `has-destructive-changes` | Boolean flag indicating whether deletions or replacements are planned |
 | `total-changes` | Integer count of total modifying changes |
