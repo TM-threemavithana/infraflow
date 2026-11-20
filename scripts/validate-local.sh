@@ -3791,7 +3791,363 @@ fi
 
 rm -rf "${G06_TEST_DIR}"
 
-# --- 17. Summary Report ---
+# --- 17. Google Cloud Adapter & Workload Identity Architecture (G07.2 / G07.3) ---
+log_header "17. Google Cloud Adapter & Workload Identity Architecture (G07.2 / G07.3)"
+
+GCP_REUSABLE_WF="${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml"
+GCP_REF_MODULE="${REPO_ROOT}/examples/gcp-reference-module"
+
+# Test 17.1: Actionlint verification of GCP reusable workflow
+if [[ -n "${ACTIONLINT_BIN}" ]]; then
+  if "${ACTIONLINT_BIN}" "${GCP_REUSABLE_WF}" >/dev/null 2>&1; then
+    record_pass "GCP Workflows [1/27]: Actionlint syntax & schema validation passed"
+  else
+    record_fail "GCP Workflows [1/27]: Actionlint validation" "Actionlint failed on GCP reusable workflow"
+  fi
+else
+  record_fail "GCP Workflows [1/27]: Actionlint validation" "Actionlint binary not found"
+fi
+
+# Test 17.2: Zizmor supply chain security audit on reusable GCP workflow
+if [[ -n "${ZIZMOR_BIN}" ]]; then
+  if "${ZIZMOR_BIN}" -c "${REPO_ROOT}/.zizmor.yml" --min-severity medium "${GCP_REUSABLE_WF}" >/dev/null 2>&1; then
+    record_pass "GCP Adapter [2/27]: Zizmor supply chain security audit passed (0 medium/high findings)"
+  else
+    record_fail "GCP Adapter [2/27]: Zizmor audit" "Zizmor detected supply chain vulnerabilities in reusable-tf-gcp.yml"
+  fi
+else
+  record_fail "GCP Adapter [2/27]: Zizmor audit" "Zizmor binary not found"
+fi
+
+# Test 17.3: Conftest OPA unit tests verification (includes GCP WIF and GCS backend tests)
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies" "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+    record_pass "GCP OPA Policies [3/27]: All Rego unit tests passed (conftest verify)"
+  else
+    record_fail "GCP OPA Policies [3/27]: Rego unit tests" "conftest verify reported failures"
+  fi
+else
+  record_fail "GCP OPA Policies [3/27]: Rego unit tests" "Conftest binary not found"
+fi
+
+# Extract guard script from reusable-tf-gcp.yml
+GCP_GUARD_SCRIPT="$(python3 -c "
+import yaml
+with open('${GCP_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+steps = {s['id']: s['run'] for s in data['jobs']['validate-inputs']['steps'] if 'id' in s and 'run' in s}
+print(steps['guard'])
+")"
+
+run_gcp_guard_test() {
+  local version="${1:-1.10.4}"
+  local dir="${2:-.}"
+  local var_file="${3:-}"
+  local env_name="${4:-dev}"
+  local project_id="${5:-infraflow-ref-project}"
+  local region="${6:-us-central1}"
+  local wif_provider="${7:-projects/123456789012/locations/global/workloadIdentityPools/infraflow-pool/providers/github-provider}"
+  local service_account="${8:-infraflow-sa@infraflow-ref-project.iam.gserviceaccount.com}"
+  local bucket="${9:-infraflow-tfstate-bucket}"
+  local prefix="${10:-terraform/state/dev}"
+  local severity="${11:-HIGH,CRITICAL}"
+  local enable_gcp_auth="${12:-false}"
+  local event_name="${13:-push}"
+  local target_ref="${14:-refs/heads/main}"
+  local workflow_repo="${15:-TM-threemavithana/infraflow}"
+  local workflow_sha="${16:-cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2}"
+  local workflow_ref="${17:-TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2}"
+  local enable_policy_eval="${18:-true}"
+  local enable_trivy="${19:-true}"
+  local policy_dir="${20:-policies}"
+
+  local code=0
+  INPUT_VERSION="${version}" \
+  INPUT_DIR="${dir}" \
+  INPUT_VAR_FILE="${var_file}" \
+  INPUT_ENV="${env_name}" \
+  INPUT_PROJECT_ID="${project_id}" \
+  INPUT_GCP_REGION="${region}" \
+  INPUT_WIF_PROVIDER="${wif_provider}" \
+  INPUT_SERVICE_ACCOUNT="${service_account}" \
+  INPUT_BUCKET="${bucket}" \
+  INPUT_PREFIX="${prefix}" \
+  INPUT_SEVERITY="${severity}" \
+  ENABLE_GCP_AUTH="${enable_gcp_auth}" \
+  ENABLE_POLICY_EVAL="${enable_policy_eval}" \
+  ENABLE_TRIVY="${enable_trivy}" \
+  INPUT_POLICY_DIR="${policy_dir}" \
+  EVENT_NAME="${event_name}" \
+  TARGET_REF="${target_ref}" \
+  GITHUB_REPOSITORY="TM-threemavithana/infraflow" \
+  WORKFLOW_REPO="${workflow_repo}" \
+  WORKFLOW_SHA="${workflow_sha}" \
+  WORKFLOW_REF="${workflow_ref}" \
+    bash -c "${GCP_GUARD_SCRIPT}" >/dev/null 2>&1 || code=$?
+  return ${code}
+}
+
+# Test 17.4: Input Guard: Valid GCP inputs accepted
+if run_gcp_guard_test; then
+  record_pass "GCP Input Guard [4/27]: Valid GCP inputs accepted"
+else
+  record_fail "GCP Input Guard [4/27]: Valid inputs" "Legitimate GCP inputs unexpectedly failed guard validation"
+fi
+
+# Test 17.5: Security Invariant: Live GCP authentication strictly rejected (G07.2/G07.3 fail-closed)
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "true"; then
+  record_pass "GCP Security Invariant [5/27]: Live GCP authentication strictly rejected in G07.2/G07.3 (fail-closed)"
+else
+  record_fail "GCP Security Invariant [5/27]: Live GCP auth" "enable-gcp-auth: true was unexpectedly permitted"
+fi
+
+# Test 17.6: Input Guard: Malformed GCP Project ID rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "bad_proj" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "short" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "UPPERCASE-PROJ" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "proj;rm -rf /"; then
+  record_pass "GCP Input Guard [6/27]: Malformed Project ID and injection attempts rejected as expected"
+else
+  record_fail "GCP Input Guard [6/27]: Project ID rejection" "Malformed Project ID was unexpectedly accepted"
+fi
+
+# Test 17.7: Input Guard: Malformed GCP Region rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us_central1" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "US" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1; rm -rf /"; then
+  record_pass "GCP Input Guard [7/27]: Malformed GCP region and injection attempts rejected as expected"
+else
+  record_fail "GCP Input Guard [7/27]: Region rejection" "Malformed GCP region was unexpectedly accepted"
+fi
+
+# Test 17.8: Input Guard: Malformed Workload Identity Provider resource string rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "invalid-provider-resource" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "projects/my-proj/locations/global/workloadIdentityPools/pool/providers/prov"; then
+  record_pass "GCP Input Guard [8/27]: Malformed Workload Identity Provider resource format rejected"
+else
+  record_fail "GCP Input Guard [8/27]: WIF provider rejection" "Malformed WIF provider resource format was unexpectedly accepted"
+fi
+
+# Test 17.9: Input Guard: Malformed Service Account email rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "admin@gmail.com" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "sa@project.gserviceaccount.com"; then
+  record_pass "GCP Input Guard [9/27]: Malformed Service Account email rejected as expected"
+else
+  record_fail "GCP Input Guard [9/27]: Service Account rejection" "Malformed Service Account email was unexpectedly accepted"
+fi
+
+# Test 17.10: Input Guard: Reserved GCS bucket prefix ('goog', 'google') rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "google-state-storage" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "goog-bucket"; then
+  record_pass "GCP Input Guard [10/27]: Reserved GCS bucket prefixes ('goog', 'google') rejected as expected"
+else
+  record_fail "GCP Input Guard [10/27]: Reserved bucket prefix" "Reserved bucket prefix was unexpectedly accepted"
+fi
+
+# Test 17.11: Input Guard: GCS state prefix leading slash and traversal rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "infraflow-tfstate-bucket" "/leading/slash" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "infraflow-tfstate-bucket" "escape/../../root"; then
+  record_pass "GCP Input Guard [11/27]: GCS state prefix leading slashes and path traversal rejected"
+else
+  record_fail "GCP Input Guard [11/27]: Prefix path traversal" "Prefix traversal or leading slash was unexpectedly accepted"
+fi
+
+# Test 17.12: Input Guard: Policy directory path traversal and absolute paths rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "true" "true" "/etc/policies" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "true" "true" "policies/../../escaped"; then
+  record_pass "GCP Input Guard [12/27]: Policy directory path traversal and absolute paths rejected"
+else
+  record_fail "GCP Input Guard [12/27]: Policy directory validation" "Policy directory traversal or absolute path was unexpectedly accepted"
+fi
+
+# Test 17.13: Security Invariant: Mandatory gate bypass attempts (policy eval / trivy disabled) rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "false" "true" && \
+   ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@cb33ba9ec5ed7e8b2ce5907aa42d6930e7f95bd2" "true" "false"; then
+  record_pass "GCP Security Invariant [13/27]: Mandatory security gate bypass attempts (policy eval / trivy disabled) rejected"
+else
+  record_fail "GCP Security Invariant [13/27]: Gate bypass" "Bypass of mandatory policy evaluation or Trivy scan was unexpectedly permitted"
+fi
+
+# Test 17.14: Trust Boundary: Rogue workflow repository rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "untrusted-attacker/infraflow"; then
+  record_pass "GCP Trust Boundary [14/27]: Rogue workflow repository strictly rejected"
+else
+  record_fail "GCP Trust Boundary [14/27]: Repository trust" "Untrusted caller repository was unexpectedly accepted"
+fi
+
+# Test 17.15: Trust Boundary: Mutable workflow ref rejected (immutable SHA pinning required)
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "main" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@main"; then
+  record_pass "GCP Trust Boundary [15/27]: Mutable workflow ref (@main) strictly rejected (immutable SHA required)"
+else
+  record_fail "GCP Trust Boundary [15/27]: SHA pinning" "Mutable workflow reference was unexpectedly accepted"
+fi
+
+# Test 17.16: Security Invariant (SEC-02): Untrusted pull requests requesting cloud credentials rejected
+if ! run_gcp_guard_test "1.10.4" "." "" "dev" "infraflow-ref-project" "us-central1" "" "" "" "" "HIGH,CRITICAL" "true" "pull_request"; then
+  record_pass "GCP Security Guard [16/27]: Untrusted pull requests requesting cloud auth rejected (SEC-02 fail-closed)"
+else
+  record_fail "GCP Security Guard [16/27]: PR auth rejection" "Untrusted pull request was allowed to request GCP credentials"
+fi
+
+# Test 17.17: GCP Output Aggregation & Failure Propagation
+GCP_FAILURE_PROP_VERIFIED=false
+if python3 -c "
+import yaml, subprocess, tempfile
+
+with open('${GCP_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+
+summary_step = [s for s in data['jobs']['summary']['steps'] if s.get('id') == 'aggregate'][0]['run']
+
+def test_summary(val_res, cf_res, cf_plan_st, cf_sec_st, enable_auth):
+    with tempfile.NamedTemporaryFile('w', delete=False) as out_f:
+        out_path = out_f.name
+    env = {
+        'GITHUB_OUTPUT': out_path,
+        'VALIDATE_RESULT': val_res,
+        'GCP_PLAN_RESULT': 'skipped',
+        'GCP_PLAN_STATUS': 'skipped',
+        'GCP_AUTH_STATUS': 'disabled',
+        'GCP_SEC_STATUS': 'skipped',
+        'CF_PLAN_RESULT': cf_res,
+        'CF_PLAN_STATUS': cf_plan_st,
+        'CF_SEC_STATUS': cf_sec_st,
+        'CF_HAS_CHANGES': 'false',
+        'CF_HAS_DESTRUCTIVE': 'false',
+        'CF_TOTAL_CHANGES': '0',
+        'ENABLE_GCP_AUTH': enable_auth,
+    }
+    p = subprocess.run(['bash', '-c', summary_step], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with open(out_path) as f:
+        lines = dict(line.strip().split('=', 1) for line in f if '=' in line)
+    return p.returncode, lines
+
+# 1. Validation failure -> rejected
+rc1, l1 = test_summary('failure', 'skipped', 'skipped', 'skipped', 'false')
+assert l1['authorization-status'] == 'rejected' and l1['plan-status'] == 'failure' and rc1 != 0
+
+# 2. Cloud-free success -> not-applicable
+rc2, l2 = test_summary('success', 'success', 'success', 'success', 'false')
+assert l2['authorization-status'] == 'not-applicable' and l2['plan-status'] == 'success' and rc2 == 0
+assert l2['authorization-status'] != 'authorized'
+
+# 3. Cloud-free validation failure -> rejected
+rc3, l3 = test_summary('success', 'failure', 'failure', 'failure', 'false')
+assert l3['authorization-status'] == 'rejected' and rc3 != 0
+" >/dev/null 2>&1; then
+  GCP_FAILURE_PROP_VERIFIED=true
+fi
+
+if [[ "${GCP_FAILURE_PROP_VERIFIED}" == "true" ]]; then
+  record_pass "GCP Security Gates [17/27]: Output aggregation and failure propagation verified"
+else
+  record_fail "GCP Security Gates [17/27]: Failure propagation" "Summary output aggregation or failure propagation failed test matrix"
+fi
+
+# Test 17.18: GCS Backend Policy: Empty backend prefix rejected
+GCP_EMPTY_PREFIX_VERIFIED=false
+if python3 -c "
+import tempfile, json, subprocess, os
+conftest = '${CONFTEST_BIN}'
+policy = '${REPO_ROOT}/policies/gcp/storage_backend.rego'
+payload = {'terraform': [{'backend': [{'gcs': [{'bucket': 'tfstate', 'prefix': ''}]}]}]}
+with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+    json.dump(payload, f)
+    tmp_path = f.name
+try:
+    p = subprocess.run([conftest, 'test', '--namespace', 'gcp.storage_backend', '--policy', policy, tmp_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert p.returncode != 0 and 'prefix must not be empty' in (p.stdout + p.stderr)
+finally:
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+" >/dev/null 2>&1; then
+  GCP_EMPTY_PREFIX_VERIFIED=true
+fi
+if [[ "${GCP_EMPTY_PREFIX_VERIFIED}" == "true" ]]; then
+  record_pass "GCP State Backend [18/27]: Empty backend prefix rejected by Conftest storage policy"
+else
+  record_fail "GCP State Backend [18/27]: Empty backend prefix" "Empty backend prefix was unexpectedly accepted by storage policy"
+fi
+
+# Test 17.19: GCP Reference Module: Canonical formatting
+if terraform -chdir="${GCP_REF_MODULE}" fmt -check >/dev/null 2>&1; then
+  record_pass "GCP Reference Module [19/27]: Canonical formatting verified (terraform fmt -check)"
+else
+  record_fail "GCP Reference Module [19/27]: terraform fmt" "GCP reference module contains unformatted files"
+fi
+
+# Test 17.20: GCP Reference Module: Cloud-free initialization
+GCP_INIT_ARGS=("-backend=false" "-input=false")
+if [[ -d "${HOME}/.terraform.d/plugin-cache" ]]; then
+  GCP_INIT_ARGS+=("-plugin-dir=${HOME}/.terraform.d/plugin-cache")
+fi
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${GCP_REF_MODULE}" init "${GCP_INIT_ARGS[@]}" >/dev/null 2>&1; then
+  record_pass "GCP Reference Module [20/27]: Cloud-free initialization verified (terraform init -backend=false)"
+else
+  record_fail "GCP Reference Module [20/27]: terraform init" "GCP reference module initialization failed"
+fi
+
+# Test 17.21: GCP Reference Module: Static validation
+if terraform -chdir="${GCP_REF_MODULE}" validate >/dev/null 2>&1; then
+  record_pass "GCP Reference Module [21/27]: Static validation verified (terraform validate)"
+else
+  record_fail "GCP Reference Module [21/27]: terraform validate" "GCP reference module failed static validation"
+fi
+
+# Test 17.22: GCP Reference Module: Native unit tests with mock provider
+if terraform -chdir="${GCP_REF_MODULE}" test >/dev/null 2>&1; then
+  record_pass "GCP Reference Module [22/27]: Native unit tests passed offline with mock provider (terraform test)"
+else
+  record_fail "GCP Reference Module [22/27]: terraform test" "GCP reference module native unit tests failed"
+fi
+
+# Clean up temporary terraform state in reference module
+rm -rf "${GCP_REF_MODULE}/.terraform" "${GCP_REF_MODULE}/.terraform.lock.hcl"
+
+# Test 17.23: GCP Reference Module: Trivy IaC Misconfiguration scan
+if [[ -n "${TRIVY_BIN}" ]]; then
+  if "${TRIVY_BIN}" config --severity HIGH,CRITICAL --exit-code 1 "${GCP_REF_MODULE}" >/dev/null 2>&1; then
+    record_pass "GCP Reference Module [23/27]: Trivy IaC security scan clean (0 HIGH/CRITICAL findings)"
+  else
+    record_fail "GCP Reference Module [23/27]: Trivy scan" "Trivy detected misconfigurations in GCP reference module"
+  fi
+else
+  record_fail "GCP Reference Module [23/27]: Trivy scan" "Trivy binary not found"
+fi
+
+# Test 17.24: GCP Reference Module: Conftest policy compliance
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" test --all-namespaces --policy "${REPO_ROOT}/policies" "${GCP_REF_MODULE}/main.tf" >/dev/null 2>&1; then
+    record_pass "GCP Reference Module [24/27]: Conftest enterprise policy compliance verified"
+  else
+    record_fail "GCP Reference Module [24/27]: Conftest policy compliance" "Conftest policies failed on GCP reference module"
+  fi
+else
+  record_fail "GCP Reference Module [24/27]: Conftest policy compliance" "Conftest binary not found"
+fi
+
+# Test 17.25: Dedicated GCP Python Test Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_gcp_adapter.py" >/dev/null 2>&1; then
+  record_pass "GCP Adapter Test Suite [25/27]: Dedicated GCP adapter test suite passed (tests/test_gcp_adapter.py)"
+else
+  record_fail "GCP Adapter Test Suite [25/27]: GCP adapter test suite" "One or more tests in tests/test_gcp_adapter.py failed"
+fi
+
+# Test 17.26: Dedicated GCP Adversarial Integration Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_gcp_adversarial_integration.py" >/dev/null 2>&1; then
+  record_pass "GCP Adversarial Test Suite [26/27]: Dedicated 30-vector GCP adversarial suite passed (tests/test_gcp_adversarial_integration.py)"
+else
+  record_fail "GCP Adversarial Test Suite [26/27]: Adversarial test suite" "One or more tests in tests/test_gcp_adversarial_integration.py failed"
+fi
+
+# Test 17.27: Dedicated GCP Plan Metrics Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_gcp_plan_metrics.py" >/dev/null 2>&1; then
+  record_pass "GCP Plan Metrics Suite [27/27]: Dedicated plan metrics & contract regression suite passed (tests/test_gcp_plan_metrics.py)"
+else
+  record_fail "GCP Plan Metrics Suite [27/27]: Plan metrics regression suite" "One or more tests in tests/test_gcp_plan_metrics.py failed"
+fi
+
+# --- 18. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -3799,7 +4155,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

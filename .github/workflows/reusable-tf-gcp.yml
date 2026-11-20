@@ -1,0 +1,751 @@
+name: "InfraFlow Reusable Google Cloud Terraform Adapter"
+
+# ==============================================================================
+# INFRAFLOW TIER 2 CLOUD ADAPTER: GOOGLE CLOUD PLATFORM (GCP)
+# 
+# Security Invariants:
+# 1. Passwordless Workload Identity Federation (WIF) OIDC Architecture.
+# 2. Zero Static Credentials: Long-lived Service Account keys are strictly prohibited.
+# 3. Cloud-Free Isolation: Milestone G07.2 enables cloud-free offline validation only.
+#    Live GCP authentication is strictly disabled in G07.2 to guarantee zero cloud spend.
+# 4. Strict SEC-02 Compliance: Untrusted pull requests cannot request GCP credentials.
+# 5. Remote State Integrity: Standardized on native GCS generation match locking.
+# 6. Immutable SHA Pinning: All third-party actions pinned to full 40-character SHAs.
+# ==============================================================================
+
+on:
+  workflow_call:
+    inputs:
+      gcp-project-id:
+        description: "Target Google Cloud Project ID (e.g. my-project-id)"
+        required: true
+        type: string
+      gcp-region:
+        description: "Target Google Cloud region (e.g. us-central1)"
+        required: false
+        default: "us-central1"
+        type: string
+      workload-identity-provider:
+        description: "Full GCP Workload Identity Provider resource name (projects/<NUM>/locations/global/workloadIdentityPools/<POOL>/providers/<PROV>)"
+        required: false
+        default: ""
+        type: string
+      service-account:
+        description: "Google Service Account email to impersonate via Workload Identity"
+        required: false
+        default: ""
+        type: string
+      backend-bucket:
+        description: "Google Cloud Storage bucket name for Terraform remote state"
+        required: false
+        default: ""
+        type: string
+      backend-prefix:
+        description: "Relative GCS object prefix path for state file (e.g. env/production)"
+        required: false
+        default: "terraform/state"
+        type: string
+      terraform-version:
+        description: "Terraform version to use (e.g. 1.10.4). Must be >= 1.6.0"
+        required: false
+        default: "1.10.4"
+        type: string
+      working-directory:
+        description: "Relative path to the Terraform module or root configuration"
+        required: false
+        default: "."
+        type: string
+      var-file:
+        description: "Optional relative path to a .tfvars file for planning"
+        required: false
+        default: ""
+        type: string
+      environment:
+        description: "Target deployment environment context for policy evaluation"
+        required: false
+        default: "production"
+        type: string
+      enable-gcp-auth:
+        description: "Opt-in to authenticate against GCP via OIDC (strictly disabled in Milestone G07.2; must be false)"
+        required: false
+        default: false
+        type: boolean
+      enable-policy-evaluation:
+        description: "Whether to execute Conftest / OPA policy checks on plan JSON"
+        required: false
+        default: true
+        type: boolean
+      policy-directory:
+        description: "Optional relative path to additional consumer Rego policies directory"
+        required: false
+        default: "policies"
+        type: string
+      enable-trivy:
+        description: "Whether to execute Trivy IaC misconfiguration scanning"
+        required: false
+        default: true
+        type: boolean
+      severity-threshold:
+        description: "Severity levels that trigger failure. InfraFlow strictly mandates 'HIGH,CRITICAL'."
+        required: false
+        default: "HIGH,CRITICAL"
+        type: string
+      fail-on-destructive:
+        description: "Whether to fail plan generation if deletions or replacements occur"
+        required: false
+        default: true
+        type: boolean
+
+    outputs:
+      plan-status:
+        description: "Outcome of speculative plan generation (success, failure, skipped)"
+        value: ${{ jobs.summary.outputs.plan-status }}
+      gcp-auth-status:
+        description: "Outcome of GCP authentication (success, skipped, disabled)"
+        value: ${{ jobs.summary.outputs.gcp-auth-status }}
+      security-status:
+        description: "Outcome of security scanning and policy evaluation"
+        value: ${{ jobs.summary.outputs.security-status }}
+      authorization-status:
+        description: "Outcome of the verified adapter gate (authorized, not-applicable, rejected)"
+        value: ${{ jobs.summary.outputs.authorization-status }}
+      has-changes:
+        description: "Whether the plan contains modifying resource changes"
+        value: ${{ jobs.summary.outputs.has-changes }}
+      has-destructive-changes:
+        description: "Whether the plan contains deletions or replacements"
+        value: ${{ jobs.summary.outputs.has-destructive-changes }}
+      total-changes:
+        description: "Total count of modifying resource changes"
+        value: ${{ jobs.summary.outputs.total-changes }}
+
+jobs:
+  validate-inputs:
+    name: "Validate & Guard GCP Adapter Inputs"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - name: "Security Guard: Sanitize and Validate GCP Adapter Inputs"
+        id: guard
+        env:
+          INPUT_VERSION: ${{ inputs.terraform-version }}
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+          INPUT_ENV: ${{ inputs.environment }}
+          INPUT_PROJECT_ID: ${{ inputs.gcp-project-id }}
+          INPUT_GCP_REGION: ${{ inputs.gcp-region }}
+          INPUT_WIF_PROVIDER: ${{ inputs.workload-identity-provider }}
+          INPUT_SERVICE_ACCOUNT: ${{ inputs.service-account }}
+          INPUT_BUCKET: ${{ inputs.backend-bucket }}
+          INPUT_PREFIX: ${{ inputs.backend-prefix }}
+          INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
+          ENABLE_GCP_AUTH: ${{ inputs.enable-gcp-auth }}
+          ENABLE_POLICY_EVAL: ${{ inputs.enable-policy-evaluation }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF: ${{ github.ref }}
+          WORKFLOW_REPO: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          echo "=============================================================================="
+          echo ">>> InfraFlow Security Guard: Validating GCP Cloud Adapter Inputs"
+          echo "=============================================================================="
+
+          # 1. Platform Trust Boundary: Workflow pinning verification
+          EXPECTED_PLATFORM_REPO="TM-threemavithana/infraflow"
+          if [[ "${WORKFLOW_REPO}" != "${EXPECTED_PLATFORM_REPO}" ]]; then
+            echo "::error::Security Violation: Reusable GCP workflow must originate from trusted repository '${EXPECTED_PLATFORM_REPO}', got '${WORKFLOW_REPO}'."
+            exit 1
+          fi
+
+          if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Security Violation: Workflow SHA '${WORKFLOW_SHA}' must be an immutable 40-character hexadecimal commit SHA."
+            exit 1
+          fi
+
+          # 2. Strict SEC-02 & G07.2 Scope: Live GCP authentication is strictly disabled in Milestone G07.2/G07.3
+          if [[ "${ENABLE_GCP_AUTH}" == "true" ]]; then
+            echo "::error::Security Violation: Live GCP authentication is strictly disabled in Milestone G07.2 (cloud-free simulation only). Set enable-gcp-auth: false."
+            exit 1
+          fi
+
+          # Untrusted pull requests can never request cloud credentials
+          if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "pull_request_target" ]]; then
+            if [[ "${ENABLE_GCP_AUTH}" == "true" ]]; then
+              echo "::error::Security Violation (SEC-02): Pull request events are strictly forbidden from enabling GCP authentication."
+              exit 1
+            fi
+          fi
+
+          # 3. Terraform Version Validation: Semantic Version >= 1.6.0
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if [[ ! "${INPUT_VERSION}" =~ ${SEMVER_REGEX} ]]; then
+            echo "::error::Validation Failed: Invalid Semantic Version format for terraform-version: '${INPUT_VERSION}'."
+            exit 1
+          fi
+
+          MAJOR_VER=$(echo "${INPUT_VERSION}" | cut -d. -f1)
+          MINOR_VER=$(echo "${INPUT_VERSION}" | cut -d. -f2)
+          if (( MAJOR_VER < 1 )) || (( MAJOR_VER == 1 && MINOR_VER < 6 )); then
+            echo "::error::Validation Failed: Terraform version '${INPUT_VERSION}' is unsupported. Minimum supported version is 1.6.0."
+            exit 1
+          fi
+
+          # 4. Working Directory & Path Traversal Validation
+          if [[ "${INPUT_DIR}" =~ ^/ ]] || [[ "${INPUT_DIR}" =~ ^~ ]]; then
+            echo "::error::Security Violation: Absolute and home-directory paths are strictly prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+          if [[ "${INPUT_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: Path traversal sequences ('..') are strictly prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+          if [[ ! "${INPUT_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::Security Violation: Working directory contains forbidden characters: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 5. Var-File Validation
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            if [[ "${INPUT_VAR_FILE}" =~ ^/ ]] || [[ "${INPUT_VAR_FILE}" =~ ^~ ]] || [[ "${INPUT_VAR_FILE}" =~ \.\. ]]; then
+              echo "::error::Security Violation: Path traversal or absolute paths in var-file are strictly prohibited: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_VAR_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: var-file contains forbidden characters: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+          fi
+
+          # 6. Target Environment Context
+          if [[ ! "${INPUT_ENV}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error::Validation Failed: Environment name must contain only alphanumeric characters, hyphens, and underscores: '${INPUT_ENV}'."
+            exit 1
+          fi
+
+          # 7. GCP Project ID Validation: 6-30 chars, lowercase, numbers, hyphens, starts with letter, ends with letter/number
+          PROJECT_ID_REGEX='^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
+          if [[ ! "${INPUT_PROJECT_ID}" =~ ${PROJECT_ID_REGEX} ]]; then
+            echo "::error::Validation Failed: Invalid GCP project-id '${INPUT_PROJECT_ID}'. Must be 6-30 lowercase characters, numbers, and hyphens, starting with a letter and ending with a letter or number."
+            exit 1
+          fi
+
+          # 8. GCP Region Validation
+          GCP_REGION_REGEX='^[a-z]+-[a-z]+[0-9]+$'
+          if [[ ! "${INPUT_GCP_REGION}" =~ ${GCP_REGION_REGEX} ]]; then
+            echo "::error::Validation Failed: Invalid GCP region '${INPUT_GCP_REGION}'. Must conform to standard format (e.g. us-central1, europe-west1)."
+            exit 1
+          fi
+
+          # 9. Workload Identity Provider Validation (if provided)
+          if [[ -n "${INPUT_WIF_PROVIDER}" ]]; then
+            WIF_PROVIDER_REGEX='^projects/[0-9]+/locations/global/workloadIdentityPools/[a-zA-Z0-9_-]+/providers/[a-zA-Z0-9_-]+$'
+            if [[ ! "${INPUT_WIF_PROVIDER}" =~ ${WIF_PROVIDER_REGEX} ]]; then
+              echo "::error::Validation Failed: Invalid Workload Identity Provider resource name '${INPUT_WIF_PROVIDER}'. Must match 'projects/<NUM>/locations/global/workloadIdentityPools/<POOL>/providers/<PROV>'."
+              exit 1
+            fi
+          fi
+
+          # 10. Service Account Email Validation (if provided)
+          if [[ -n "${INPUT_SERVICE_ACCOUNT}" ]]; then
+            SA_REGEX='^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$'
+            if [[ ! "${INPUT_SERVICE_ACCOUNT}" =~ ${SA_REGEX} ]]; then
+              echo "::error::Validation Failed: Invalid Service Account email '${INPUT_SERVICE_ACCOUNT}'. Must match '<NAME>@<PROJECT>.iam.gserviceaccount.com'."
+              exit 1
+            fi
+          fi
+
+          # 11. GCS Backend Bucket Validation (if provided)
+          if [[ -n "${INPUT_BUCKET}" ]]; then
+            GCS_BUCKET_REGEX='^[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]$'
+            if [[ ! "${INPUT_BUCKET}" =~ ${GCS_BUCKET_REGEX} ]]; then
+              echo "::error::Validation Failed: Invalid GCS bucket name '${INPUT_BUCKET}'. Must be 3-63 lowercase alphanumeric characters, dots, or hyphens."
+              exit 1
+            fi
+            if [[ "${INPUT_BUCKET}" =~ ^goog ]] || [[ "${INPUT_BUCKET}" =~ ^google ]]; then
+              echo "::error::Validation Failed: GCS bucket name cannot begin with 'goog' or 'google': '${INPUT_BUCKET}'."
+              exit 1
+            fi
+          fi
+
+          # 12. GCS Backend Prefix Validation (if provided)
+          if [[ -n "${INPUT_PREFIX}" ]]; then
+            if [[ "${INPUT_PREFIX}" =~ ^/ ]] || [[ "${INPUT_PREFIX}" =~ \.\. ]] || [[ ! "${INPUT_PREFIX}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: Leading slashes, path traversal, or special characters in backend-prefix are prohibited: '${INPUT_PREFIX}'."
+              exit 1
+            fi
+          fi
+
+          # 13. Policy Directory Validation (if provided)
+          if [[ -n "${INPUT_POLICY_DIR}" ]]; then
+            if [[ "${INPUT_POLICY_DIR}" =~ ^/ ]] || [[ "${INPUT_POLICY_DIR}" =~ ^~ ]] || [[ "${INPUT_POLICY_DIR}" =~ \.\. ]]; then
+              echo "::error::Security Violation: policy-directory must be a safe relative path: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_POLICY_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: policy-directory contains forbidden characters: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+          fi
+
+          # 14. Mandatory Security Gates: Rejection of bypass attempts
+          if [[ "${ENABLE_POLICY_EVAL}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory policy evaluation (enable-policy-evaluation: false) is prohibited."
+            exit 1
+          fi
+          if [[ "${ENABLE_TRIVY}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Trivy IaC scanning (enable-trivy: false) is prohibited."
+            exit 1
+          fi
+
+          # 15. Security Severity Threshold Validation
+          if [[ "${INPUT_SEVERITY}" != "HIGH,CRITICAL" && "${INPUT_SEVERITY}" != "CRITICAL" ]]; then
+            echo "::error::Security Violation: Severity threshold '${INPUT_SEVERITY}' is unauthorized. Must strictly enforce 'HIGH,CRITICAL' or 'CRITICAL'."
+            exit 1
+          fi
+
+          echo "GCP cloud adapter inputs verified successfully."
+
+  cloud-free-plan:
+    name: "Cloud-Free Speculative Plan (Offline Validation)"
+    needs: [validate-inputs]
+    if: inputs.enable-gcp-auth == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    outputs:
+      plan-status: ${{ steps.summary.outputs.plan-status }}
+      security-status: ${{ steps.summary.outputs.security-status }}
+      has-changes: ${{ steps.summary.outputs.has-changes }}
+      has-destructive-changes: ${{ steps.summary.outputs.has-destructive-changes }}
+      total-changes: ${{ steps.summary.outputs.total-changes }}
+
+    steps:
+      - name: "Checkout Consumer Target Repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Checkout InfraFlow Platform Toolchain"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ".infraflow-platform"
+          persist-credentials: false
+
+      - name: "Isolate Platform Toolchain"
+        id: isolate_platform
+        run: |
+          set -euo pipefail
+          echo "::group::Isolating Platform Toolchain Outside Consumer Workspace"
+          PLATFORM_DIR="${RUNNER_TEMP}/infraflow-platform"
+          rm -rf "${PLATFORM_DIR}"
+          if [[ -d "${GITHUB_WORKSPACE}/.infraflow-platform" ]]; then
+            mv "${GITHUB_WORKSPACE}/.infraflow-platform" "${PLATFORM_DIR}"
+          elif [[ -d "${GITHUB_WORKSPACE}/scripts" && -d "${GITHUB_WORKSPACE}/policies" ]]; then
+            mkdir -p "${PLATFORM_DIR}"
+            cp -r "${GITHUB_WORKSPACE}/scripts" "${PLATFORM_DIR}/"
+            cp -r "${GITHUB_WORKSPACE}/policies" "${PLATFORM_DIR}/"
+          else
+            echo "::error::Platform toolchain directory not found."
+            exit 1
+          fi
+          echo "PLATFORM_DIR=${PLATFORM_DIR}" >> "${GITHUB_ENV}"
+          echo "Isolated platform toolchain to: ${PLATFORM_DIR}"
+          echo "::endgroup::"
+
+      - name: "Verify Workspace Containment & Reject Symlinks"
+        id: verify_workspace
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+          POLICY_DIR: ${{ inputs.policy-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Workspace Containment & Symlink Verification"
+
+          TARGET_PATH="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+          if [[ ! -d "${TARGET_PATH}" ]]; then
+            echo "::error::Configuration Error: Working directory '${INPUT_DIR}' does not exist inside workspace."
+            exit 1
+          fi
+
+          if [[ -L "${TARGET_PATH}" ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' is a symbolic link. Symlinks are strictly prohibited."
+            exit 1
+          fi
+
+          CANONICAL_TARGET="$(cd "${TARGET_PATH}" && pwd -P)"
+          CANONICAL_WORKSPACE="$(cd "${GITHUB_WORKSPACE}" && pwd -P)"
+          if [[ "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}" && "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}/"* ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' resolves outside GITHUB_WORKSPACE."
+            exit 1
+          fi
+
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            VAR_FILE_PATH="${TARGET_PATH}/${INPUT_VAR_FILE}"
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              VAR_FILE_PATH="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            if [[ -L "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Security Violation: var-file '${INPUT_VAR_FILE}' is a symbolic link. Symlinks are strictly prohibited."
+              exit 1
+            fi
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Configuration Error: Specified var-file '${INPUT_VAR_FILE}' was not found in '${TARGET_PATH}' or workspace root."
+              exit 1
+            fi
+          fi
+
+          if [[ -n "${POLICY_DIR}" && -d "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+            if [[ -L "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+              echo "::error::Security Violation: policy-directory '${POLICY_DIR}' is a symbolic link."
+              exit 1
+            fi
+          fi
+
+          echo "Working directory '${INPUT_DIR}' is verified and safely contained within workspace."
+          echo "::endgroup::"
+
+      - name: "Setup Offline Tooling (Terraform, Conftest, Trivy)"
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "Install Conftest"
+        env:
+          CONFTEST_VERSION: "0.56.0"
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Conftest Policy Engine"
+          if command -v conftest >/dev/null 2>&1; then
+            echo "Conftest is already installed: $(conftest --version | head -n1)"
+          else
+            mkdir -p "${RUNNER_TEMP}/bin"
+            ARCH=$(uname -m)
+            [[ "${ARCH}" == "x86_64" ]] && ARCH="x86_64" || ARCH="arm64"
+            curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_${ARCH}.tar.gz"
+            tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
+            chmod +x "${RUNNER_TEMP}/bin/conftest"
+            echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+            echo "Conftest installed successfully."
+          fi
+          echo "::endgroup::"
+
+      - name: "Install Trivy"
+        if: inputs.enable-trivy == true
+        env:
+          TRIVY_VERSION: "0.76.2"
+          TRIVY_SHA: "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Trivy Scanner"
+          if command -v trivy >/dev/null 2>&1; then
+            echo "Trivy is already installed: $(trivy --version | head -n1)"
+          else
+            mkdir -p "${RUNNER_TEMP}/bin"
+            ARCH=$(uname -m)
+            [[ "${ARCH}" == "x86_64" ]] && ARCH="64bit" || ARCH="ARM64"
+            curl -fsSL -o "${RUNNER_TEMP}/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"
+            echo "${TRIVY_SHA}  ${RUNNER_TEMP}/trivy.tar.gz" | sha256sum -c -
+            tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C "${RUNNER_TEMP}/bin" trivy
+            chmod +x "${RUNNER_TEMP}/bin/trivy"
+            echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+            echo "Trivy installed successfully."
+          fi
+          echo "::endgroup::"
+
+      - name: "Execute Cloud-Free Plan & Speculative Analysis"
+        id: plan
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PLATFORM_DIR: ${{ env.PLATFORM_DIR }}
+          TARGET_ENV: ${{ inputs.environment }}
+          VAR_FILE: ${{ inputs.var-file }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
+          ENABLE_POLICY: ${{ inputs.enable-policy-evaluation }}
+          POLICY_DIR: ${{ inputs.policy-directory }}
+          SEVERITY: ${{ inputs.severity-threshold }}
+          FAIL_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f tfplan tfplan.json' EXIT INT TERM
+          echo "=============================================================================="
+          echo ">>> Executing Cloud-Free Speculative Plan for GCP Module"
+          echo "=============================================================================="
+
+          # 1. Initialize without remote backend
+          terraform init -backend=false -no-color
+
+          # 2. Construct Plan Command
+          PLAN_ARGS=("-no-color" "-out=tfplan")
+          if [[ -n "${VAR_FILE}" && -f "${VAR_FILE}" ]]; then
+            PLAN_ARGS+=("-var-file=${VAR_FILE}")
+          fi
+
+          # Execute speculative planning
+          terraform plan "${PLAN_ARGS[@]}"
+
+          # 3. Export Plan to JSON
+          terraform show -json tfplan > tfplan.json
+
+          # 4. Analyze Plan Changes
+          ANALYZER_PY="${PLATFORM_DIR}/scripts/analyze-plan.py"
+          python3 "${ANALYZER_PY}" --plan-json tfplan.json --output-json plan-metrics.json --output-markdown plan-summary.md
+
+          if [[ ! -s plan-metrics.json ]]; then
+            echo "::error::Plan metrics file 'plan-metrics.json' is missing or empty."
+            exit 1
+          fi
+
+          TOTAL_CHANGES=$(jq -r '.metrics.total_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+          HAS_CHANGES=$(jq -r '.has_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+          HAS_DESTRUCTIVE=$(jq -r '.has_destructive_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+
+          if [[ -z "${TOTAL_CHANGES}" || "${TOTAL_CHANGES}" == "null" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Security Violation: 'metrics.total_changes' is missing or not a non-negative integer: '${TOTAL_CHANGES}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" != "true" && "${HAS_CHANGES}" != "false" ]]; then
+            echo "::error::Security Violation: 'has_changes' is missing or not a boolean: '${HAS_CHANGES}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_DESTRUCTIVE}" != "true" && "${HAS_DESTRUCTIVE}" != "false" ]]; then
+            echo "::error::Security Violation: 'has_destructive_changes' is missing or not a boolean: '${HAS_DESTRUCTIVE}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" == "true" && "${TOTAL_CHANGES}" -le 0 ]]; then
+            echo "::error::Security Violation: Inconsistent plan metrics: has-changes is true but total-changes is ${TOTAL_CHANGES} (must be > 0)"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" == "false" && "${TOTAL_CHANGES}" -ne 0 ]]; then
+            echo "::error::Security Violation: Inconsistent plan metrics: has-changes is false but total-changes is ${TOTAL_CHANGES} (must be == 0)"
+            exit 1
+          fi
+
+          {
+            echo "TOTAL_CHANGES=${TOTAL_CHANGES}"
+            echo "HAS_CHANGES=${HAS_CHANGES}"
+            echo "HAS_DESTRUCTIVE=${HAS_DESTRUCTIVE}"
+          } >> "${GITHUB_ENV}"
+
+          # 5. Execute Trivy Scanning (if enabled)
+          TRIVY_STATUS="passed"
+          if [[ "${ENABLE_TRIVY}" == "true" ]]; then
+            echo "::group::Executing Trivy IaC Misconfiguration Scan"
+            for var in $(env | grep -E '^TRIVY_' | cut -d= -f1 || true); do
+              unset "${var}"
+            done
+            unset XDG_CACHE_HOME || true
+
+            TRIVY_CACHE="${RUNNER_TEMP}/infraflow-trivy-cache"
+            TRIVY_CONF="${RUNNER_TEMP}/infraflow-trivy.yaml"
+            mkdir -p "${TRIVY_CACHE}"
+            mkdir -p "${HOME}/.trivy/policy"
+            mkdir -p "${HOME}/.trivy/modules"
+
+            printf '%s\n' \
+              'ignorefile: ""' \
+              'rego:' \
+              '  skip-check-update: false' \
+              'misconfiguration:' \
+              '  scanners:' \
+              '    - terraform' > "${TRIVY_CONF}"
+
+            if trivy config \
+              --config "${TRIVY_CONF}" \
+              --cache-dir "${TRIVY_CACHE}" \
+              --ignorefile "" \
+              --severity "${SEVERITY}" \
+              --exit-code 1 \
+              --format table \
+              .; then
+              echo "Trivy scan passed cleanly."
+            else
+              echo "::error::Trivy detected misconfigurations matching severity '${SEVERITY}'."
+              TRIVY_STATUS="failed"
+            fi
+            echo "::endgroup::"
+          fi
+
+          # 6. Execute Conftest / OPA Policy Evaluation (if enabled)
+          OPA_STATUS="passed"
+          if [[ "${ENABLE_POLICY}" == "true" ]]; then
+            echo "::group::Executing Conftest OPA Policy Evaluation"
+            POLICY_PATHS=()
+            [[ -d "${PLATFORM_DIR}/policies/common" ]] && POLICY_PATHS+=("-p" "${PLATFORM_DIR}/policies/common")
+            [[ -d "${PLATFORM_DIR}/policies/gcp" ]] && POLICY_PATHS+=("-p" "${PLATFORM_DIR}/policies/gcp")
+            [[ -d "${POLICY_DIR}" ]] && POLICY_PATHS+=("-p" "${POLICY_DIR}")
+
+            if conftest test tfplan.json "${POLICY_PATHS[@]}" --no-color; then
+              echo "OPA policies verified successfully."
+            else
+              echo "::error::Conftest policy evaluation failed."
+              OPA_STATUS="failed"
+            fi
+            echo "::endgroup::"
+          fi
+
+          # 7. Evaluate Destructive Changes Gate
+          if [[ "${FAIL_DESTRUCTIVE}" == "true" && "${HAS_DESTRUCTIVE}" == "true" ]]; then
+            echo "::error::Policy Failure: Destructive changes (deletions or replacements) detected and fail-on-destructive is active."
+            exit 1
+          fi
+
+          if [[ "${TRIVY_STATUS}" == "failed" || "${OPA_STATUS}" == "failed" ]]; then
+            echo "::error::Security quality gates failed."
+            exit 1
+          fi
+
+          # 8. Clean up sensitive plan artifact
+          rm -f tfplan tfplan.json
+
+      - name: "Record Cloud-Free Outputs"
+        id: summary
+        run: |
+          if [[ -z "${TOTAL_CHANGES:-}" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Internal Error: TOTAL_CHANGES is invalid or unset: '${TOTAL_CHANGES:-}'"
+            exit 1
+          fi
+          if [[ "${HAS_CHANGES:-}" != "true" && "${HAS_CHANGES:-}" != "false" ]]; then
+            echo "::error::Internal Error: HAS_CHANGES is invalid or unset: '${HAS_CHANGES:-}'"
+            exit 1
+          fi
+          if [[ "${HAS_DESTRUCTIVE:-}" != "true" && "${HAS_DESTRUCTIVE:-}" != "false" ]]; then
+            echo "::error::Internal Error: HAS_DESTRUCTIVE is invalid or unset: '${HAS_DESTRUCTIVE:-}'"
+            exit 1
+          fi
+
+          {
+            echo "plan-status=success"
+            echo "security-status=success"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+            echo "total-changes=${TOTAL_CHANGES}"
+          } >> "${GITHUB_OUTPUT}"
+
+  summary:
+    name: "GCP Adapter Execution Summary"
+    needs: [validate-inputs, cloud-free-plan]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+
+    outputs:
+      plan-status: ${{ steps.aggregate.outputs.plan-status }}
+      gcp-auth-status: ${{ steps.aggregate.outputs.gcp-auth-status }}
+      security-status: ${{ steps.aggregate.outputs.security-status }}
+      authorization-status: ${{ steps.aggregate.outputs.authorization-status }}
+      has-changes: ${{ steps.aggregate.outputs.has-changes }}
+      has-destructive-changes: ${{ steps.aggregate.outputs.has-destructive-changes }}
+      total-changes: ${{ steps.aggregate.outputs.total-changes }}
+
+    steps:
+      - name: "Aggregate Adapter Outputs"
+        id: aggregate
+        env:
+          VALIDATE_RESULT: ${{ needs.validate-inputs.result }}
+          CF_PLAN_RESULT: ${{ needs.cloud-free-plan.result }}
+          CF_PLAN_STATUS: ${{ needs.cloud-free-plan.outputs.plan-status }}
+          CF_SEC_STATUS: ${{ needs.cloud-free-plan.outputs.security-status }}
+          CF_HAS_CHANGES: ${{ needs.cloud-free-plan.outputs.has-changes }}
+          CF_HAS_DESTRUCTIVE: ${{ needs.cloud-free-plan.outputs.has-destructive-changes }}
+          CF_TOTAL_CHANGES: ${{ needs.cloud-free-plan.outputs.total-changes }}
+          ENABLE_GCP_AUTH: ${{ inputs.enable-gcp-auth }}
+        run: |
+          set -euo pipefail
+          echo "=============================================================================="
+          echo ">>> Aggregating GCP Adapter Execution Outputs"
+          echo "=============================================================================="
+
+          PLAN_STATUS="failure"
+          GCP_AUTH_STATUS="disabled"
+          SEC_STATUS="failure"
+          AUTHORIZATION_STATUS="rejected"
+          HAS_CHANGES="false"
+          HAS_DESTRUCTIVE="false"
+          TOTAL_CHANGES="0"
+
+          if [[ "${VALIDATE_RESULT}" != "success" ]]; then
+            PLAN_STATUS="failure"
+            SEC_STATUS="failure"
+            AUTHORIZATION_STATUS="rejected"
+          elif [[ "${ENABLE_GCP_AUTH}" == "true" ]]; then
+            # Live authentication is strictly disabled in Milestone G07.2
+            PLAN_STATUS="failure"
+            GCP_AUTH_STATUS="disabled"
+            AUTHORIZATION_STATUS="rejected"
+          else
+            # Cloud-Free Offline Execution Mode (G07.2)
+            GCP_AUTH_STATUS="disabled"
+            if [[ "${CF_PLAN_RESULT}" == "success" ]]; then
+              PLAN_STATUS="${CF_PLAN_STATUS:-success}"
+              SEC_STATUS="${CF_SEC_STATUS:-success}"
+              AUTHORIZATION_STATUS="not-applicable"
+              HAS_CHANGES="${CF_HAS_CHANGES:-false}"
+              HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
+              TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
+
+              # Validate metric consistency in aggregator
+              if [[ ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+                echo "::error::Security Violation: Aggregated total-changes '${TOTAL_CHANGES}' is not a non-negative integer."
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              elif [[ "${HAS_CHANGES}" == "true" && "${TOTAL_CHANGES}" -le 0 ]]; then
+                echo "::error::Security Violation: Aggregated metrics inconsistent: has-changes is true but total-changes is ${TOTAL_CHANGES}"
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              elif [[ "${HAS_CHANGES}" == "false" && "${TOTAL_CHANGES}" -ne 0 ]]; then
+                echo "::error::Security Violation: Aggregated metrics inconsistent: has-changes is false but total-changes is ${TOTAL_CHANGES}"
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              fi
+            else
+              PLAN_STATUS="failure"
+              SEC_STATUS="failure"
+              AUTHORIZATION_STATUS="rejected"
+            fi
+          fi
+
+          echo "Final aggregated outputs:"
+          echo "  plan-status:          ${PLAN_STATUS}"
+          echo "  gcp-auth-status:      ${GCP_AUTH_STATUS}"
+          echo "  security-status:      ${SEC_STATUS}"
+          echo "  authorization-status: ${AUTHORIZATION_STATUS}"
+          echo "  has-changes:          ${HAS_CHANGES}"
+          echo "  has-destructive:      ${HAS_DESTRUCTIVE}"
+          echo "  total-changes:        ${TOTAL_CHANGES}"
+
+          {
+            echo "plan-status=${PLAN_STATUS}"
+            echo "gcp-auth-status=${GCP_AUTH_STATUS}"
+            echo "security-status=${SEC_STATUS}"
+            echo "authorization-status=${AUTHORIZATION_STATUS}"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+            echo "total-changes=${TOTAL_CHANGES}"
+          } >> "${GITHUB_OUTPUT}"
+
+          if [[ "${AUTHORIZATION_STATUS}" == "rejected" ]]; then
+            echo "::error::GCP adapter gate failed closed. Authorization rejected."
+            exit 1
+          fi

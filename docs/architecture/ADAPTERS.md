@@ -104,18 +104,40 @@ Every cloud adapter must conform to the following architectural standard:
 
 ### 3.3 GCP Adapter Specification (`reusable-tf-gcp.yml`)
 
-#### Authentication Flow
-- **Mechanism**: Google Cloud Workload Identity Federation (WIF).
-- **Action**: `google-github-actions/auth` (SHA pinned).
-- **WIF Configuration**:
+#### Authentication Flow & Trust Model
+- **Mechanism**: Google Cloud Workload Identity Federation (WIF) via GitHub Actions OIDC.
+- **Action**: `google-github-actions/auth` (immutable commit SHA pinned).
+- **WIF Configuration & Security Invariants**:
   - **Pool & Provider**: `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`
-  - **Attribute Mapping**: `google.subject=assertion.sub`, `attribute.repository=assertion.repository`
-  - **Service Account Binding**: Role `roles/iam.workloadIdentityUser` assigned to member `principalSet://iam.googleapis.com/...`
+  - **Audience Validation**: Must strictly match the canonical provider resource URI. Wildcard (`*`) audiences are strictly rejected.
+  - **Attribute Mapping**:
+    - `google.subject = assertion.sub`
+    - `attribute.repository = assertion.repository`
+    - `attribute.ref = assertion.ref`
+    - `attribute.actor = assertion.actor`
+  - **Attribute Condition**: Mandatory CEL restriction enforcing repository and branch isolation:
+    `assertion.repository == 'TM-threemavithana/infraflow' && assertion.ref == 'refs/heads/main'`
+  - **Service Account Binding**: Role `roles/iam.workloadIdentityUser` assigned exclusively via `principalSet`:
+    `principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/attribute.repository/<OWNER>/<REPO>`
+    Wildcard principals (`allUsers`, `allAuthenticatedUsers`, `*`) and unbounded org-level bindings are strictly prohibited.
+- **Fail-Closed Simulation Invariant**:
+  - In Milestone G07.2, live GCP authentication is strictly disabled (`enable-gcp-auth: false`). Setting `enable-gcp-auth: true` triggers an immediate fail-closed security error.
+  - Untrusted pull requests (`pull_request`, `pull_request_target`) are strictly prohibited from enabling live authentication (SEC-02).
 
-#### State Management
+#### State Management & GCS Backend Contract
 - **Backend Type**: `gcs`
-- **Storage**: Google Cloud Storage Bucket with Uniform Bucket-Level Access and object versioning.
-- **Locking**: Native GCS generation match locking.
+- **Bucket Security Controls**:
+  - **Uniform Bucket-Level Access (UBLA)**: Explicitly enforced (`uniform_bucket_level_access = true`, CIS GCP 5.2).
+  - **Public Access Prevention**: Explicitly set to `enforced` (CIS GCP 5.1).
+  - **Object Versioning**: Explicitly enabled (`versioning.enabled = true`) for state resilience and recovery.
+  - **Accidental Destruction**: `force_destroy = false` enforced.
+  - **Encryption**: Customer-Managed Encryption Keys (CMEK) via Cloud KMS supported and validated.
+  - **Zero Public Access**: Rejection of public ACLs (`google_storage_bucket_acl`) and public IAM members (`allUsers`, `allAuthenticatedUsers`).
+- **State Locking**: Native GCS generation match precondition locking (`if-generation-match`).
+
+#### Reference Implementation & Testing
+- **Module Location**: `examples/gcp-reference-module/`
+- **Mock Provider Testing**: Uses native Terraform `>= 1.7.0` provider mocking (`mock_provider "google" {}`) in `tests/gcs_test.tftest.hcl` for deterministic offline verification without cloud spend ($0.00).
 
 ---
 
