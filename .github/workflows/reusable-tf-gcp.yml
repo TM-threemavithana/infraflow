@@ -501,12 +501,11 @@ jobs:
 
           # 4. Analyze Plan Changes
           ANALYZER_PY="${PLATFORM_DIR}/scripts/analyze-plan.py"
-          ANALYSIS_JSON=$(python3 "${ANALYZER_PY}" --plan-json tfplan.json --target-env "${TARGET_ENV}")
-          echo "${ANALYSIS_JSON}"
+          python3 "${ANALYZER_PY}" --plan-json tfplan.json --output-json plan-metrics.json --output-markdown plan-summary.md
 
-          TOTAL_CHANGES=$(echo "${ANALYSIS_JSON}" | jq -r '.metrics.total_changes // 0')
-          HAS_CHANGES=$(echo "${ANALYSIS_JSON}" | jq -r '.metrics.has_changes // false')
-          HAS_DESTRUCTIVE=$(echo "${ANALYSIS_JSON}" | jq -r '.metrics.has_destructive // false')
+          TOTAL_CHANGES=$(jq -r '.total_changes // 0' plan-metrics.json)
+          HAS_CHANGES=$(jq -r '.has_changes // false' plan-metrics.json)
+          HAS_DESTRUCTIVE=$(jq -r '.has_destructive_changes // false' plan-metrics.json)
 
           {
             echo "TOTAL_CHANGES=${TOTAL_CHANGES}"
@@ -564,7 +563,7 @@ jobs:
         run: |
           {
             echo "plan-status=success"
-            echo "security-status=passed"
+            echo "security-status=success"
             echo "has-changes=${HAS_CHANGES:-false}"
             echo "has-destructive-changes=${HAS_DESTRUCTIVE:-false}"
             echo "total-changes=${TOTAL_CHANGES:-0}"
@@ -628,7 +627,7 @@ jobs:
             GCP_AUTH_STATUS="disabled"
             if [[ "${CF_PLAN_RESULT}" == "success" ]]; then
               PLAN_STATUS="${CF_PLAN_STATUS:-success}"
-              SEC_STATUS="${CF_SEC_STATUS:-passed}"
+              SEC_STATUS="${CF_SEC_STATUS:-success}"
               AUTHORIZATION_STATUS="not-applicable"
               HAS_CHANGES="${CF_HAS_CHANGES:-false}"
               HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
