@@ -15,8 +15,8 @@ InfraFlow is structured into progressive delivery milestones:
 | **G04.1.2** | **Trust Root Isolation & Attack Simulation** | Anti-substitution verification, PR threat analysis, key lifecycle, 12 attack simulation tests, 107/107 checks. | **PASS** |
 | **G04.1.3** | **Trusted Workflow Enforcement** | Caller workflow security, trusted configuration, preview/prod signing separation, 10 attack simulation tests, 117/117 checks. | **PASS** |
 | **G04.1.4** | **InfraFlow Architecture Finalization** | Governance rulesets, GitHub Artifact Attestations (Sigstore OIDC), automated verified policy gate, dual scanner enforcement, permission boundary isolation, 176/176 checks. | **PASS** |
-| **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **IN PROGRESS (G05.2)** |
-| **G06** | **Protected Apply and Destroy** | Secure execution of approved plans with cryptographic digest verification, KMS-encrypted plan storage, and controlled destruction. | Backlog (Future) |
+| **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
+| **G06** | **Protected Apply and Destroy** | Secure execution of approved plans with cryptographic digest verification, KMS-encrypted plan storage, and controlled destruction. | **IN PROGRESS (G06.1)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | Backlog (Future) |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
@@ -201,11 +201,30 @@ Milestone G05 extends InfraFlow with Tier 2 cloud provider adapters, establishin
 | **AC-G05-05** | Secure Input Sanitization & Parameter Validation | Implement defensive bash guard validating inputs: Role ARN regex (`^arn:aws:iam::[0-9]{12}:role/...`), AWS region allowlist regex (`^[a-z]{2}-[a-z]+-[0-9]+$`), S3 bucket naming regex, relative state keys (blocking `..` traversal), and SemVer `>= 1.6.0`. | Automated fixture execution (Section 15 Quality Gates) | **PASS (G05.2 Implemented)** |
 | **AC-G05-06** | AWS Reference Module & Consumer Workflow Example | Provide an exemplary AWS reference Terraform module (`examples/aws-reference-module/`) with native unit tests (`.tftest.hcl` using mock provider) and a sample consumer workflow demonstrating compliant AWS integration. | Module and workflow implementation & tests | **PASS (G05.2 Implemented)** |
 | **AC-G05-07** | Offline Testing Harness & Regression Prevention | Expand local validation harness (`scripts/validate-local.sh`) with Section 15 AWS quality gates (negative input tests, mock backend tests, actionlint, and OIDC policy tests) without requiring AWS accounts or cloud spend ($0.00). Ensure zero regressions in G01-G04. | `scripts/validate-local.sh` execution | **PASS (G05.2 Implemented)** |
-| **AC-G05-08** | External Consumer Integration & Release Evidence | Verify integration in external consumer repository (`TM-threemavithana/infraflow-consumer-test`), execute adversarial trust boundary tests, author evidence report, and release platform version `v0.3.0`. | Live CI execution & adversarial test report | **PLANNED (G05.3 Scope)** |
+| **AC-G05-08** | External Consumer Integration & Release Evidence | Verify integration in external consumer repository (`TM-threemavithana/infraflow-consumer-test`), execute adversarial trust boundary tests, author evidence report, and release platform version `v0.3.0`. | Live CI execution & adversarial test report | **PASS** |
 
 ---
 
-## 15. Quality Gate Definitions
+## 15. Milestone G06 — Acceptance Criteria (Protected Apply and Destroy)
+
+Milestone G06 enables secure, state-modifying Terraform application and destruction governed by cryptographic digest verification, client-side KMS envelope encryption, and fail-closed state consistency.
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G06-01** | Plan Envelope Encryption Engine | Implement client-side AES-256-GCM envelope encryption for Terraform binary plans with fresh 256-bit DEK, 96-bit nonce, canonical AAD context binding, and SHA-256 plan digest binding in `scripts/kms-envelope.py`. | Automated unit test suite (`tests/test_kms_envelope.py`) | **PASS (G06.1 Implemented)** |
+| **AC-G06-02** | Offline Mock KMS Simulator | Implement local Key Encryption Key (KEK) simulator modeling AWS KMS `GenerateDataKey` and `Decrypt` interfaces under AES-256-GCM. Reject wrong keys, context mismatches, and tampered wrapped DEKs. | Automated unit test suite (`tests/test_kms_envelope.py`) | **PASS (G06.1 Implemented)** |
+| **AC-G06-03** | Pre-Apply Cryptographic Verification | Implement pre-apply gate downloading encrypted plan, unwrapping DEK, recomputing SHA-256 digest, and strictly matching against attested `plan-manifest.json` before invoking `terraform apply`. | Automated adversarial fixture execution | **PLANNED (G06.2 Scope)** |
+| **AC-G06-04** | Plan Freshness & TTL Enforcement | Enforce configurable plan time-to-live (default max 12 hours). Fails closed if plan timestamp exceeds allowable expiration threshold. | Automated fixture execution with expired timestamps | **PLANNED (G06.2 Scope)** |
+| **AC-G06-05** | State Consistency & Replay Prevention | Inspect remote state serial and lineage at apply time against planning metadata. Maintain plan execution ledger to prevent re-applying executed plans. | Simulated state drift & replay attack fixtures | **PLANNED (G06.2 Scope)** |
+| **AC-G06-06** | Reusable Apply Workflow Contract | Implement `.github/workflows/reusable-tf-apply.yml` with `workflow_call`, input guards, environment binding, and zero credentials in PRs. | `actionlint`, `zizmor`, and local workflow tests | **PLANNED (G06.3 Scope)** |
+| **AC-G06-07** | Least-Privilege Credential Separation | Separate IAM Planning Role (read-only state) from IAM Apply Role (state-modifying). Ensure apply role cannot be assumed from PRs. | Rego OIDC policy tests & workflow AST audit | **PLANNED (G06.3 Scope)** |
+| **AC-G06-08** | Controlled Destruction & Blast Radius | Implement blast-radius threshold (`max-deletions`) and require explicit confirmation input (`destroy-confirmation-token`) for full destruction. | Negative test fixtures with unconfirmed destroy | **PLANNED (G06.4 Scope)** |
+| **AC-G06-09** | State Locking & Fail-Safe Cleanup | Implement exclusive write-lock acquisition with POSIX exit trap ensuring lock release on success, error, or job cancellation. | Simulated crash test verifying lock release | **PLANNED (G06.4 Scope)** |
+| **AC-G06-10** | Offline Local Regression Suite (230+ Checks) | Expand `scripts/validate-local.sh` to include all G06 quality gates without cloud spend ($0.00). Ensure zero regressions in G01–G05. | Complete execution of `scripts/validate-local.sh` | **PLANNED (G06.5 Scope)** |
+
+---
+
+## 16. Quality Gate Definitions
 
 To achieve status **PASS** for G01 and G02:
 1. Every G01 document must exist, be fully elaborated, and be internally consistent.

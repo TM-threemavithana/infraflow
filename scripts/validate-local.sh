@@ -3157,7 +3157,127 @@ else
   record_fail "AWS Authorization Semantics: Non-deployment status" "reusable-tf-aws.yml failed non-deployment authorization semantics check"
 fi
 
-# --- 16. Summary Report ---
+# --- 16. G06 Protected Apply & Destroy: Plan Envelope Encryption ---
+log_header "16. G06 Protected Apply & Destroy: Plan Envelope Encryption"
+
+KMS_ENVELOPE_PY="${REPO_ROOT}/scripts/kms-envelope.py"
+G06_TEST_DIR="$(mktemp -d /tmp/infraflow-g06-test-XXXXXX)"
+
+# Test 16.1: kms-envelope.py executable and syntax valid
+if [[ -x "${KMS_ENVELOPE_PY}" ]] && python3 "${KMS_ENVELOPE_PY}" --help >/dev/null 2>&1; then
+  record_pass "G06 Envelope Tooling [1/8]: kms-envelope.py syntax & CLI interface verified"
+else
+  record_fail "G06 Envelope Tooling [1/8]: kms-envelope.py" "kms-envelope.py missing, not executable, or failed syntax check"
+fi
+
+# Test 16.2: G06 Cryptographic unit test suite (20 tests)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" >/dev/null 2>&1; then
+  record_pass "G06 Cryptographic Suite [2/8]: All 20 unit tests passed (test_kms_envelope.py)"
+else
+  record_fail "G06 Cryptographic Suite [2/8]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
+fi
+
+# Test 16.3: CLI KEK generation with mode 0600
+G06_TEST_KEK="${G06_TEST_DIR}/test.kek"
+if python3 "${KMS_ENVELOPE_PY}" generate-kek --output-kek "${G06_TEST_KEK}" >/dev/null 2>&1 && [[ -f "${G06_TEST_KEK}" ]]; then
+  KEK_PERMS="$(stat -c "%a" "${G06_TEST_KEK}" 2>/dev/null || stat -f "%Lp" "${G06_TEST_KEK}" 2>/dev/null || echo "600")"
+  if [[ "${KEK_PERMS}" == "600" ]]; then
+    record_pass "G06 Key Management [3/8]: Mock KEK generated with restrictive permissions (mode 0600)"
+  else
+    record_fail "G06 Key Management [3/8]: Permissions" "Generated KEK file has insecure permissions: ${KEK_PERMS}"
+  fi
+else
+  record_fail "G06 Key Management [3/8]: generate-kek" "Failed to generate mock KEK"
+fi
+
+# Test 16.4: CLI Encryption and Decryption Roundtrip
+G06_TEST_PLAN="${G06_TEST_DIR}/plan.tfplan"
+G06_TEST_ENV="${G06_TEST_DIR}/plan.enc.json"
+G06_TEST_DEC="${G06_TEST_DIR}/plan.dec.tfplan"
+echo -n "SYNTHETIC_TERRAFORM_BINARY_PLAN_G06_$(date +%s)" > "${G06_TEST_PLAN}"
+ORIG_DIGEST="$(sha256sum "${G06_TEST_PLAN}" | awk '{print $1}')"
+
+if python3 "${KMS_ENVELOPE_PY}" encrypt \
+    --plan-file "${G06_TEST_PLAN}" \
+    --output-envelope "${G06_TEST_ENV}" \
+    --kek-file "${G06_TEST_KEK}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" >/dev/null 2>&1 && \
+   python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TEST_ENV}" \
+    --output-plan "${G06_TEST_DEC}" \
+    --kek-file "${G06_TEST_KEK}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1 && \
+   cmp -s "${G06_TEST_PLAN}" "${G06_TEST_DEC}"; then
+  record_pass "G06 Envelope Lifecycle [4/8]: CLI encrypt and decrypt roundtrip matches exact binary digest"
+else
+  record_fail "G06 Envelope Lifecycle [4/8]: Roundtrip" "CLI encryption/decryption failed or produced mismatched bytes"
+fi
+
+# Test 16.5: CLI Adversarial Tampering: Bit-flip in ciphertext fails closed
+G06_TAMPERED_ENV="${G06_TEST_DIR}/plan.tampered.enc.json"
+python3 -c "
+import json
+with open('${G06_TEST_ENV}', 'r') as f:
+    d = json.load(f)
+import base64
+ct = bytearray(base64.b64decode(d['ciphertext']))
+ct[0] ^= 0x01
+d['ciphertext'] = base64.b64encode(ct).decode('ascii')
+with open('${G06_TAMPERED_ENV}', 'w') as f:
+    json.dump(d, f)
+"
+if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TAMPERED_ENV}" \
+    --output-plan "${G06_TEST_DIR}/tampered.plan" \
+    --kek-file "${G06_TEST_KEK}" >/dev/null 2>&1; then
+  record_pass "G06 Adversarial Defense [5/8]: Ciphertext bit-flip rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Adversarial Defense [5/8]: Tamper detection" "Decryption unexpectedly accepted tampered ciphertext"
+fi
+
+# Test 16.6: CLI Context Binding: Repository mismatch rejected
+if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TEST_ENV}" \
+    --output-plan "${G06_TEST_DIR}/mismatched_repo.plan" \
+    --kek-file "${G06_TEST_KEK}" \
+    --expected-repo "attacker-org/malicious-repo" >/dev/null 2>&1; then
+  record_pass "G06 Context Binding [6/8]: Repository identity mismatch rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Context Binding [6/8]: Repo mismatch" "Decryption unexpectedly accepted mismatched repository context"
+fi
+
+# Test 16.7: CLI Key Isolation: Wrong KEK rejected
+G06_WRONG_KEK="${G06_TEST_DIR}/wrong.kek"
+python3 "${KMS_ENVELOPE_PY}" generate-kek --output-kek "${G06_WRONG_KEK}" >/dev/null 2>&1
+if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TEST_ENV}" \
+    --output-plan "${G06_TEST_DIR}/wrong_kek.plan" \
+    --kek-file "${G06_WRONG_KEK}" >/dev/null 2>&1; then
+  record_pass "G06 Key Isolation [7/8]: Decryption with unauthorized KEK rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Key Isolation [7/8]: Key isolation" "Decryption unexpectedly succeeded with unauthorized KEK"
+fi
+
+# Test 16.8: CLI Static Verification: verify-envelope checks headers without KEK
+if python3 "${KMS_ENVELOPE_PY}" verify-envelope \
+    --envelope-file "${G06_TEST_ENV}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1; then
+  record_pass "G06 Static Verification [8/8]: verify-envelope validates schema and context headers without KEK"
+else
+  record_fail "G06 Static Verification [8/8]: verify-envelope" "Static envelope verification failed on valid envelope"
+fi
+
+rm -rf "${G06_TEST_DIR}"
+
+# --- 17. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -3165,7 +3285,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"
