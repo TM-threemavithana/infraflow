@@ -147,6 +147,7 @@ jobs:
           INPUT_TRUSTED_KEYIDS: ${{ inputs.trusted-signer-keyids }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
           echo "::group::Input Sanitization & Security Validation"
@@ -234,18 +235,49 @@ jobs:
             fi
           fi
 
-          # 12. Validate trusted platform repository identity (trust boundary enforcement)
+          # 12. Validate trusted platform repository identity and immutable commit reference
           TRUSTED_PLATFORM_REPO="TM-threemavithana/infraflow"
+          EXPECTED_WORKFLOW_PATH=".github/workflows/reusable-tf-plan.yml"
+
           if [[ "${WORKFLOW_REPO}" != "${TRUSTED_PLATFORM_REPO}" ]]; then
             echo "::error::Security Violation: Platform workflow repository '${WORKFLOW_REPO}' is not the trusted InfraFlow platform. Only '${TRUSTED_PLATFORM_REPO}' is authorized to execute this workflow."
             exit 1
           fi
-          # Validate workflow SHA is an immutable 40-character hex commit SHA
-          if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
-            echo "::error::Security Violation: workflow_sha '${WORKFLOW_SHA}' is not a valid immutable commit SHA. The platform toolchain ref must be cryptographically bound."
+
+          # Extract caller reference target after the '@' in job.workflow_ref
+          # job.workflow_ref format: {owner}/{repo}/{path}@{ref}
+          if [[ "${WORKFLOW_REF}" != *"@"* ]]; then
+            echo "::error::Security Violation: workflow_ref '${WORKFLOW_REF}' is missing the '@<ref>' delimiter."
             exit 1
           fi
-          echo "Platform identity verified: ${TRUSTED_PLATFORM_REPO}@${WORKFLOW_SHA}"
+
+          WORKFLOW_REF_PREFIX="${WORKFLOW_REF%@*}"
+          WORKFLOW_REF_TARGET="${WORKFLOW_REF##*@}"
+          EXPECTED_PREFIX="${TRUSTED_PLATFORM_REPO}/${EXPECTED_WORKFLOW_PATH}"
+
+          if [[ "${WORKFLOW_REF_PREFIX}" != "${EXPECTED_PREFIX}" ]]; then
+            echo "::error::Security Violation: workflow_ref prefix '${WORKFLOW_REF_PREFIX}' does not match expected platform workflow path '${EXPECTED_PREFIX}'."
+            exit 1
+          fi
+
+          # Reject mutable references (@main, @refs/heads/..., @v..., @refs/tags/...) and short SHAs
+          if [[ ! "${WORKFLOW_REF_TARGET}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Security Violation: Caller workflow reference '${WORKFLOW_REF_TARGET}' is not a valid immutable 40-character commit SHA. Mutable references (@main, @refs/heads/..., @v..., @refs/tags/...) and short SHAs are strictly prohibited."
+            exit 1
+          fi
+
+          # Verify that caller reference SHA strictly matches resolved workflow SHA
+          if [[ "${WORKFLOW_REF_TARGET}" != "${WORKFLOW_SHA}" ]]; then
+            echo "::error::Security Violation: Caller workflow reference SHA '${WORKFLOW_REF_TARGET}' does not match resolved workflow SHA '${WORKFLOW_SHA}'."
+            exit 1
+          fi
+
+          # Validate resolved workflow SHA is an immutable 40-character hex commit SHA
+          if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Security Violation: workflow_sha '${WORKFLOW_SHA}' is not a valid immutable commit SHA."
+            exit 1
+          fi
+          echo "Platform identity verified: ${TRUSTED_PLATFORM_REPO}@${WORKFLOW_SHA} (via ref: ${WORKFLOW_REF_TARGET})"
 
           echo "All inputs successfully sanitized and validated against platform security policy."
           echo "::endgroup::"
@@ -748,6 +780,7 @@ jobs:
             --use-gh-cli \
             --signer-repo "TM-threemavithana/infraflow" \
             --signer-workflow "TM-threemavithana/infraflow/.github/workflows/reusable-tf-plan.yml" \
+            --signer-digest "${{ job.workflow_sha }}" \
             --expected-repository "${GITHUB_REPOSITORY}" \
             --expected-commit-sha "${GITHUB_SHA}" \
             --expected-workflow "reusable-tf-plan.yml" \

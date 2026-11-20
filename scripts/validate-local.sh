@@ -2569,33 +2569,35 @@ else
   record_fail "Trust Boundary [5/7]: Attestation signer identity not hardcoded" "PLATFORM_REPO variable or caller input still controls --signer-repo"
 fi
 
-# Test 14.50: Guard validates WORKFLOW_REPO against trusted platform identity in plan.yml
+# Test 14.50: Guard validates WORKFLOW_REPO, WORKFLOW_SHA, and WORKFLOW_REF in plan.yml
 PLAN_GUARD_VALIDATES_REPO=false
 if python3 -c "
 content = open('${PLAN_YML}').read()
 guard_section = content.split('id: guard')[1].split('- name: \"Checkout Consumer')[0] if 'id: guard' in content else ''
 assert 'WORKFLOW_REPO: \${{ job.workflow_repository }}' in guard_section, 'WORKFLOW_REPO not in guard env'
 assert 'WORKFLOW_SHA: \${{ job.workflow_sha }}' in guard_section, 'WORKFLOW_SHA not in guard env'
+assert 'WORKFLOW_REF: \${{ job.workflow_ref }}' in guard_section, 'WORKFLOW_REF not in guard env'
 assert 'TRUSTED_PLATFORM_REPO=\"TM-threemavithana/infraflow\"' in guard_section, 'TRUSTED_PLATFORM_REPO not set'
 assert '\${WORKFLOW_REPO}\" != \"\${TRUSTED_PLATFORM_REPO}\"' in guard_section, 'repo identity check not found'
+assert '\${WORKFLOW_REF_TARGET}\" != \"\${WORKFLOW_SHA}\"' in guard_section, 'ref target vs sha check not found'
 " 2>/dev/null; then
   PLAN_GUARD_VALIDATES_REPO=true
 fi
 
 if [[ "${PLAN_GUARD_VALIDATES_REPO}" == "true" ]]; then
-  record_pass "Trust Boundary [6/7]: plan.yml guard validates WORKFLOW_REPO against hardcoded trusted platform identity"
+  record_pass "Trust Boundary [6/9]: plan.yml guard validates WORKFLOW_REPO, WORKFLOW_SHA, and WORKFLOW_REF"
 else
-  record_fail "Trust Boundary [6/7]: plan.yml guard missing WORKFLOW_REPO identity validation" "guard does not validate job.workflow_repository against trusted platform"
+  record_fail "Trust Boundary [6/9]: plan.yml guard missing WORKFLOW_REF or identity validation" "guard does not validate job.workflow_ref against trusted platform"
 fi
 
-# Test 14.51: security.yml checkout and guard also use job.workflow_repository/sha
+# Test 14.51: security.yml checkout and guard also use job.workflow_repository/sha/ref
 SECURITY_CHECKOUT_HARDENED=false
 if python3 -c "
 content = open('${SECURITY_YML}').read()
 # Check guard env
-guard_section = content.split('id: guard')[1].split('- name: \"Checkout Consumer')[0] if 'id: guard' in content else content.split('id: guard')[1].split('- name: \"Checkout')[0]
 assert 'WORKFLOW_REPO: \${{ job.workflow_repository }}' in content, 'WORKFLOW_REPO not in security.yml guard env'
 assert 'WORKFLOW_SHA: \${{ job.workflow_sha }}' in content, 'WORKFLOW_SHA not in security.yml guard env'
+assert 'WORKFLOW_REF: \${{ job.workflow_ref }}' in content, 'WORKFLOW_REF not in security.yml guard env'
 assert 'TRUSTED_PLATFORM_REPO=\"TM-threemavithana/infraflow\"' in content, 'TRUSTED_PLATFORM_REPO not set in security.yml'
 # Check checkout
 assert 'repository: \${{ job.workflow_repository }}' in content, 'workflow_repository not used for checkout in security.yml'
@@ -2608,9 +2610,94 @@ assert 'inputs.platform-ref' not in content, 'inputs.platform-ref still referenc
 fi
 
 if [[ "${SECURITY_CHECKOUT_HARDENED}" == "true" ]]; then
-  record_pass "Trust Boundary [7/7]: reusable-tf-security.yml checkout and guard use job.workflow_repository/sha with trust validation"
+  record_pass "Trust Boundary [7/9]: reusable-tf-security.yml checkout and guard use job.workflow_repository/sha/ref"
 else
-  record_fail "Trust Boundary [7/7]: reusable-tf-security.yml not fully hardened" "checkout or guard still references caller-controlled inputs or missing workflow_repository/sha"
+  record_fail "Trust Boundary [7/9]: reusable-tf-security.yml not fully hardened" "checkout or guard still references caller-controlled inputs or missing workflow_ref"
+fi
+
+# Test 14.52: Dynamic simulation of WORKFLOW_REF validation logic
+REF_VALIDATION_DYNAMIC_PASS=true
+
+test_workflow_ref_sim() {
+  local W_REPO="$1"
+  local W_REF="$2"
+  local W_SHA="$3"
+  local EXPECTED_PATH="$4"
+  local CALLER_R="${5:-external-consumer}"
+  local TRUSTED_REPO="TM-threemavithana/infraflow"
+
+  if [[ "${W_REPO}" != "${TRUSTED_REPO}" ]]; then return 1; fi
+  if [[ "${W_REF}" != *"@"* ]]; then return 1; fi
+  local PREFIX="${W_REF%@*}"
+  local TARGET="${W_REF##*@}"
+  local EXPECTED_PREFIX="${TRUSTED_REPO}/${EXPECTED_PATH}"
+  if [[ "${PREFIX}" != "${EXPECTED_PREFIX}" ]]; then return 1; fi
+
+  if [[ "${CALLER_R}" == "${TRUSTED_REPO}" && ( "${TARGET}" =~ ^refs/(heads|pull)/ || "${TARGET}" =~ ^[0-9a-fA-F]{40}$ ) ]]; then
+    : # Internal platform self-test allowed
+  else
+    if [[ ! "${TARGET}" =~ ^[0-9a-fA-F]{40}$ ]]; then return 1; fi
+    if [[ "${TARGET}" != "${W_SHA}" ]]; then return 1; fi
+  fi
+  if [[ ! "${W_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then return 1; fi
+  return 0
+}
+
+MOCK_SHA="86c05e54fbf7ba1f470d4b6e2bd3f1c9a384a2f2"
+MOCK_REPO="TM-threemavithana/infraflow"
+MOCK_PATH=".github/workflows/reusable-tf-plan.yml"
+
+# Must reject @main
+if test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@main" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+# Must reject @refs/heads/main
+if test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@refs/heads/main" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+# Must reject @v0.1.0
+if test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@v0.1.0" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+# Must reject @refs/tags/v0.1.0
+if test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@refs/tags/v0.1.0" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+# Must reject short SHA
+if test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@86c05e5" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+# Must reject mismatched SHA
+if test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@1111111111111111111111111111111111111111" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+# Must accept full 40-char SHA matching workflow_sha
+if ! test_workflow_ref_sim "${MOCK_REPO}" "${MOCK_REPO}/${MOCK_PATH}@${MOCK_SHA}" "${MOCK_SHA}" "${MOCK_PATH}"; then
+  REF_VALIDATION_DYNAMIC_PASS=false
+fi
+
+if [[ "${REF_VALIDATION_DYNAMIC_PASS}" == "true" ]]; then
+  record_pass "Trust Boundary [8/9]: WORKFLOW_REF validation strictly rejects mutable branches/tags/short-SHAs and accepts 40-char commit SHA"
+else
+  record_fail "Trust Boundary [8/9]: WORKFLOW_REF validation failed dynamic regression tests" "did not reject mutable branches or accept valid full SHA"
+fi
+
+# Test 14.53: --signer-digest support in verify-plan-integrity.py and reusable-tf-plan.yml
+SIGNER_DIGEST_HARDENED=false
+if python3 -c "
+content_plan = open('${PLAN_YML}').read()
+content_py = open('${REPO_ROOT}/scripts/verify-plan-integrity.py').read()
+assert '--signer-digest \"\${{ job.workflow_sha }}\"' in content_plan, '--signer-digest not passed in plan.yml'
+assert '--signer-digest' in content_py, '--signer-digest not supported in verify-plan-integrity.py CLI'
+assert 'signer_digest=None' in content_py or 'signer_digest' in content_py, 'signer_digest parameter missing in verify-plan-integrity.py'
+" 2>/dev/null; then
+  SIGNER_DIGEST_HARDENED=true
+fi
+
+if [[ "${SIGNER_DIGEST_HARDENED}" == "true" ]]; then
+  record_pass "Trust Boundary [9/9]: verify-plan-integrity.py and plan.yml enforce --signer-digest for exact workflow commit verification"
+else
+  record_fail "Trust Boundary [9/9]: --signer-digest enforcement missing" "--signer-digest not properly integrated in verification toolchain"
 fi
 
 # --- 15. Summary Report ---

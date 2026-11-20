@@ -558,7 +558,7 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
                        plan_file_path=None, expected_repository=None,
                        expected_commit_sha=None, expected_workflow=None,
                        require_production_signer=False, use_gh_cli=False,
-                       signer_repo=None, signer_workflow=None,
+                       signer_repo=None, signer_workflow=None, signer_digest=None,
                        cert_oidc_issuer="https://token.actions.githubusercontent.com"):
     """
     Verifies a GitHub Artifact Attestation and associated plan manifest:
@@ -661,6 +661,8 @@ def verify_attestation(manifest_path, bundle_path=None, plan_json_path=None,
             cmd.extend(["--signer-workflow", signer_workflow])
         elif signer_repo:
             cmd.extend(["--signer-repo", signer_repo])
+        if signer_digest:
+            cmd.extend(["--signer-digest", signer_digest])
         if expected_commit_sha:
             cmd.extend(["--source-digest", expected_commit_sha])
         cmd.extend(["--cert-oidc-issuer", cert_oidc_issuer])
@@ -951,6 +953,7 @@ def main():
     vatt_parser.add_argument("--use-gh-cli", action="store_true", help="Invoke official 'gh attestation verify' to cryptographically verify attestation")
     vatt_parser.add_argument("--signer-repo", help="Signer repository for gh attestation verify")
     vatt_parser.add_argument("--signer-workflow", help="Signer workflow for gh attestation verify")
+    vatt_parser.add_argument("--signer-digest", help="Signer workflow commit SHA digest for gh attestation verify")
     vatt_parser.add_argument("--cert-oidc-issuer", default="https://token.actions.githubusercontent.com", help="Expected OIDC certificate issuer")
 
     args = parser.parse_args()
@@ -1123,6 +1126,7 @@ def main():
             use_gh_cli=getattr(args, "use_gh_cli", False),
             signer_repo=getattr(args, "signer_repo", None),
             signer_workflow=getattr(args, "signer_workflow", None),
+            signer_digest=getattr(args, "signer_digest", None),
             cert_oidc_issuer=getattr(args, "cert_oidc_issuer", "https://token.actions.githubusercontent.com")
         )
         if success:

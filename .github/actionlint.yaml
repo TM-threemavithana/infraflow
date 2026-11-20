@@ -4,7 +4,8 @@
 paths:
   .github/workflows/**/*.{yml,yaml}:
     ignore:
-      # job.workflow_repository and job.workflow_sha are official GitHub Actions context properties for reusable workflows
+      # job.workflow_repository, job.workflow_sha, and job.workflow_ref are official GitHub Actions context properties for reusable workflows
       # not yet recognized by actionlint v1.7.7 schema
       - 'property "workflow_repository" is not defined in object type'
       - 'property "workflow_sha" is not defined in object type'
+      - 'property "workflow_ref" is not defined in object type'
