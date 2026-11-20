@@ -2525,13 +2525,13 @@ else
   record_fail "Trust Boundary [3/7]: Caller-controlled platform inputs not removed from security.yml" "inputs still contain platform-repository or platform-ref"
 fi
 
-# Test 14.48: All platform checkout steps in plan.yml use job.workflow_repository and github.workflow_sha
+# Test 14.48: All platform checkout steps in plan.yml use job.workflow_repository and job.workflow_sha
 PLAN_CHECKOUT_HARDENED=false
 if python3 -c "
 content = open('${PLAN_YML}').read()
 # Count trusted checkouts vs rogue inputs.platform-* checkouts
 trusted = content.count('repository: \${{ job.workflow_repository }}')
-sha_bound = content.count('ref: \${{ github.workflow_sha }}')
+sha_bound = content.count('ref: \${{ job.workflow_sha }}')
 rogue_repo = content.count('repository: \${{ inputs.platform-repository }}')
 rogue_ref = content.count('ref: \${{ inputs.platform-ref }}')
 # Expect 3 trusted checkout blocks (plan, attest, verify-attestation), 0 rogue
@@ -2575,7 +2575,7 @@ if python3 -c "
 content = open('${PLAN_YML}').read()
 guard_section = content.split('id: guard')[1].split('- name: \"Checkout Consumer')[0] if 'id: guard' in content else ''
 assert 'WORKFLOW_REPO: \${{ job.workflow_repository }}' in guard_section, 'WORKFLOW_REPO not in guard env'
-assert 'WORKFLOW_SHA: \${{ github.workflow_sha }}' in guard_section, 'WORKFLOW_SHA not in guard env'
+assert 'WORKFLOW_SHA: \${{ job.workflow_sha }}' in guard_section, 'WORKFLOW_SHA not in guard env'
 assert 'TRUSTED_PLATFORM_REPO=\"TM-threemavithana/infraflow\"' in guard_section, 'TRUSTED_PLATFORM_REPO not set'
 assert '\${WORKFLOW_REPO}\" != \"\${TRUSTED_PLATFORM_REPO}\"' in guard_section, 'repo identity check not found'
 " 2>/dev/null; then
@@ -2595,11 +2595,11 @@ content = open('${SECURITY_YML}').read()
 # Check guard env
 guard_section = content.split('id: guard')[1].split('- name: \"Checkout Consumer')[0] if 'id: guard' in content else content.split('id: guard')[1].split('- name: \"Checkout')[0]
 assert 'WORKFLOW_REPO: \${{ job.workflow_repository }}' in content, 'WORKFLOW_REPO not in security.yml guard env'
-assert 'WORKFLOW_SHA: \${{ github.workflow_sha }}' in content, 'WORKFLOW_SHA not in security.yml guard env'
+assert 'WORKFLOW_SHA: \${{ job.workflow_sha }}' in content, 'WORKFLOW_SHA not in security.yml guard env'
 assert 'TRUSTED_PLATFORM_REPO=\"TM-threemavithana/infraflow\"' in content, 'TRUSTED_PLATFORM_REPO not set in security.yml'
 # Check checkout
 assert 'repository: \${{ job.workflow_repository }}' in content, 'workflow_repository not used for checkout in security.yml'
-assert 'ref: \${{ github.workflow_sha }}' in content, 'workflow_sha not used for checkout ref in security.yml'
+assert 'ref: \${{ job.workflow_sha }}' in content, 'workflow_sha not used for checkout ref in security.yml'
 # No remaining rogue inputs
 assert 'inputs.platform-repository' not in content, 'inputs.platform-repository still referenced in security.yml'
 assert 'inputs.platform-ref' not in content, 'inputs.platform-ref still referenced in security.yml'
