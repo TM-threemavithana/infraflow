@@ -43,15 +43,7 @@ on:
         required: false
         default: "policies"
         type: string
-      platform-repository:
-        description: "GitHub repository containing InfraFlow platform tooling"
-        required: false
-        default: "TM-threemavithana/infraflow"
-        type: string
-      platform-ref:
-        description: "Immutable 40-character hexadecimal commit SHA of the InfraFlow platform repository"
-        required: true
-        type: string
+
     outputs:
       tflint-status:
         description: "Outcome of TFLint analysis (success, failure, skipped)"
@@ -95,7 +87,8 @@ jobs:
           INPUT_VERSION: ${{ inputs.terraform-version }}
           INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
           INPUT_SEVERITY: ${{ inputs.severity-threshold }}
-          PLATFORM_REF: ${{ inputs.platform-ref }}
+          WORKFLOW_REPO: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           echo "::group::Input Sanitization & Security Validation"
@@ -152,11 +145,18 @@ jobs:
             exit 1
           fi
 
-          # 8. Validate platform-ref: Must be an exact 40-character hexadecimal commit SHA
-          if [[ ! "${PLATFORM_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
-            echo "::error::Security Violation: platform-ref '${PLATFORM_REF}' is invalid. InfraFlow strictly mandates an immutable 40-character hexadecimal commit SHA (branch names and mutable tags are prohibited)."
+          # 8. Validate trusted platform repository identity (trust boundary enforcement)
+          TRUSTED_PLATFORM_REPO="TM-threemavithana/infraflow"
+          if [[ "${WORKFLOW_REPO}" != "${TRUSTED_PLATFORM_REPO}" ]]; then
+            echo "::error::Security Violation: Platform workflow repository '${WORKFLOW_REPO}' is not the trusted InfraFlow platform. Only '${TRUSTED_PLATFORM_REPO}' is authorized to execute this workflow."
             exit 1
           fi
+          # Validate workflow SHA is an immutable 40-character hex commit SHA
+          if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Security Violation: workflow_sha '${WORKFLOW_SHA}' is not a valid immutable commit SHA. The platform toolchain ref must be cryptographically bound."
+            exit 1
+          fi
+          echo "Platform identity verified: ${TRUSTED_PLATFORM_REPO}@${WORKFLOW_SHA}"
 
           echo "All security parameters successfully validated."
           echo "::endgroup::"
@@ -169,8 +169,8 @@ jobs:
       - name: "Checkout InfraFlow Platform Toolchain"
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          repository: ${{ inputs.platform-repository }}
-          ref: ${{ inputs.platform-ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ github.workflow_sha }}
           path: ".infraflow-platform"
           persist-credentials: false
 

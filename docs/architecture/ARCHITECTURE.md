@@ -14,7 +14,7 @@ Rather than duplicating GitHub Actions YAML pipelines across dozens of repositor
 2. **Tier 2 — Modular Cloud Adapters (Future AWS, Azure, GCP Extensions)**:
    - Encapsulates cloud-specific OIDC authentication (AWS AssumeRoleWithWebIdentity, Azure Federated Credentials, GCP Workload Identity Federation).
    - Manages remote state backends (S3/DynamoDB, Azure Blob, GCS) and state locking.
-   - Orchestrates speculative planning (`terraform plan`) and controlled approvals/applies.
+   - Orchestrates speculative planning (`terraform plan`), verified policy gate governance, and controlled applies.
    - Plugs into the Tier 1 core without modifying provider-neutral logic.
 
 ---
@@ -199,9 +199,9 @@ Introduced in **Milestone G03**, this reusable workflow provides dedicated DevSe
 
 ---
 
-## 5. Reusable Planning & Approval Specification: `reusable-tf-plan.yml`
+## 5. Reusable Planning & Governance Specification: `reusable-tf-plan.yml`
 
-Introduced in **Milestone G04**, this reusable workflow provides speculative planning, change analysis, OPA plan evaluation, cryptographic attestation, and protected environment gating.
+Introduced in **Milestone G04**, this reusable workflow provides speculative planning, change analysis, dual static security scanning (Trivy + Conftest/OPA), cryptographic attestation, and automated verified policy gate governance.
 
 ### 5.1 Inputs Schema
 
@@ -210,13 +210,18 @@ Introduced in **Milestone G04**, this reusable workflow provides speculative pla
 | `terraform-version` | `string` | No | `'1.10.4'` | Version of Terraform to execute. Must be `>= 1.6.0`. |
 | `working-directory` | `string` | No | `'.'` | Directory containing Terraform configuration to plan. |
 | `var-file` | `string` | No | `''` | Optional relative path to `.tfvars` file. |
-| `environment` | `string` | No | `'production-approval'` | Target GitHub Environment name for protected approval gate. |
+| `environment` | `string` | No | `'production'` | Target deployment environment context for policy evaluation and audit logging. |
 | `enable-policy-evaluation` | `boolean` | No | `true` | Evaluates Conftest / OPA policies against plan JSON. |
 | `policy-directory` | `string` | No | `'policies'` | Path to enterprise Rego policies root. |
 | `enable-trivy` | `boolean` | No | `true` | Executes Trivy IaC static scan. |
 | `severity-threshold` | `string` | No | `'HIGH,CRITICAL'` | Severities triggering hard scan failure. |
 | `fail-on-destructive` | `boolean` | No | `false` | When true, fails plan generation if deletions or replacements occur. |
 | `upload-plan-attestation` | `boolean` | No | `true` | Uploads sanitized summary and attestation manifest. |
+
+> [!NOTE]
+> `platform-repository` and `platform-ref` inputs were **removed** in the G04 Trust-Boundary Hardening.
+> The platform toolchain repository and commit are now derived internally from `github.workflow_repository` and `github.workflow_sha`
+> (the immutable SHA of the reusable workflow itself). Consumers cannot substitute a rogue toolchain repository or mutable tag.
 
 ### 5.2 Outputs Schema
 

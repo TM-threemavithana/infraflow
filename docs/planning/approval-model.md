@@ -78,7 +78,7 @@ To establish genuine, auditable DevSecOps governance, InfraFlow refactors the hu
 > [!NOTE]
 > **Production vs. Offline Provenance Architectures**:
 > - **Authoritative Production Mechanism**: GitHub Artifact Attestations using GitHub Actions OIDC and Sigstore (`actions/attest`) verified via official `gh attestation verify`. Eliminates static long-lived private keys and enforces Rekor transparency log verification.
-> - **Offline & Legacy Compatibility**: Asymmetric ECDSA NIST P-256 in-toto DSSE envelope signing remains available solely for offline unit testing, local attack simulations, and legacy backward compatibility. It is strictly excluded from authorizing live production approval gates.
+> - **Offline & Legacy Compatibility**: Asymmetric ECDSA NIST P-256 in-toto DSSE envelope signing remains available solely for offline unit testing, local attack simulations, and legacy backward compatibility. It is strictly excluded from authorizing live production policy gates.
 
 ---
 
@@ -88,7 +88,10 @@ To establish genuine, auditable DevSecOps governance, InfraFlow refactors the hu
 > **Three Explicit Architectural Boundaries**:
 > 1. **Automated Cryptographic & Policy Verification (FULLY IMPLEMENTED & VERIFIED)**:
 >    - Cryptographic verification proves machine-level data integrity, provenance authenticity, authoring workflow identity, source commit binding, and policy compliance.
->    - All planning, Trivy IaC scanning, Conftest/OPA evaluation, Sigstore signing, and `gh attestation verify` steps execute and pass automatically in both local harnesses and live GitHub Actions.
+>    - **Local Verification Reality**: The local test harness (`scripts/validate-local.sh`) executes completely offline using synthetic bundles, deterministic SHA-256 digests, and local static analyzers without requiring network access or cloud credentials.
+>    - **Live CI Execution Reality**: The authoritative production workflow executes in live GitHub Actions, generating genuine Sigstore OIDC attestations recorded in the public Rekor transparency log and verified via `gh attestation verify`.
+>    - **Dual Scanner Enforcement**: Both Trivy IaC scanning and Conftest OPA evaluation must succeed. Any skipped scanner or failure results in immediate rejection by the verified policy gate.
+>    - **Platform Baseline Invariance**: Minimum security severity threshold is strictly pinned to `HIGH,CRITICAL` and mandatory platform OPA policies are immutable; consumer policies can only be evaluated additionally.
 > 2. **Human Review Gate (NOT CONFIGURED / INACTIVE)**:
 >    - Because this is a solo-engineer project, no human environment reviewer gate is active. The workflow does not pause for manual sign-off.
 >    - The system never claims human approval occurred.

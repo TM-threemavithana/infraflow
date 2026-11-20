@@ -1,0 +1,9 @@
+# Configuration for actionlint in InfraFlow
+# https://github.com/rhysd/actionlint/tree/v1.7.7/docs/config.md
+
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # job.workflow_repository is an official GitHub Actions context property for reusable workflows
+      # not yet recognized by actionlint v1.7.7 schema
+      - 'property "workflow_repository" is not defined in object type'

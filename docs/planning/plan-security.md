@@ -80,11 +80,12 @@ If an attacker submits a pull request, the PR branch contains its own version of
 |---|---|---|---|
 | **Security Workflow Removal** | Attacker deletes `reusable-tf-security.yml` from `ci.yml` | **Organization Required Workflows / Branch Protection Status Checks**: If `security` status check is missing, merge is blocked (Test 12.1). | GitHub Ruleset / Branch Protection |
 | **Workflow Reference Tampering** | Attacker points `uses:` to rogue commit or malicious fork | **Pinning Integrity Policy Audit**: Caller workflow must reference immutable platform SHAs matching the release tag (Test 12.2). | Repository CODEOWNERS / CI Guard |
+| **Rogue Platform Repository Substitution** | Attacker passes `platform-repository` pointing to their own fork containing a modified `analyze-plan.py` or forged OPA policies | **Caller-Input Trust Boundary Removal**: `platform-repository` and `platform-ref` inputs removed; platform identity derived exclusively from `github.workflow_repository` and `github.workflow_sha` (Tests 14.46–14.51). Consumer cannot supply a rogue toolchain. | Workflow Context Binding |
 | **Attacker Signer Fingerprint** | Attacker passes rogue `trusted-signer-keyids` in caller workflow | **Production Signer Authorization Gate**: Production approval strictly requires key enrollment in `PLATFORM_PRODUCTION_SIGNERS` (Test 12.3). | Workflow Execution Guard |
 | **Trusted Key Substitution** | Attacker replaces `policies/trust/trusted_signer.pub` on disk | **Anti-Substitution Verification**: Pinned root anchor rejects unauthorized public key files (Test 12.4). | Cryptographic Verification |
 | **Revocation List Omission** | Attacker omits `--revoked-keyids` from caller configuration | **Hardcoded Platform Revocation Registry**: Verifier automatically loads `policies/trust/revocations.txt` from protected platform tree (Test 12.5). | Toolchain Automation |
 | **Verifier Script Replacement** | Attacker replaces `verify-plan-integrity.py` with `exit 0` script | **Toolchain Integrity Verification**: Script hash verified against canonical release hash (Test 12.6). | Execution Guard / Checkout Isolation |
-| **Approval Environment Removal** | Attacker sets `environment: ""` to bypass manual review | **Workflow Policy Audit**: Reusable workflow strictly requires `inputs.environment` (Test 12.7). | Reusable Workflow Contract |
+| **Deployment Environment Removal** | Attacker sets `environment: ""` to alter policy context | **Workflow Policy Audit**: Reusable workflow strictly requires `inputs.environment` (Test 12.7). | Reusable Workflow Contract |
 | **Repository Identity Spoofing** | Attacker claims provenance from rogue repository | **Immutable Context Binding**: Verifier checks `$GITHUB_REPOSITORY` against runner execution context (Test 12.8). | Cryptographic Binding |
 | **Preview Key Production Bypass** | Attacker uses ephemeral PR key for production deployment | **Signing Tier Separation**: Production gate strictly requires `signing_tier: production` (Test 12.9). | Signing Trust Engine |
 | **Missing Security Status Authorization** | Attacker attempts approval when security check failed | **Provenance Policy Enforcement**: Verification fails unless `policy_evaluation.status == "passed"` (Test 12.10). | Attestation Verification |
@@ -96,7 +97,9 @@ The following configurations **must NEVER be controlled by untrusted PR inputs**
 3. **Expected Repository Identity**: Fixed to runner context `${{ github.repository }}`.
 4. **Expected Workflow Identity**: Fixed to canonical platform workflow `reusable-tf-plan.yml`.
 5. **Production Signing Authorization**: Requires explicit `signing_tier: "production"` and enrollment in `PLATFORM_PRODUCTION_SIGNERS`.
-6. **Approval Gate Configuration**: Bound to GitHub Environment `production-approval` with required reviewers.
+6. **Policy Gate Context**: Bound to deployment environment context (`inputs.environment`) for policy evaluation and audit logging.
+7. **Platform Toolchain Repository**: Fixed to `TM-threemavithana/infraflow` via `github.workflow_repository` — consumers cannot substitute a rogue toolchain repository or mutable tag.
+8. **Attestation Signer Identity**: Hardcoded to `TM-threemavithana/infraflow` and `reusable-tf-plan.yml` in the `verify-plan-integrity.py` verification step — not from any caller-controlled input.
 
 ---
 
@@ -114,7 +117,7 @@ InfraFlow enforces a strict cryptographic boundary between **Preview Signers** a
 │      - Scope: Speculative Pull Request plans                           │
 │      - Key Source: Ephemeral runner keypair (${RUNNER_TEMP})           │
 │      - Authority: Validates PR step summaries and change analysis      │
-│      - Restriction: STRICTLY REJECTED by Production Approval Gates     │
+│      - Restriction: STRICTLY REJECTED by Production Policy Gates       │
 │                                                                        │
 │  [2] PRODUCTION SIGNING IDENTITY                                       │
 │      - Tier: `signing_tier: "production"`                              │
@@ -318,7 +321,7 @@ GitHub Actions permissions are workflow- and job-scoped, not step-scoped. To enf
   4. **Expected Signer Workflow**: Reusable planning workflow (`--signer-workflow`).
   5. **GitHub Actions OIDC Issuer**: `https://token.actions.githubusercontent.com`.
   6. **Manifest Security Decision**: Mandatory `security_decision == "passed"`.
-- **Human Governance Gate**: Managed independently via GitHub Protected Environments (`environment: production-approval`). Pauses for review only if cryptographic verification succeeds; failed or missing attestations strictly block approval.
+- **Automated Verified Policy Gate**: Automated governance gate evaluating speculative plan outcomes, Trivy IaC findings, Conftest OPA policies, and Sigstore attestation verification. Authorizes deployment only if all policy and cryptographic checks succeed; fails closed immediately on any violation or skipped step.
 
 ### 9.5 External Consumer Independence & Platform Toolchain Isolation (G04 PR Correction)
 - **Decoupled Toolchain Architecture**: External consumer repositories invoking InfraFlow reusable workflows (`reusable-tf-security.yml`, `reusable-tf-plan.yml`) retain their application Terraform source code in `GITHUB_WORKSPACE`. InfraFlow platform tooling (scripts, policies, TFLint configuration, Zizmor configuration, and verification anchors) is checked out independently to `${RUNNER_TEMP}/infraflow-platform` via immutable commit SHA or release reference.

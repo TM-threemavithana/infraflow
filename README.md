@@ -10,7 +10,7 @@
 InfraFlow separates infrastructure delivery into distinct layers:
 1. **Tier 1 — Reusable Provider-Neutral CI/CD Core (`reusable-tf-validate.yml`)**: A standardized GitHub Actions workflow (`workflow_call`) executing linting, static validation, and native testing (`.tftest.hcl`) with **zero cloud credentials** and least-privilege tokens.
 2. **Tier 1 — DevSecOps Security Quality Gates (`reusable-tf-security.yml`)**: Automated security scanning incorporating TFLint static analysis, Trivy IaC misconfiguration scanning, Zizmor CI/CD supply chain auditing, and Conftest/OPA Policy-as-Code governance.
-3. **Tier 1 — Secure Planning & Approval Engine (`reusable-tf-plan.yml`)**: Automated speculative planning (`-lock=false`), structural change classification (`analyze-plan.py`), OPA live plan evaluation, cryptographic attestation binding (`verify-plan-integrity.py`), and protected environment approval gating.
+3. **Tier 1 — Secure Planning & Governance Engine (`reusable-tf-plan.yml`)**: Automated speculative planning (`-lock=false`), structural change classification (`analyze-plan.py`), dual static security scanners (Trivy + OPA/Conftest), cryptographic attestation binding (`verify-plan-integrity.py`), and automated verified policy gate governance.
 4. **Tier 2 — Modular Cloud Adapters (AWS, Azure, GCP)**: Isolated adapters handling OIDC authentication, remote state backends, and speculative planning/applies on protected branches.
 
 ---
@@ -279,7 +279,7 @@ infraflow/
 ├── scripts/
 │   ├── analyze-plan.py                # Plan analysis engine & change classifier
 │   ├── verify-plan-integrity.py       # Plan provenance, Sigstore & attestation engine
-│   └── validate-local.sh              # Local automated verification harness (132 checks)
+│   └── validate-local.sh              # Local automated verification harness (183 checks)
 ├── .gitignore
 ├── .tflint.hcl                        # Standardized TFLint configuration
 ├── .zizmor.yml                        # Zizmor workflow audit configuration
@@ -289,9 +289,13 @@ infraflow/
 
 ---
 
-## Local Validation
+## Local Validation & Live CI Verification
 
-InfraFlow includes an automated, offline local test harness executing all 132 quality gates across G01, G02, G03, G04, G04.1, G04.1.1, G04.1.2, G04.1.3, and G04.1.4:
+InfraFlow implements a dual verification strategy separating offline local development from authoritative cloud execution:
+- **Local Test Harness (`scripts/validate-local.sh`)**: Runs completely offline executing all 183 quality gates across G01 through G04. It evaluates schema contracts, AST workflows, security matrices, static analyzers, and cryptographic provenance using local synthetic bundles and deterministic digests without requiring internet access or cloud credentials.
+- **Authoritative Production CI (GitHub Actions)**: Operates online in live GitHub Actions workflows. It generates real cryptographically signed GitHub Artifact Attestations using short-lived GitHub Actions OIDC identity tokens and the Sigstore/Rekor public transparency log, cryptographically verified by `gh attestation verify`.
+
+To execute the offline local validation harness:
 
 ```bash
 chmod +x scripts/validate-local.sh
@@ -317,7 +321,7 @@ chmod +x scripts/validate-local.sh
 - [Scanner Configuration Standards](docs/security/scanner-configuration.md)
 - [G03 Security Verification Report](docs/security/verification-report.md)
 
-### Planning & Approval Engine (G04)
+### Planning & Governance Engine (G04)
 - [Planning Architecture](docs/planning/planning-architecture.md)
 - [Automated Verified Policy Gate Model](docs/planning/approval-model.md)
 - [Plan Security & Attestation](docs/planning/plan-security.md)

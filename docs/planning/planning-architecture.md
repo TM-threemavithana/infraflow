@@ -61,10 +61,11 @@ flowchart TD
    - Terraform toolchain version
    - SHA-256 digest of the execution plan JSON and binary plan
 
-5. **Dual-Gated Approval Model**
-   Advancing from plan to downstream delivery requires passing two orthogonal gates:
-   - **Automated Gate**: Cryptographic validation that the candidate plan matches the signed commit and has not been tampered with or regenerated.
-   - **Human Gate**: GitHub Protected Environment review by authorized human engineers.
+5. **Automated Verified Policy Gate Governance**
+   Advancing from speculative planning to deployment authorization requires passing the automated Verified Policy Gate (`verified-policy-gate`):
+   - **Static Security & Policy Evaluation**: Trivy IaC scanning and Conftest OPA policies must both succeed (HIGH/CRITICAL severity enforced; platform policies immutable).
+   - **Cryptographic Provenance Verification**: Pre-gate attestation verification validates that the candidate plan manifest was signed via official GitHub OIDC & Sigstore and binds the exact repository and commit SHA.
+   - **Solo Governance**: Tailored for automated solo-engineer portfolio governance without artificial or unreviewed human environment approval pauses.
 
 ---
 

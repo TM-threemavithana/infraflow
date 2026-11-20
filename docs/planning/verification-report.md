@@ -160,13 +160,17 @@ All 30 Section 10 quality gates passed:
    - Status check contexts configured in [.github/rulesets/main-ruleset.json](file:///home/tharuka/projects/infraflow/.github/rulesets/main-ruleset.json) (`Lint & Audit GitHub Actions Workflows`, `Self-Test Reusable Core (Cloud-Free Example)`, `Self-Test Reusable Security (Cloud-Free Example)`) must be cross-verified against actual GitHub Actions check context strings during the first live PR run on GitHub.
 4. **CODEOWNERS Limitations**:
    - [.github/CODEOWNERS](file:///home/tharuka/projects/infraflow/.github/CODEOWNERS) assigns ownership metadata and automated review routing. In a solo-maintainer environment (`required_approving_review_count: 0`), it does **not** enforce independent reviewer approval; independent approval requires another trusted maintainer.
-5. **Decoupled Cryptographic Attestation vs. Human Review**:
-   - Machine attestation verifies immutable plan provenance via Sigstore OIDC, while human approval enforces organizational change management in GitHub Environments. Both gates must pass independently before deployment.
+5. **Automated Verified Policy Gate & Provenance Verification**:
+   - Machine attestation verifies immutable plan provenance via Sigstore OIDC, and the automated Verified Policy Gate (`verified-policy-gate`) enforces dual static scanner success (Trivy + Conftest), platform policy invariance, and non-destructive plan constraints without manual approval deadlocks.
 6. **Attestation Scope vs. Exact-Plan Application (Future G06 Requirement)**:
    - GitHub Artifact Attestation attests `plan-manifest.json` containing the cryptographic plan digests (`plan_file_sha256`, `plan_json_sha256`).
    - The original plan binary is immediately purged and not retained as a build artifact, strictly preventing secret exposure in public repositories.
    - The platform does not claim or enable exact-plan application in current delivery.
    - Future deployment milestones (**Milestone G06 — Protected Apply & Destroy**) will require private, KMS envelope-encrypted object storage (e.g. S3/GCS via OIDC) and pre-apply digest validation to support exact-plan application.
+7. **Platform Trust-Boundary Hardening**:
+   - Removed caller-controlled `platform-repository` and `platform-ref` inputs from `reusable-tf-plan.yml` and `reusable-tf-security.yml`.
+   - Toolchain checkout is bound exclusively to `job.workflow_repository` (`TM-threemavithana/infraflow`) and `job.workflow_sha` (the immutable commit SHA of the reusable workflow).
+   - In-workflow verification hardcodes the trusted `--signer-repo` and `--signer-workflow` identity, eliminating signer spoofing attacks.
 
 ---
 
@@ -174,11 +178,12 @@ All 30 Section 10 quality gates passed:
 
 Milestone **G04.1.4 — InfraFlow Architecture Finalization** is **100% complete and verified**.
 
-All four architectural decisions and permission isolation corrections have been implemented and validated:
+All four architectural decisions, permission isolation corrections, and platform trust-boundary hardening have been implemented and validated:
 - Governance ruleset specified for personal (solo-maintainer compatible) and enterprise deployments.
 - Attestation permission isolation enforced via separate `plan` (`contents: read`) and `attest` (`id-token: write`, `attestations: write`) jobs.
 - GitHub Artifact Attestations (Sigstore OIDC) established as the sole production signing identity.
 - Human approval decoupled from machine attestation.
-- Complete regression suite (**140 / 140 checks**) verified with zero errors, zero warnings, and zero leaks.
+- Platform trust boundary hardened: caller cannot supply rogue toolchain repository or mutable ref.
+- Complete regression suite (**183 / 183 checks**) verified with zero errors, zero warnings, and zero leaks.
 
 **Final Milestone Status**: **PASS**

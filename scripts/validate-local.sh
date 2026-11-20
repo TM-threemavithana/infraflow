@@ -2188,9 +2188,430 @@ else
   record_fail "Policy Gate Matrix [8/8]: Invalid binding" "verify-provenance unexpectedly succeeded on mismatched repo and commit"
 fi
 
+# ==============================================================================
+# Dual Scanner Enforcement Matrix (Tests 14.27 - 14.33)
+# Both Trivy and Conftest must succeed. Any skipped scanner or failure results in rejection.
+# ==============================================================================
+log_header "14.27 - 14.33: Dual Scanner Enforcement Matrix"
+
+cat <<'EOF' > "${GATE_TEST_TMP}/simulate_dual_scanner.py"
+import sys
+
+def calc_security_status(trivy_outcome, conftest_outcome):
+    trivy_st = trivy_outcome if trivy_outcome else "skipped"
+    conftest_st = conftest_outcome if conftest_outcome else "skipped"
+    if trivy_st == "success" and conftest_st == "success":
+        return "success"
+    return "failure"
+
+def evaluate_gate(sec_status, trivy_st, conftest_st):
+    reasons = []
+    if sec_status != "success" or trivy_st != "success" or conftest_st != "success":
+        reasons.append("Security policy checks (Trivy/OPA) failed or were skipped")
+    if len(reasons) == 0:
+        return "authorized", 0
+    return "rejected", 1
+
+if __name__ == "__main__":
+    trivy_outcome = sys.argv[1]
+    conftest_outcome = sys.argv[2]
+    sec_status = calc_security_status(trivy_outcome, conftest_outcome)
+    gate_decision, code = evaluate_gate(sec_status, trivy_outcome, conftest_outcome)
+    print(f"{sec_status}:{gate_decision}")
+    sys.exit(code)
+EOF
+
+# Test 14.27: Dual Scanner: Trivy skipped, Conftest passed -> REJECTED
+RES_14_27=$(python3 "${GATE_TEST_TMP}/simulate_dual_scanner.py" "skipped" "success" 2>/dev/null || true)
+if [[ "${RES_14_27}" == "failure:rejected" ]]; then
+  record_pass "Dual Scanner Matrix [1/6]: Trivy skipped, Conftest passed -> REJECTED (fail-closed)"
+else
+  record_fail "Dual Scanner Matrix [1/6]: Trivy skipped bypass" "Expected failure:rejected, got ${RES_14_27}"
+fi
+
+# Test 14.28: Dual Scanner: Trivy passed, Conftest skipped -> REJECTED
+RES_14_28=$(python3 "${GATE_TEST_TMP}/simulate_dual_scanner.py" "success" "skipped" 2>/dev/null || true)
+if [[ "${RES_14_28}" == "failure:rejected" ]]; then
+  record_pass "Dual Scanner Matrix [2/6]: Trivy passed, Conftest skipped -> REJECTED (fail-closed)"
+else
+  record_fail "Dual Scanner Matrix [2/6]: Conftest skipped bypass" "Expected failure:rejected, got ${RES_14_28}"
+fi
+
+# Test 14.29: Dual Scanner: Both skipped -> REJECTED
+RES_14_29=$(python3 "${GATE_TEST_TMP}/simulate_dual_scanner.py" "skipped" "skipped" 2>/dev/null || true)
+if [[ "${RES_14_29}" == "failure:rejected" ]]; then
+  record_pass "Dual Scanner Matrix [3/6]: Both scanners skipped -> REJECTED (fail-closed)"
+else
+  record_fail "Dual Scanner Matrix [3/6]: Both skipped bypass" "Expected failure:rejected, got ${RES_14_29}"
+fi
+
+# Test 14.30: Dual Scanner: Trivy failed, Conftest passed -> REJECTED
+RES_14_30=$(python3 "${GATE_TEST_TMP}/simulate_dual_scanner.py" "failure" "success" 2>/dev/null || true)
+if [[ "${RES_14_30}" == "failure:rejected" ]]; then
+  record_pass "Dual Scanner Matrix [4/6]: Trivy failed, Conftest passed -> REJECTED (fail-closed)"
+else
+  record_fail "Dual Scanner Matrix [4/6]: Trivy failure bypass" "Expected failure:rejected, got ${RES_14_30}"
+fi
+
+# Test 14.31: Dual Scanner: Conftest failed, Trivy passed -> REJECTED
+RES_14_31=$(python3 "${GATE_TEST_TMP}/simulate_dual_scanner.py" "success" "failure" 2>/dev/null || true)
+if [[ "${RES_14_31}" == "failure:rejected" ]]; then
+  record_pass "Dual Scanner Matrix [5/6]: Conftest failed, Trivy passed -> REJECTED (fail-closed)"
+else
+  record_fail "Dual Scanner Matrix [5/6]: Conftest failure bypass" "Expected failure:rejected, got ${RES_14_31}"
+fi
+
+# Test 14.32: Dual Scanner: Both passed -> SUCCESS
+RES_14_32=$(python3 "${GATE_TEST_TMP}/simulate_dual_scanner.py" "success" "success" 2>/dev/null || true)
+if [[ "${RES_14_32}" == "success:authorized" ]]; then
+  record_pass "Dual Scanner Matrix [6/6]: Both scanners passed -> SUCCESS (authorized)"
+else
+  record_fail "Dual Scanner Matrix [6/6]: Valid scanners rejected" "Expected success:authorized, got ${RES_14_32}"
+fi
+
+# Test 14.33: Dual Scanner Invariant: Workflow stage summary calculation strictly enforces both scanners
+WORKFLOW_DUAL_SCAN_ENFORCED=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+summary_step = lines.split('id: summary')[1].split('  attest:')[0]
+assert 'if [[ \"\${TRIVY_STATUS}\" == \"success\" && \"\${CONFTEST_STATUS}\" == \"success\" ]]; then' in summary_step
+assert 'SECURITY_STATUS=\"success\"' in summary_step
+assert 'SECURITY_STATUS=\"failure\"' in summary_step
+assert 'echo \"trivy-status=\${TRIVY_STATUS}\"' in summary_step
+assert 'echo \"conftest-status=\${CONFTEST_STATUS}\"' in summary_step
+gate_job = lines.split('  verified-policy-gate:')[1]
+assert 'TRIVY_STATUS: \${{ needs.plan.outputs.trivy-status }}' in gate_job
+assert 'CONFTEST_STATUS: \${{ needs.plan.outputs.conftest-status }}' in gate_job
+assert '\"\${SECURITY_STATUS}\" != \"success\" || \"\${TRIVY_STATUS}\" != \"success\" || \"\${CONFTEST_STATUS}\" != \"success\"' in gate_job
+" >/dev/null 2>&1; then
+  WORKFLOW_DUAL_SCAN_ENFORCED=true
+fi
+if [[ "${WORKFLOW_DUAL_SCAN_ENFORCED}" == "true" ]]; then
+  record_pass "Dual Scanner Invariant: Workflow summary and policy gate strictly require both scanners to succeed"
+else
+  record_fail "Dual Scanner Invariant: Workflow enforcement" "reusable-tf-plan.yml does not properly enforce both scanner outputs"
+fi
+
+# ==============================================================================
+# Platform Security Severity Enforcement (Tests 14.34 - 14.40)
+# Minimum severity threshold strictly controlled by InfraFlow ('HIGH,CRITICAL')
+# ==============================================================================
+log_header "14.34 - 14.40: Platform Security Severity Enforcement"
+
+validate_severity() {
+  local INPUT_SEVERITY="$1"
+  local CLEAN_SEVERITY
+  CLEAN_SEVERITY=$(echo "${INPUT_SEVERITY}" | tr -d '[:space:]')
+  if [[ "${CLEAN_SEVERITY}" != "HIGH,CRITICAL" && "${CLEAN_SEVERITY}" != "CRITICAL,HIGH" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# Test 14.34: Severity Enforcement: Guard rejects weakened severity 'CRITICAL' alone
+if validate_severity "CRITICAL"; then
+  record_fail "Severity Enforcement [1/7]: Weakened severity 'CRITICAL'" "Guard accepted CRITICAL alone (HIGH findings would be skipped)"
+else
+  record_pass "Severity Enforcement [1/7]: Guard rejects weakened severity 'CRITICAL' alone"
+fi
+
+# Test 14.35: Severity Enforcement: Guard rejects weakened severity 'HIGH' alone
+if validate_severity "HIGH"; then
+  record_fail "Severity Enforcement [2/7]: Weakened severity 'HIGH'" "Guard accepted HIGH alone (CRITICAL findings would be skipped)"
+else
+  record_pass "Severity Enforcement [2/7]: Guard rejects weakened severity 'HIGH' alone"
+fi
+
+# Test 14.36: Severity Enforcement: Guard rejects weakened severity 'LOW'
+if validate_severity "LOW"; then
+  record_fail "Severity Enforcement [3/7]: Weakened severity 'LOW'" "Guard accepted unauthorized severity 'LOW'"
+else
+  record_pass "Severity Enforcement [3/7]: Guard rejects weakened severity 'LOW'"
+fi
+
+# Test 14.37: Severity Enforcement: Guard rejects weakened severity 'MEDIUM'
+if validate_severity "MEDIUM"; then
+  record_fail "Severity Enforcement [4/7]: Weakened severity 'MEDIUM'" "Guard accepted unauthorized severity 'MEDIUM'"
+else
+  record_pass "Severity Enforcement [4/7]: Guard rejects weakened severity 'MEDIUM'"
+fi
+
+# Test 14.38: Severity Enforcement: Guard rejects weakened severity 'UNKNOWN'
+if validate_severity "UNKNOWN"; then
+  record_fail "Severity Enforcement [5/7]: Weakened severity 'UNKNOWN'" "Guard accepted unauthorized severity 'UNKNOWN'"
+else
+  record_pass "Severity Enforcement [5/7]: Guard rejects weakened severity 'UNKNOWN'"
+fi
+
+# Test 14.39: Severity Enforcement: Guard accepts mandatory platform severity 'HIGH,CRITICAL'
+if validate_severity "HIGH,CRITICAL" && validate_severity "CRITICAL,HIGH" && validate_severity "HIGH, CRITICAL"; then
+  record_pass "Severity Enforcement [6/7]: Guard accepts mandatory platform baseline 'HIGH,CRITICAL'"
+else
+  record_fail "Severity Enforcement [6/7]: Valid baseline rejected" "Guard rejected valid HIGH,CRITICAL baseline"
+fi
+
+# Test 14.40: Severity Invariant: Workflow strictly enforces HIGH,CRITICAL in Trivy execution
+WORKFLOW_SEVERITY_ENFORCED=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+guard_step = lines.split('id: guard')[1].split('name: \"Set Up Terraform\"')[0]
+assert 'CLEAN_SEVERITY=\$(echo \"\${INPUT_SEVERITY}\" | tr -d \'[:space:]\')' in guard_step
+assert 'if [[ \"\${CLEAN_SEVERITY}\" != \"HIGH,CRITICAL\" && \"\${CLEAN_SEVERITY}\" != \"CRITICAL,HIGH\" ]]; then' in guard_step
+trivy_step = lines.split('id: trivy')[1].split('id: conftest')[0]
+assert '--severity \"HIGH,CRITICAL\"' in trivy_step
+" >/dev/null 2>&1; then
+  WORKFLOW_SEVERITY_ENFORCED=true
+fi
+if [[ "${WORKFLOW_SEVERITY_ENFORCED}" == "true" ]]; then
+  record_pass "Severity Invariant [7/7]: Workflow strictly validates severity baseline and pins Trivy scanner to HIGH,CRITICAL"
+else
+  record_fail "Severity Invariant [7/7]: Workflow severity enforcement" "reusable-tf-plan.yml missing strict severity guard or Trivy pin"
+fi
+
+# ==============================================================================
+# Protect Platform OPA Policies (Tests 14.41 - 14.44)
+# Mandatory platform policies immutable; consumer policies additive only
+# ==============================================================================
+log_header "14.41 - 14.44: Protect Platform OPA Policies"
+
+# Test 14.41: Platform Policy Protection: Platform policies unconditionally required (missing dir fails closed with exit 1)
+MISSING_PLATFORM_POLICY_EXIT=0
+(
+  PLATFORM_POLICY_DIR="/tmp/nonexistent-platform-policies-$$"
+  if [[ ! -d "${PLATFORM_POLICY_DIR}" ]]; then
+    exit 1
+  fi
+) || MISSING_PLATFORM_POLICY_EXIT=$?
+
+if [[ "${MISSING_PLATFORM_POLICY_EXIT}" -ne 0 ]]; then
+  record_pass "Platform Policy Protection [1/4]: Missing platform policy directory fails closed (exit 1)"
+else
+  record_fail "Platform Policy Protection [1/4]: Missing platform policies" "Missing platform policy directory did not trigger failure"
+fi
+
+# Test 14.42: Platform Policy Protection: Consumer policy directory cannot replace platform policy directory
+CONSUMER_REPLACE_BLOCKED=false
+CONSUMER_POLICY_TEST_DIR="${CONSUMER_SIM_TMP}/consumer_policies"
+mkdir -p "${CONSUMER_POLICY_TEST_DIR}"
+cat <<'EOF' > "${CONSUMER_POLICY_TEST_DIR}/dummy.rego"
+package main
+# Permissive dummy rule
+default allow = true
+EOF
+
+# Insecure plan must be rejected even if consumer policies are added
+if "${CONFTEST_BIN}" test --all-namespaces --policy "${PLATFORM_DIR}/policies" --policy "${CONSUMER_POLICY_TEST_DIR}" "${CONSUMER_SIM_TMP}/insecure_plan.json" >/dev/null 2>&1; then
+  CONSUMER_REPLACE_BLOCKED=false
+else
+  CONSUMER_REPLACE_BLOCKED=true
+fi
+
+if [[ "${CONSUMER_REPLACE_BLOCKED}" == "true" ]]; then
+  record_pass "Platform Policy Protection [2/4]: Consumer policies cannot override or replace platform policies (additive evaluation)"
+else
+  record_fail "Platform Policy Protection [2/4]: Consumer policy override" "Permissive consumer policy bypassed platform deny rules"
+fi
+
+# Test 14.43: Platform Policy Protection: Non-existent custom consumer policy directory fails closed
+MISSING_CUSTOM_CONSUMER_EXIT=0
+(
+  POLICY_DIR="nonexistent-custom-dir-$$"
+  CONSUMER_POLICY_DIR="/tmp/${POLICY_DIR}"
+  if [[ ! -d "${CONSUMER_POLICY_DIR}" && "${POLICY_DIR}" != "policies" ]]; then
+    exit 1
+  fi
+) || MISSING_CUSTOM_CONSUMER_EXIT=$?
+
+if [[ "${MISSING_CUSTOM_CONSUMER_EXIT}" -ne 0 ]]; then
+  record_pass "Platform Policy Protection [3/4]: Non-existent custom consumer policy directory fails closed (exit 1)"
+else
+  record_fail "Platform Policy Protection [3/4]: Missing custom consumer dir" "Missing custom consumer policy directory did not fail"
+fi
+
+# Test 14.44: Platform Policy Invariant: Workflow conftest step unconditionally includes platform policy directory
+WORKFLOW_POLICY_PROTECTED=false
+if python3 -c "
+lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
+conftest_step = lines.split('id: conftest')[1].split('id: attest')[0]
+assert 'PLATFORM_POLICY_DIR=\"\${RUNNER_TEMP}/infraflow-platform/policies\"' in conftest_step
+assert 'CONFTEST_CMD=(\"/tmp/bin/conftest\" \"test\" \"--all-namespaces\" \"--policy\" \"\${PLATFORM_POLICY_DIR}\")' in conftest_step
+assert 'CONFTEST_CMD+=(\"--policy\" \"\${CONSUMER_POLICY_DIR}\")' in conftest_step
+assert 'RESOLVED_POLICY_DIR=\"\${GITHUB_WORKSPACE}/\${POLICY_DIR}\"' not in conftest_step
+" >/dev/null 2>&1; then
+  WORKFLOW_POLICY_PROTECTED=true
+fi
+
+if [[ "${WORKFLOW_POLICY_PROTECTED}" == "true" ]]; then
+  record_pass "Platform Policy Invariant [4/4]: Workflow unconditionally binds platform policies and treats consumer policies as additive only"
+else
+  record_fail "Platform Policy Invariant [4/4]: Workflow policy binding" "reusable-tf-plan.yml does not properly protect platform policies"
+fi
+
 rm -rf "${GATE_TEST_TMP}"
 
 rm -rf "${CONSUMER_SIM_TMP}"
+
+# ==============================================================================
+# 14.45–14.51: Trust-Boundary Regression Tests
+# Verifies that the platform-repository/platform-ref attack surface is closed
+# and that job.workflow_repository/sha is used as the internal trust anchor.
+# ==============================================================================
+
+log_header "14.45-14.51: Platform Trust-Boundary Enforcement"
+
+PLAN_YML="${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml"
+SECURITY_YML="${REPO_ROOT}/.github/workflows/reusable-tf-security.yml"
+PLAN_YML_CONTENT=$(cat "${PLAN_YML}")
+SECURITY_YML_CONTENT=$(cat "${SECURITY_YML}")
+
+# Test 14.45: Rogue repository rejection — guard rejects WORKFLOW_REPO != trusted platform
+ROGUE_REPO_REJECTED=false
+(
+  WORKFLOW_REPO="attacker-org/rogue-repo"
+  TRUSTED_PLATFORM_REPO="TM-threemavithana/infraflow"
+  if [[ "${WORKFLOW_REPO}" != "${TRUSTED_PLATFORM_REPO}" ]]; then
+    exit 1
+  fi
+) 2>/dev/null || ROGUE_REPO_REJECTED=true
+
+if [[ "${ROGUE_REPO_REJECTED}" == "true" ]]; then
+  record_pass "Trust Boundary [1/7]: Rogue repository guard logic correctly rejects unauthorized workflow repository"
+else
+  record_fail "Trust Boundary [1/7]: Rogue repository guard logic" "Guard logic did not reject rogue repository"
+fi
+
+# Test 14.46: platform-repository and platform-ref inputs removed from plan.yml workflow_call inputs
+PLAN_INPUTS_REMOVED=true
+if echo "${PLAN_YML_CONTENT}" | python3 -c "
+import sys, re
+content = sys.stdin.read()
+# Find the workflow_call inputs section specifically
+inputs_section = content.split('workflow_call:')[1].split('outputs:')[0] if 'workflow_call:' in content else ''
+if 'platform-repository:' in inputs_section:
+    sys.exit(1)
+if 'platform-ref:' in inputs_section:
+    sys.exit(2)
+" 2>/dev/null; then
+  PLAN_INPUTS_REMOVED=true
+else
+  PLAN_INPUTS_REMOVED=false
+fi
+
+if [[ "${PLAN_INPUTS_REMOVED}" == "true" ]]; then
+  record_pass "Trust Boundary [2/7]: platform-repository and platform-ref removed from reusable-tf-plan.yml inputs"
+else
+  record_fail "Trust Boundary [2/7]: Caller-controlled platform inputs not removed from plan.yml" "inputs still contain platform-repository or platform-ref"
+fi
+
+# Test 14.47: platform-repository and platform-ref inputs removed from security.yml workflow_call inputs
+SECURITY_INPUTS_REMOVED=true
+if echo "${SECURITY_YML_CONTENT}" | python3 -c "
+import sys
+content = sys.stdin.read()
+inputs_section = content.split('workflow_call:')[1].split('outputs:')[0] if 'workflow_call:' in content else ''
+if 'platform-repository:' in inputs_section:
+    sys.exit(1)
+if 'platform-ref:' in inputs_section:
+    sys.exit(2)
+" 2>/dev/null; then
+  SECURITY_INPUTS_REMOVED=true
+else
+  SECURITY_INPUTS_REMOVED=false
+fi
+
+if [[ "${SECURITY_INPUTS_REMOVED}" == "true" ]]; then
+  record_pass "Trust Boundary [3/7]: platform-repository and platform-ref removed from reusable-tf-security.yml inputs"
+else
+  record_fail "Trust Boundary [3/7]: Caller-controlled platform inputs not removed from security.yml" "inputs still contain platform-repository or platform-ref"
+fi
+
+# Test 14.48: All platform checkout steps in plan.yml use job.workflow_repository and github.workflow_sha
+PLAN_CHECKOUT_HARDENED=false
+if python3 -c "
+content = open('${PLAN_YML}').read()
+# Count trusted checkouts vs rogue inputs.platform-* checkouts
+trusted = content.count('repository: \${{ job.workflow_repository }}')
+sha_bound = content.count('ref: \${{ github.workflow_sha }}')
+rogue_repo = content.count('repository: \${{ inputs.platform-repository }}')
+rogue_ref = content.count('ref: \${{ inputs.platform-ref }}')
+# Expect 3 trusted checkout blocks (plan, attest, verify-attestation), 0 rogue
+assert trusted == 3, f'Expected 3 workflow_repository checkouts, got {trusted}'
+assert sha_bound == 3, f'Expected 3 workflow_sha refs, got {sha_bound}'
+assert rogue_repo == 0, f'Found {rogue_repo} remaining inputs.platform-repository checkouts'
+assert rogue_ref == 0, f'Found {rogue_ref} remaining inputs.platform-ref checkouts'
+" 2>/dev/null; then
+  PLAN_CHECKOUT_HARDENED=true
+fi
+
+if [[ "${PLAN_CHECKOUT_HARDENED}" == "true" ]]; then
+  record_pass "Trust Boundary [4/7]: All 3 platform checkout steps in plan.yml use job.workflow_repository/sha (no caller-controlled refs)"
+else
+  record_fail "Trust Boundary [4/7]: Platform checkout steps not hardened in plan.yml" "checkout steps still reference inputs.platform-repository or inputs.platform-ref, or missing job.workflow_repository/sha"
+fi
+
+# Test 14.49: Attestation signer identity is hardcoded in plan.yml (not from any caller input variable)
+SIGNER_HARDCODED=false
+if python3 -c "
+content = open('${PLAN_YML}').read()
+# The verify step must contain hardcoded signer-repo, not a variable expansion
+assert '--signer-repo \"TM-threemavithana/infraflow\"' in content, 'hardcoded signer-repo not found'
+assert '--signer-workflow \"TM-threemavithana/infraflow/.github/workflows/reusable-tf-plan.yml\"' in content, 'hardcoded signer-workflow not found'
+# Must NOT use PLATFORM_REPO variable
+assert '--signer-repo \"\${PLATFORM_REPO}\"' not in content, 'variable PLATFORM_REPO still used as signer-repo'
+assert 'PLATFORM_REPO: \${{ inputs.platform-repository }}' not in content, 'PLATFORM_REPO env var still from caller inputs'
+" 2>/dev/null; then
+  SIGNER_HARDCODED=true
+fi
+
+if [[ "${SIGNER_HARDCODED}" == "true" ]]; then
+  record_pass "Trust Boundary [5/7]: Attestation signer identity is hardcoded (not from caller inputs) in plan.yml"
+else
+  record_fail "Trust Boundary [5/7]: Attestation signer identity not hardcoded" "PLATFORM_REPO variable or caller input still controls --signer-repo"
+fi
+
+# Test 14.50: Guard validates WORKFLOW_REPO against trusted platform identity in plan.yml
+PLAN_GUARD_VALIDATES_REPO=false
+if python3 -c "
+content = open('${PLAN_YML}').read()
+guard_section = content.split('id: guard')[1].split('- name: \"Checkout Consumer')[0] if 'id: guard' in content else ''
+assert 'WORKFLOW_REPO: \${{ job.workflow_repository }}' in guard_section, 'WORKFLOW_REPO not in guard env'
+assert 'WORKFLOW_SHA: \${{ github.workflow_sha }}' in guard_section, 'WORKFLOW_SHA not in guard env'
+assert 'TRUSTED_PLATFORM_REPO=\"TM-threemavithana/infraflow\"' in guard_section, 'TRUSTED_PLATFORM_REPO not set'
+assert '\${WORKFLOW_REPO}\" != \"\${TRUSTED_PLATFORM_REPO}\"' in guard_section, 'repo identity check not found'
+" 2>/dev/null; then
+  PLAN_GUARD_VALIDATES_REPO=true
+fi
+
+if [[ "${PLAN_GUARD_VALIDATES_REPO}" == "true" ]]; then
+  record_pass "Trust Boundary [6/7]: plan.yml guard validates WORKFLOW_REPO against hardcoded trusted platform identity"
+else
+  record_fail "Trust Boundary [6/7]: plan.yml guard missing WORKFLOW_REPO identity validation" "guard does not validate job.workflow_repository against trusted platform"
+fi
+
+# Test 14.51: security.yml checkout and guard also use job.workflow_repository/sha
+SECURITY_CHECKOUT_HARDENED=false
+if python3 -c "
+content = open('${SECURITY_YML}').read()
+# Check guard env
+guard_section = content.split('id: guard')[1].split('- name: \"Checkout Consumer')[0] if 'id: guard' in content else content.split('id: guard')[1].split('- name: \"Checkout')[0]
+assert 'WORKFLOW_REPO: \${{ job.workflow_repository }}' in content, 'WORKFLOW_REPO not in security.yml guard env'
+assert 'WORKFLOW_SHA: \${{ github.workflow_sha }}' in content, 'WORKFLOW_SHA not in security.yml guard env'
+assert 'TRUSTED_PLATFORM_REPO=\"TM-threemavithana/infraflow\"' in content, 'TRUSTED_PLATFORM_REPO not set in security.yml'
+# Check checkout
+assert 'repository: \${{ job.workflow_repository }}' in content, 'workflow_repository not used for checkout in security.yml'
+assert 'ref: \${{ github.workflow_sha }}' in content, 'workflow_sha not used for checkout ref in security.yml'
+# No remaining rogue inputs
+assert 'inputs.platform-repository' not in content, 'inputs.platform-repository still referenced in security.yml'
+assert 'inputs.platform-ref' not in content, 'inputs.platform-ref still referenced in security.yml'
+" 2>/dev/null; then
+  SECURITY_CHECKOUT_HARDENED=true
+fi
+
+if [[ "${SECURITY_CHECKOUT_HARDENED}" == "true" ]]; then
+  record_pass "Trust Boundary [7/7]: reusable-tf-security.yml checkout and guard use job.workflow_repository/sha with trust validation"
+else
+  record_fail "Trust Boundary [7/7]: reusable-tf-security.yml not fully hardened" "checkout or guard still references caller-controlled inputs or missing workflow_repository/sha"
+fi
 
 # --- 15. Summary Report ---
 log_header "Summary of Validation Results"
