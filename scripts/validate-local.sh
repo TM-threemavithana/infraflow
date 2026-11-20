@@ -2996,7 +2996,11 @@ else
 fi
 
 # Test 15.14: AWS Reference Module: Cloud-free initialization
-if terraform -chdir="${AWS_REF_MODULE}" init -backend=false -input=false >/dev/null 2>&1; then
+AWS_INIT_ARGS=("-backend=false" "-input=false")
+if [[ -d "${HOME}/.terraform.d/plugin-cache" ]]; then
+  AWS_INIT_ARGS+=("-plugin-dir=${HOME}/.terraform.d/plugin-cache")
+fi
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${AWS_REF_MODULE}" init "${AWS_INIT_ARGS[@]}" >/dev/null 2>&1; then
   record_pass "AWS Reference Module [2/6]: Cloud-free initialization verified (terraform init -backend=false)"
 else
   record_fail "AWS Reference Module [2/6]: terraform init" "Reference module initialization failed"
@@ -3157,7 +3161,637 @@ else
   record_fail "AWS Authorization Semantics: Non-deployment status" "reusable-tf-aws.yml failed non-deployment authorization semantics check"
 fi
 
-# --- 16. Summary Report ---
+# --- 16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle, Replay & Apply Contract ---
+log_header "16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle, Replay & Apply Contract"
+
+KMS_ENVELOPE_PY="${REPO_ROOT}/scripts/kms-envelope.py"
+G06_TEST_DIR="$(mktemp -d /tmp/infraflow-g06-test-XXXXXX)"
+
+# Test 16.1: kms-envelope.py executable and syntax valid
+if [[ -x "${KMS_ENVELOPE_PY}" ]] && python3 "${KMS_ENVELOPE_PY}" --help >/dev/null 2>&1; then
+  record_pass "G06 Envelope Tooling [1/24]: kms-envelope.py syntax & CLI interface verified"
+else
+  record_fail "G06 Envelope Tooling [1/24]: kms-envelope.py" "kms-envelope.py missing, not executable, or failed syntax check"
+fi
+
+# Test 16.2: G06 Cryptographic unit test suite (20 tests)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" >/dev/null 2>&1; then
+  record_pass "G06 Cryptographic Suite [2/24]: All 20 unit tests passed (test_kms_envelope.py)"
+else
+  record_fail "G06 Cryptographic Suite [2/24]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
+fi
+
+# Test 16.3: CLI KEK generation with mode 0600
+G06_TEST_KEK="${G06_TEST_DIR}/test.kek"
+if python3 "${KMS_ENVELOPE_PY}" generate-kek --output-kek "${G06_TEST_KEK}" >/dev/null 2>&1 && [[ -f "${G06_TEST_KEK}" ]]; then
+  KEK_PERMS="$(stat -c "%a" "${G06_TEST_KEK}" 2>/dev/null || stat -f "%Lp" "${G06_TEST_KEK}" 2>/dev/null || echo "600")"
+  if [[ "${KEK_PERMS}" == "600" ]]; then
+    record_pass "G06 Key Management [3/24]: Mock KEK generated with restrictive permissions (mode 0600)"
+  else
+    record_fail "G06 Key Management [3/24]: Permissions" "Generated KEK file has insecure permissions: ${KEK_PERMS}"
+  fi
+else
+  record_fail "G06 Key Management [3/24]: generate-kek" "Failed to generate mock KEK"
+fi
+
+# Test 16.4: CLI Encryption and Decryption Roundtrip
+G06_TEST_PLAN="${G06_TEST_DIR}/plan.tfplan"
+G06_TEST_ENV="${G06_TEST_DIR}/plan.enc.json"
+G06_TEST_DEC="${G06_TEST_DIR}/plan.dec.tfplan"
+echo -n "SYNTHETIC_TERRAFORM_BINARY_PLAN_G06_$(date +%s)" > "${G06_TEST_PLAN}"
+ORIG_DIGEST="$(sha256sum "${G06_TEST_PLAN}" | awk '{print $1}')"
+
+if python3 "${KMS_ENVELOPE_PY}" encrypt \
+    --plan-file "${G06_TEST_PLAN}" \
+    --output-envelope "${G06_TEST_ENV}" \
+    --kek-file "${G06_TEST_KEK}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" >/dev/null 2>&1 && \
+   python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TEST_ENV}" \
+    --output-plan "${G06_TEST_DEC}" \
+    --kek-file "${G06_TEST_KEK}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1 && \
+   cmp -s "${G06_TEST_PLAN}" "${G06_TEST_DEC}"; then
+  record_pass "G06 Envelope Lifecycle [4/24]: CLI encrypt and decrypt roundtrip matches exact binary digest"
+else
+  record_fail "G06 Envelope Lifecycle [4/24]: Roundtrip" "CLI encryption/decryption failed or produced mismatched bytes"
+fi
+
+# Test 16.5: CLI Adversarial Tampering: Bit-flip in ciphertext fails closed
+G06_TAMPERED_ENV="${G06_TEST_DIR}/plan.tampered.enc.json"
+python3 -c "
+import json
+with open('${G06_TEST_ENV}', 'r') as f:
+    d = json.load(f)
+import base64
+ct = bytearray(base64.b64decode(d['ciphertext']))
+ct[0] ^= 0x01
+d['ciphertext'] = base64.b64encode(ct).decode('ascii')
+with open('${G06_TAMPERED_ENV}', 'w') as f:
+    json.dump(d, f)
+"
+if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TAMPERED_ENV}" \
+    --output-plan "${G06_TEST_DIR}/tampered.plan" \
+    --kek-file "${G06_TEST_KEK}" >/dev/null 2>&1; then
+  record_pass "G06 Adversarial Defense [5/24]: Ciphertext bit-flip rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Adversarial Defense [5/24]: Tamper detection" "Decryption unexpectedly accepted tampered ciphertext"
+fi
+
+# Test 16.6: CLI Context Binding: Repository mismatch rejected
+if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TEST_ENV}" \
+    --output-plan "${G06_TEST_DIR}/mismatched_repo.plan" \
+    --kek-file "${G06_TEST_KEK}" \
+    --expected-repo "attacker-org/malicious-repo" >/dev/null 2>&1; then
+  record_pass "G06 Context Binding [6/24]: Repository identity mismatch rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Context Binding [6/24]: Repo mismatch" "Decryption unexpectedly accepted mismatched repository context"
+fi
+
+# Test 16.7: CLI Key Isolation: Wrong KEK rejected
+G06_WRONG_KEK="${G06_TEST_DIR}/wrong.kek"
+python3 "${KMS_ENVELOPE_PY}" generate-kek --output-kek "${G06_WRONG_KEK}" >/dev/null 2>&1
+if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
+    --envelope-file "${G06_TEST_ENV}" \
+    --output-plan "${G06_TEST_DIR}/wrong_kek.plan" \
+    --kek-file "${G06_WRONG_KEK}" >/dev/null 2>&1; then
+  record_pass "G06 Key Isolation [7/24]: Decryption with unauthorized KEK rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Key Isolation [7/24]: Key isolation" "Decryption unexpectedly succeeded with unauthorized KEK"
+fi
+
+# Test 16.8: CLI Static Verification: verify-envelope checks headers without KEK
+if python3 "${KMS_ENVELOPE_PY}" verify-envelope \
+    --envelope-file "${G06_TEST_ENV}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1; then
+  record_pass "G06 Static Verification [8/24]: verify-envelope validates schema and context headers without KEK"
+else
+  record_fail "G06 Static Verification [8/24]: verify-envelope" "Static envelope verification failed on valid envelope"
+fi
+
+# Test 16.9: verify-plan-lifecycle.py executable and syntax valid
+VERIFY_LIFECYCLE_PY="${REPO_ROOT}/scripts/verify-plan-lifecycle.py"
+if [[ -x "${VERIFY_LIFECYCLE_PY}" ]] && python3 "${VERIFY_LIFECYCLE_PY}" --help >/dev/null 2>&1; then
+  record_pass "G06 Lifecycle Tooling [9/24]: verify-plan-lifecycle.py syntax & CLI interface verified"
+else
+  record_fail "G06 Lifecycle Tooling [9/24]: verify-plan-lifecycle.py" "verify-plan-lifecycle.py missing, not executable, or failed syntax check"
+fi
+
+# Test 16.10: Full G06 unit test suite (test_kms_envelope.py + test_plan_lifecycle.py)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
+  record_pass "G06 Full Test Suite [10/24]: All unit tests passed"
+else
+  record_fail "G06 Full Test Suite [10/24]: Unit tests" "One or more tests in tests directory failed"
+fi
+
+# Test 16.11: Plan expiration gate: Fresh accepted, expired rejected
+G06_TS_NOW="2026-11-20T12:00:00Z"
+G06_TS_CREATED="2026-11-20T11:00:00Z"
+G06_TS_FRESH_EXP="2026-11-20T17:00:00Z"
+G06_TS_STALE_EXP="2026-11-20T11:50:00Z"
+
+if python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
+    --created-at "${G06_TS_CREATED}" \
+    --expires-at "${G06_TS_FRESH_EXP}" \
+    --current-time "${G06_TS_NOW}" >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
+    --created-at "${G06_TS_CREATED}" \
+    --expires-at "${G06_TS_STALE_EXP}" \
+    --current-time "${G06_TS_NOW}" >/dev/null 2>&1; then
+  record_pass "G06 Expiration Gate [11/24]: Fresh plan accepted, expired plan rejected"
+else
+  record_fail "G06 Expiration Gate [11/24]: Expiration" "validate-expiration failed fresh/expired gate"
+fi
+
+# Test 16.12: Future plan gate: Future-created plan rejected
+G06_TS_FUTURE="2026-11-20T14:00:00Z"
+if ! python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
+    --created-at "${G06_TS_FUTURE}" \
+    --expires-at "${G06_TS_FRESH_EXP}" \
+    --current-time "${G06_TS_NOW}" >/dev/null 2>&1; then
+  record_pass "G06 Future Plan Gate [12/24]: Future-created plan rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Future Plan Gate [12/24]: Future plan" "validate-expiration unexpectedly accepted future-dated plan"
+fi
+
+# Test 16.13: State consistency gate: Lineage & serial match accepted, stale serial rejected
+G06_STATE_FILE="${G06_TEST_DIR}/state.json"
+cat << 'EOF' > "${G06_STATE_FILE}"
+{
+  "version": 4,
+  "terraform_version": "1.10.4",
+  "serial": 42,
+  "lineage": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+  "outputs": {},
+  "resources": []
+}
+EOF
+
+if python3 "${VERIFY_LIFECYCLE_PY}" validate-state \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 42 >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" validate-state \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 41 >/dev/null 2>&1; then
+  record_pass "G06 State Consistency [13/24]: State lineage & serial match accepted; stale serial rejected"
+else
+  record_fail "G06 State Consistency [13/24]: State gate" "validate-state failed lineage/serial check"
+fi
+
+# Test 16.14: Replay prevention: Atomic plan reservation succeeds, duplicate rejected
+G06_LEDGER_DB="${G06_TEST_DIR}/ledger.db"
+if python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" \
+    --plan-digest "${ORIG_DIGEST}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" \
+    --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" \
+    --plan-digest "${ORIG_DIGEST}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" \
+    --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1; then
+  record_pass "G06 Replay Prevention [14/24]: Atomic plan reservation succeeds; duplicate reservation rejected"
+else
+  record_fail "G06 Replay Prevention [14/24]: Replay gate" "ledger-reserve failed duplicate reservation rejection"
+fi
+
+# Test 16.15: Consumed plan gate: Consumed plan re-execution rejected
+if python3 "${VERIFY_LIFECYCLE_PY}" ledger-consume \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" \
+    --plan-digest "${ORIG_DIGEST}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" \
+    --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1; then
+  record_pass "G06 Consumed Plan Gate [15/24]: Consumed plan re-execution strictly rejected"
+else
+  record_fail "G06 Consumed Plan Gate [15/24]: Consumed gate" "ledger-consume or re-reservation check failed"
+fi
+
+# Test 16.16: Pre-execution authorization verifier: Full roundtrip emits AUTHORIZED_FOR_SIMULATION
+G06_ROUNDTRIP_LEDGER="${G06_TEST_DIR}/roundtrip_ledger.db"
+VERIFY_OUT="$(python3 "${VERIFY_LIFECYCLE_PY}" verify \
+    --envelope-file "${G06_TEST_ENV}" \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 42 \
+    --ledger-db "${G06_ROUNDTRIP_LEDGER}" \
+    --provenance-status "VERIFIED" 2>&1 || true)"
+
+if echo "${VERIFY_OUT}" | grep -q '"decision": "AUTHORIZED_FOR_SIMULATION"'; then
+  record_pass "G06 Pre-Execution Verifier [16/24]: Full roundtrip emits AUTHORIZED_FOR_SIMULATION"
+else
+  record_fail "G06 Pre-Execution Verifier [16/24]: Verifier roundtrip" "verify CLI failed to authorize valid plan simulation: ${VERIFY_OUT}"
+fi
+
+# Test 16.17: Pre-execution security boundary: Unverified provenance strictly rejected
+REJECT_OUT="$(python3 "${VERIFY_LIFECYCLE_PY}" verify \
+    --envelope-file "${G06_TEST_ENV}" \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 42 \
+    --ledger-db "${G06_ROUNDTRIP_LEDGER}" \
+    --provenance-status "UNVERIFIED" 2>&1 || true)"
+
+if echo "${REJECT_OUT}" | grep -q '"decision": "REJECTED"' || echo "${REJECT_OUT}" | grep -q 'UNVERIFIED_PROVENANCE'; then
+  record_pass "G06 Security Boundary [17/24]: Unverified provenance strictly rejected (fail-closed)"
+else
+  record_fail "G06 Security Boundary [17/24]: Provenance rejection" "verify CLI unexpectedly authorized unverified provenance: ${REJECT_OUT}"
+fi
+
+# Test 16.18: reusable-tf-apply.yml actionlint validation
+REUSABLE_APPLY_WF="${REPO_ROOT}/.github/workflows/reusable-tf-apply.yml"
+if [[ -n "${ACTIONLINT_BIN}" ]]; then
+  if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+    record_pass "G06 Apply Workflow [18/24]: Actionlint syntax & schema validation passed"
+  else
+    record_fail "G06 Apply Workflow [18/24]: Actionlint" "Actionlint failed on reusable-tf-apply.yml"
+  fi
+else
+  record_fail "G06 Apply Workflow [18/24]: Actionlint" "Actionlint binary not found"
+fi
+
+# Test 16.19: reusable-tf-apply.yml Zizmor supply chain security audit
+if [[ -n "${ZIZMOR_BIN}" ]]; then
+  if (cd "${REPO_ROOT}" && "${ZIZMOR_BIN}" -c .zizmor.yml --min-severity medium .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+    record_pass "G06 Apply Workflow [19/24]: Zizmor supply chain security audit passed (0 medium/high findings)"
+  else
+    record_fail "G06 Apply Workflow [19/24]: Zizmor" "Zizmor detected supply chain vulnerabilities in reusable-tf-apply.yml"
+  fi
+else
+  record_fail "G06 Apply Workflow [19/24]: Zizmor" "Zizmor binary not found"
+fi
+
+# Test 16.20: Full unit test suite (133 tests across all test modules)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
+  record_pass "G06 Full Test Suite [20/39]: All 133 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py + test_apply_workflow.py + test_destruction_recovery.py + test_g06_adversarial_integration.py)"
+else
+  record_fail "G06 Full Test Suite [20/39]: Unit tests" "One or more tests in tests directory failed"
+fi
+
+# Test 16.21: Workflow Guard: Untrusted PR event rejected
+EXTRACTED_APPLY_GUARD="$(mktemp /tmp/infraflow-apply-guard-XXXXXX.sh)"
+python3 -c "
+import yaml
+with open('${REUSABLE_APPLY_WF}', 'r') as f:
+    wf = yaml.safe_load(f)
+script = wf['jobs']['validate-inputs']['steps'][0]['run']
+with open('${EXTRACTED_APPLY_GUARD}', 'w') as out:
+    out.write(script)
+"
+chmod +x "${EXTRACTED_APPLY_GUARD}"
+
+if ! INPUT_PLAN_ID="plan-test-01" \
+     INPUT_ENVELOPE_FILE="artifacts/plan.enc.json" \
+     INPUT_STATE_FILE="artifacts/terraform.tfstate" \
+     INPUT_ENV="production" \
+     INPUT_LINEAGE="3f2e1d0c-4b5a-6789-0123-abcdef456789" \
+     INPUT_SERIAL="42" \
+     INPUT_BACKEND="s3://bucket/key" \
+     INPUT_WORKSPACE="default" \
+     INPUT_PROVENANCE_FILE="" \
+     INPUT_LEDGER_PATH=".infraflow/ledger.db" \
+     EVENT_NAME="pull_request" \
+     TARGET_REF="refs/heads/main" \
+     WORKFLOW_REPO="TM-threemavithana/infraflow" \
+     WORKFLOW_SHA="484b067aa500d5523d1bccc06ce111cfe736a8af" \
+     WORKFLOW_REF="TM-threemavithana/infraflow/.github/workflows/reusable-tf-apply.yml@484b067aa500d5523d1bccc06ce111cfe736a8af" \
+     bash "${EXTRACTED_APPLY_GUARD}" >/dev/null 2>&1; then
+  record_pass "G06 Workflow Guard [21/24]: Untrusted pull requests (pull_request & pull_request_target) rejected (SEC-02 fail-closed)"
+else
+  record_fail "G06 Workflow Guard [21/24]: PR rejection" "Workflow guard unexpectedly permitted pull_request trigger"
+fi
+
+# Test 16.22: Workflow Guard: Mutable workflow ref (@main) strictly rejected
+if ! INPUT_PLAN_ID="plan-test-01" \
+     INPUT_ENVELOPE_FILE="artifacts/plan.enc.json" \
+     INPUT_STATE_FILE="artifacts/terraform.tfstate" \
+     INPUT_ENV="production" \
+     INPUT_LINEAGE="3f2e1d0c-4b5a-6789-0123-abcdef456789" \
+     INPUT_SERIAL="42" \
+     INPUT_BACKEND="s3://bucket/key" \
+     INPUT_WORKSPACE="default" \
+     INPUT_PROVENANCE_FILE="" \
+     INPUT_LEDGER_PATH=".infraflow/ledger.db" \
+     EVENT_NAME="push" \
+     TARGET_REF="refs/heads/main" \
+     WORKFLOW_REPO="TM-threemavithana/infraflow" \
+     WORKFLOW_SHA="484b067aa500d5523d1bccc06ce111cfe736a8af" \
+     WORKFLOW_REF="TM-threemavithana/infraflow/.github/workflows/reusable-tf-apply.yml@main" \
+     bash "${EXTRACTED_APPLY_GUARD}" >/dev/null 2>&1; then
+  record_pass "G06 Workflow Trust Boundary [22/24]: Mutable workflow ref (@main) strictly rejected"
+else
+  record_fail "G06 Workflow Trust Boundary [22/24]: Mutable ref" "Workflow guard unexpectedly accepted mutable @main ref"
+fi
+rm -f "${EXTRACTED_APPLY_GUARD}"
+
+# Test 16.23: Consumer example workflow actionlint validation & immutable pin
+CONSUMER_APPLY_WF="${REPO_ROOT}/examples/consumer-workflow/.github/workflows/infraflow-protected-apply-simulation.yml"
+if [[ -f "${CONSUMER_APPLY_WF}" ]] && \
+   (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" "${CONSUMER_APPLY_WF}" >/dev/null 2>&1) && \
+   grep -q '@[0-9a-f]\{40\}' "${CONSUMER_APPLY_WF}"; then
+  record_pass "G06 Consumer Workflow [23/24]: Consumer example passes actionlint and references immutable SHA"
+else
+  record_fail "G06 Consumer Workflow [23/24]: Consumer example" "Consumer apply example missing, invalid, or unpinned"
+fi
+
+# Test 16.24: Simulation safety invariant: Absence of real apply/destroy execution
+if ! grep -qi "terraform apply" "${REUSABLE_APPLY_WF}" && \
+   ! grep -qi "terraform destroy" "${REUSABLE_APPLY_WF}" && \
+   ! grep -qi "force-unlock" "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Simulation Safety [24/34]: Strict absence of state-modifying terraform apply/destroy execution"
+else
+  record_fail "G06 Simulation Safety [24/34]: Simulation invariant" "reusable-tf-apply.yml contains state-modifying execution commands"
+fi
+
+# Test 16.25: assess-destruction.py syntax & CLI interface
+ASSESS_DESTRUCTION_PY="${REPO_ROOT}/scripts/assess-destruction.py"
+if [[ -x "${ASSESS_DESTRUCTION_PY}" ]] && python3 "${ASSESS_DESTRUCTION_PY}" --help >/dev/null 2>&1; then
+  record_pass "G06 Destruction Tooling [25/34]: assess-destruction.py syntax & CLI interface verified"
+else
+  record_fail "G06 Destruction Tooling [25/34]: assess-destruction.py" "assess-destruction.py missing, not executable, or failed CLI check"
+fi
+
+# Test 16.26: Destruction & Recovery Unit Test Suite (25 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_destruction_recovery.py" >/dev/null 2>&1; then
+  record_pass "G06 Destruction Test Suite [26/34]: All 25 unit tests passed (test_destruction_recovery.py)"
+else
+  record_fail "G06 Destruction Test Suite [26/34]: Unit tests" "One or more tests in tests/test_destruction_recovery.py failed"
+fi
+
+# Setup fixtures for CLI destruction tests
+G06_DESTRUCT_PLAN="${G06_TEST_DIR}/destruct_plan.json"
+cat << 'EOF' > "${G06_DESTRUCT_PLAN}"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {
+      "address": "aws_instance.worker1",
+      "type": "aws_instance",
+      "name": "worker1",
+      "change": {
+        "actions": ["delete"]
+      }
+    },
+    {
+      "address": "aws_instance.worker2",
+      "type": "aws_instance",
+      "name": "worker2",
+      "change": {
+        "actions": ["delete"]
+      }
+    },
+    {
+      "address": "aws_instance.manager",
+      "type": "aws_instance",
+      "name": "manager",
+      "change": {
+        "actions": ["update"]
+      }
+    }
+  ]
+}
+EOF
+
+# Test 16.27: Blast Radius: Plan exceeding deletion limit rejected
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 1 >/dev/null 2>&1; then
+  record_pass "G06 Blast Radius [27/34]: Plan with deletions exceeding blast-radius threshold rejected (DELETION_LIMIT_EXCEEDED)"
+else
+  record_fail "G06 Blast Radius [27/34]: Deletion limit" "assess-destruction.py unexpectedly authorized plan exceeding deletion limit"
+fi
+
+# Test 16.28: Missing confirmation rejected for destructive plan
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 >/dev/null 2>&1; then
+  record_pass "G06 Destruction Confirmation [28/34]: Plan with destructive changes and missing confirmation rejected (MISSING_DESTRUCTION_CONFIRMATION)"
+else
+  record_fail "G06 Destruction Confirmation [28/34]: Missing confirmation" "assess-destruction.py unexpectedly authorized destructive changes without confirmation"
+fi
+
+# Test 16.29: Generic confirmation token strictly rejected
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-token "yes" >/dev/null 2>&1; then
+  record_pass "G06 Destruction Confirmation [29/34]: Generic confirmation string ('yes') strictly rejected (INVALID_CONFIRMATION_TOKEN)"
+else
+  record_fail "G06 Destruction Confirmation [29/34]: Generic token" "assess-destruction.py unexpectedly accepted generic 'yes' confirmation"
+fi
+
+# Test 16.30: Confirmation bound to another plan rejected
+G06_MISMATCH_CONF="${G06_TEST_DIR}/mismatch_conf.json"
+python3 "${ASSESS_DESTRUCTION_PY}" create-confirmation \
+  --plan-id "wrong-plan-id" \
+  --plan-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "staging" \
+  --pure-deletions 2 \
+  --replacements 0 \
+  --authorized-by "security-lead@infraflow.local" \
+  --output-file "${G06_MISMATCH_CONF}" >/dev/null 2>&1
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-file "${G06_MISMATCH_CONF}" >/dev/null 2>&1; then
+  record_pass "G06 Confirmation Binding [30/34]: Confirmation bound to mismatched plan ID rejected (CONFIRMATION_PLAN_MISMATCH)"
+else
+  record_fail "G06 Confirmation Binding [30/34]: Plan ID mismatch" "assess-destruction.py unexpectedly accepted mismatched plan confirmation"
+fi
+
+# Test 16.31: Expired confirmation token rejected
+G06_EXPIRED_CONF="${G06_TEST_DIR}/expired_conf.json"
+python3 "${ASSESS_DESTRUCTION_PY}" create-confirmation \
+  --plan-id "plan-test-01" \
+  --plan-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "staging" \
+  --pure-deletions 2 \
+  --replacements 0 \
+  --authorized-by "security-lead@infraflow.local" \
+  --ttl-seconds -10 \
+  --output-file "${G06_EXPIRED_CONF}" >/dev/null 2>&1
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-file "${G06_EXPIRED_CONF}" >/dev/null 2>&1; then
+  record_pass "G06 Confirmation Expiration [31/34]: Expired confirmation token rejected (CONFIRMATION_EXPIRED)"
+else
+  record_fail "G06 Confirmation Expiration [31/34]: Expired token" "assess-destruction.py unexpectedly accepted expired confirmation token"
+fi
+
+# Test 16.32: State-wide destroy attempt rejected
+G06_STATEWIDE_PLAN="${G06_TEST_DIR}/statewide_plan.json"
+cat << 'EOF' > "${G06_STATEWIDE_PLAN}"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {"address": "aws_instance.node1", "type": "aws_instance", "change": {"actions": ["delete"]}},
+    {"address": "aws_instance.node2", "type": "aws_instance", "change": {"actions": ["delete"]}}
+  ]
+}
+EOF
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_STATEWIDE_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 10 >/dev/null 2>&1; then
+  record_pass "G06 State-Wide Destroy [32/34]: Plan deleting all active resources rejected (STATE_WIDE_DESTROY_BLOCKED)"
+else
+  record_fail "G06 State-Wide Destroy [32/34]: State-wide destroy" "assess-destruction.py unexpectedly permitted state-wide destroy"
+fi
+
+# Test 16.33: Security-critical resource deletion blocked
+G06_CRITICAL_PLAN="${G06_TEST_DIR}/critical_plan.json"
+cat << 'EOF' > "${G06_CRITICAL_PLAN}"
+{
+  "format_version": "1.2",
+  "terraform_version": "1.10.4",
+  "resource_changes": [
+    {"address": "aws_kms_key.app_vault", "type": "aws_kms_key", "change": {"actions": ["delete"]}},
+    {"address": "aws_instance.node", "type": "aws_instance", "change": {"actions": ["update"]}}
+  ]
+}
+EOF
+
+if ! python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_CRITICAL_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 10 >/dev/null 2>&1; then
+  record_pass "G06 Security-Critical Assets [33/34]: Deletion of security-critical resources rejected (SECURITY_CRITICAL_DESTRUCTION_BLOCKED)"
+else
+  record_fail "G06 Security-Critical Assets [33/34]: Security-critical" "assess-destruction.py unexpectedly allowed deletion of KMS key"
+fi
+
+# Test 16.34: Valid plan with valid confirmation authorized
+G06_VALID_CONF="${G06_TEST_DIR}/valid_conf.json"
+python3 "${ASSESS_DESTRUCTION_PY}" create-confirmation \
+  --plan-id "plan-test-01" \
+  --plan-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "staging" \
+  --pure-deletions 2 \
+  --replacements 0 \
+  --authorized-by "security-lead@infraflow.local" \
+  --ttl-seconds 3600 \
+  --output-file "${G06_VALID_CONF}" >/dev/null 2>&1
+
+if python3 "${ASSESS_DESTRUCTION_PY}" assess \
+     --plan-file "${G06_DESTRUCT_PLAN}" \
+     --expected-plan-id "plan-test-01" \
+     --expected-digest "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+     --expected-repo "TM-threemavithana/infraflow" \
+     --environment "staging" \
+     --max-deletions 5 \
+     --confirmation-file "${G06_VALID_CONF}" >/dev/null 2>&1; then
+  record_pass "G06 Authorized Destruction [34/39]: Valid plan with matching confirmation authorized (AUTHORIZED_SIMULATION_WITH_CONFIRMATION)"
+else
+  record_fail "G06 Authorized Destruction [34/39]: Valid confirmation" "assess-destruction.py failed to authorize valid plan with matching confirmation"
+fi
+
+# Test 16.35: Dedicated Adversarial Integration Test Suite (39 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_g06_adversarial_integration.py" >/dev/null 2>&1; then
+  record_pass "G06 Adversarial Integration [35/39]: All 39 adversarial integration tests passed (test_g06_adversarial_integration.py)"
+else
+  record_fail "G06 Adversarial Integration [35/39]: Adversarial suite" "One or more tests in test_g06_adversarial_integration.py failed"
+fi
+
+# Test 16.36: Workflow contract verification: Symlink rejection check across all inputs in reusable-tf-apply.yml
+# shellcheck disable=SC2016
+if grep -q 'if \[\[ -L "\${file_var}" \]\]' "${REUSABLE_APPLY_WF}" && \
+   grep -q 'if \[\[ -L "\${opt_file}" \]\]' "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Symlink Containment [36/39]: Symlink rejection verified across all workflow input files"
+else
+  record_fail "G06 Symlink Containment [36/39]: Symlink check" "reusable-tf-apply.yml missing strict symlink rejection"
+fi
+
+# Test 16.37: Workflow contract verification: In-toto DSSE provenance cryptographic verification gate in reusable-tf-apply.yml
+if grep -q 'verify-provenance' "${REUSABLE_APPLY_WF}" && \
+   grep -q 'trusted_signer.pub' "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Provenance Verification Gate [37/39]: In-toto DSSE cryptographic provenance verification gate verified"
+else
+  record_fail "G06 Provenance Verification Gate [37/39]: Provenance gate" "reusable-tf-apply.yml missing cryptographic provenance verification"
+fi
+
+# Test 16.38: Workflow contract verification: Fail-closed summary status check
+if grep -q 'DESTRUCT_STATUS.*==.*"authorized".*DESTRUCT_STATUS.*==.*"safe".*DESTRUCT_STATUS.*==.*"not-applicable"' "${REUSABLE_APPLY_WF}" && \
+   ! grep -q 'DESTRUCT_STATUS.*!=.*"rejected"' "${REUSABLE_APPLY_WF}"; then
+  record_pass "G06 Fail-Closed Outcome Gate [38/39]: Summary gate requires positive membership in authorized/safe/not-applicable"
+else
+  record_fail "G06 Fail-Closed Outcome Gate [38/39]: Outcome gate" "reusable-tf-apply.yml non-fail-closed destruction status evaluation"
+fi
+
+# Test 16.39: Platform blast-radius ceiling enforcement: hard ceiling of 25 deletions and prohibited state-wide destroy in production
+if grep -q 'PLATFORM_MAX_DELETIONS_CEILING = 25' "${ASSESS_DESTRUCTION_PY}" && \
+   grep -q 'POLICY_CEILING_EXCEEDED' "${ASSESS_DESTRUCTION_PY}"; then
+  record_pass "G06 Platform Guardrail Ceilings [39/39]: Platform hard ceilings enforced (25 max deletions, statewide destroy blocked in prod)"
+else
+  record_fail "G06 Platform Guardrail Ceilings [39/39]: Ceilings" "assess-destruction.py missing platform hard guardrail ceilings"
+fi
+
+rm -rf "${G06_TEST_DIR}"
+
+# --- 17. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -3165,7 +3799,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

@@ -1,0 +1,59 @@
+name: "InfraFlow Protected Apply Simulation (Consumer Example)"
+
+# ==============================================================================
+# OFFLINE SIMULATION EXAMPLE ONLY
+# ==============================================================================
+# Demonstrates how an external consumer repository invokes the InfraFlow
+# protected apply reusable workflow in simulation-only mode.
+#
+# INVARIANTS:
+# 1. Zero Cloud Cost ($0.00) & Zero Cloud Credentials.
+# 2. No state-modifying actions (terraform apply / destroy) are executed.
+# 3. Pinned to immutable platform commit SHA to defend against toolchain tampering.
+# 4. Enforces strict fail-closed authorization: validates encrypted envelope,
+#    provenance authenticity, plan TTL, state consistency, and replay ledger.
+# ==============================================================================
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "artifacts/**"
+      - ".github/workflows/infraflow-protected-apply-simulation.yml"
+  workflow_dispatch:
+    inputs:
+      plan-id:
+        description: "Plan identifier to verify and authorize for simulation"
+        required: true
+        default: "plan-consumer-demo-01"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  simulate-apply:
+    name: "InfraFlow Protected Apply Simulation"
+    # Pinned to immutable platform commit SHA
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-apply.yml@484b067aa500d5523d1bccc06ce111cfe736a8af
+    permissions:
+      contents: read
+    with:
+      plan-id: ${{ inputs.plan-id || 'plan-consumer-demo-01' }}
+      plan-envelope-file: "artifacts/plan.enc.json"
+      state-file: "artifacts/terraform.tfstate"
+      environment: "production"
+      expected-lineage: "3f2e1d0c-4b5a-6789-0123-abcdef456789"
+      expected-serial: 42
+      expected-backend: "s3://infraflow-tfstate-bucket/env/production/tf.state"
+      expected-workspace: "default"
+      provenance-file: "artifacts/plan-provenance.json"
+      require-production-provenance: true
+      allow-initial-state: false
+      max-ttl-seconds: 43200
+      clock-skew-seconds: 60

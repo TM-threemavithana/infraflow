@@ -16,6 +16,12 @@ actionlint
 __pycache__/
 *.py[cod]
 
+# Cryptographic test keys and plan envelopes
+*.kek
+*.key
+*.enc
+*.enc.json
+
 # OS metadata
 .DS_Store
 Thumbs.db
