@@ -165,3 +165,38 @@ test_traversal_backend_prefix_rejected if {
 	some r in res
 	contains(r, "must not contain directory traversal '..'")
 }
+
+test_empty_backend_prefix_rejected if {
+	backend := {
+		"bucket": "valid-state-bucket",
+		"prefix": "",
+	}
+	res := storage_backend.deny with input as {"backend": {"gcs": backend}}
+	count(res) > 0
+	some r in res
+	contains(r, "must not be empty; must specify a segregated state path")
+}
+
+test_overprivileged_owner_role_rejected if {
+	bad_member := {"member": "serviceAccount:deployer@my-proj.iam.gserviceaccount.com", "role": "roles/owner"}
+	res := storage_backend.deny with input as {"resource": {"google_storage_bucket_iam_member": {"bad_role": [bad_member]}}}
+	count(res) > 0
+	some r in res
+	contains(r, "assigns overprivileged primitive role 'roles/owner'")
+}
+
+test_public_default_object_acl_rejected if {
+	bad_acl := {"role_entity": ["READER:allUsers"]}
+	res := storage_backend.deny with input as {"resource": {"google_storage_default_object_acl": {"public_def": [bad_acl]}}}
+	count(res) > 0
+	some r in res
+	contains(r, "grants public access to 'allUsers'")
+}
+
+test_public_bucket_access_control_rejected if {
+	bad_ac := {"entity": "allAuthenticatedUsers", "role": "READER"}
+	res := storage_backend.deny with input as {"resource": {"google_storage_bucket_access_control": {"public_ac": [bad_ac]}}}
+	count(res) > 0
+	some r in res
+	contains(r, "grants public access to 'allAuthenticatedUsers'")
+}

@@ -142,6 +142,7 @@ jobs:
           INPUT_BUCKET: ${{ inputs.backend-bucket }}
           INPUT_PREFIX: ${{ inputs.backend-prefix }}
           INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
           ENABLE_GCP_AUTH: ${{ inputs.enable-gcp-auth }}
           ENABLE_POLICY_EVAL: ${{ inputs.enable-policy-evaluation }}
           ENABLE_TRIVY: ${{ inputs.enable-trivy }}
@@ -168,7 +169,7 @@ jobs:
             exit 1
           fi
 
-          # 2. Strict SEC-02 & G07.2 Scope: Live GCP authentication is strictly disabled in Milestone G07.2
+          # 2. Strict SEC-02 & G07.2 Scope: Live GCP authentication is strictly disabled in Milestone G07.2/G07.3
           if [[ "${ENABLE_GCP_AUTH}" == "true" ]]; then
             echo "::error::Security Violation: Live GCP authentication is strictly disabled in Milestone G07.2 (cloud-free simulation only). Set enable-gcp-auth: false."
             exit 1
@@ -281,7 +282,29 @@ jobs:
             fi
           fi
 
-          # 13. Security Severity Threshold Validation
+          # 13. Policy Directory Validation (if provided)
+          if [[ -n "${INPUT_POLICY_DIR}" ]]; then
+            if [[ "${INPUT_POLICY_DIR}" =~ ^/ ]] || [[ "${INPUT_POLICY_DIR}" =~ ^~ ]] || [[ "${INPUT_POLICY_DIR}" =~ \.\. ]]; then
+              echo "::error::Security Violation: policy-directory must be a safe relative path: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_POLICY_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: policy-directory contains forbidden characters: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+          fi
+
+          # 14. Mandatory Security Gates: Rejection of bypass attempts
+          if [[ "${ENABLE_POLICY_EVAL}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory policy evaluation (enable-policy-evaluation: false) is prohibited."
+            exit 1
+          fi
+          if [[ "${ENABLE_TRIVY}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Trivy IaC scanning (enable-trivy: false) is prohibited."
+            exit 1
+          fi
+
+          # 15. Security Severity Threshold Validation
           if [[ "${INPUT_SEVERITY}" != "HIGH,CRITICAL" && "${INPUT_SEVERITY}" != "CRITICAL" ]]; then
             echo "::error::Security Violation: Severity threshold '${INPUT_SEVERITY}' is unauthorized. Must strictly enforce 'HIGH,CRITICAL' or 'CRITICAL'."
             exit 1
@@ -340,6 +363,59 @@ jobs:
           echo "Isolated platform toolchain to: ${PLATFORM_DIR}"
           echo "::endgroup::"
 
+      - name: "Verify Workspace Containment & Reject Symlinks"
+        id: verify_workspace
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+          POLICY_DIR: ${{ inputs.policy-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Workspace Containment & Symlink Verification"
+
+          TARGET_PATH="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+          if [[ ! -d "${TARGET_PATH}" ]]; then
+            echo "::error::Configuration Error: Working directory '${INPUT_DIR}' does not exist inside workspace."
+            exit 1
+          fi
+
+          if [[ -L "${TARGET_PATH}" ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' is a symbolic link. Symlinks are strictly prohibited."
+            exit 1
+          fi
+
+          CANONICAL_TARGET="$(cd "${TARGET_PATH}" && pwd -P)"
+          CANONICAL_WORKSPACE="$(cd "${GITHUB_WORKSPACE}" && pwd -P)"
+          if [[ "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}" && "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}/"* ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' resolves outside GITHUB_WORKSPACE."
+            exit 1
+          fi
+
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            VAR_FILE_PATH="${TARGET_PATH}/${INPUT_VAR_FILE}"
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              VAR_FILE_PATH="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            if [[ -L "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Security Violation: var-file '${INPUT_VAR_FILE}' is a symbolic link. Symlinks are strictly prohibited."
+              exit 1
+            fi
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Configuration Error: Specified var-file '${INPUT_VAR_FILE}' was not found in '${TARGET_PATH}' or workspace root."
+              exit 1
+            fi
+          fi
+
+          if [[ -n "${POLICY_DIR}" && -d "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+            if [[ -L "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+              echo "::error::Security Violation: policy-directory '${POLICY_DIR}' is a symbolic link."
+              exit 1
+            fi
+          fi
+
+          echo "Working directory '${INPUT_DIR}' is verified and safely contained within workspace."
+          echo "::endgroup::"
+
       - name: "Setup Offline Tooling (Terraform, Conftest, Trivy)"
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
@@ -352,14 +428,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Installing Conftest Policy Engine"
-          mkdir -p "${RUNNER_TEMP}/bin"
-          ARCH=$(uname -m)
-          [[ "${ARCH}" == "x86_64" ]] && ARCH="x86_64" || ARCH="arm64"
-          curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_${ARCH}.tar.gz"
-          tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
-          chmod +x "${RUNNER_TEMP}/bin/conftest"
-          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
-          echo "Conftest installed successfully."
+          if command -v conftest >/dev/null 2>&1; then
+            echo "Conftest is already installed: $(conftest --version | head -n1)"
+          else
+            mkdir -p "${RUNNER_TEMP}/bin"
+            ARCH=$(uname -m)
+            [[ "${ARCH}" == "x86_64" ]] && ARCH="x86_64" || ARCH="arm64"
+            curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_${ARCH}.tar.gz"
+            tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
+            chmod +x "${RUNNER_TEMP}/bin/conftest"
+            echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+            echo "Conftest installed successfully."
+          fi
           echo "::endgroup::"
 
       - name: "Install Trivy"
@@ -369,14 +449,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Installing Trivy Scanner"
-          mkdir -p "${RUNNER_TEMP}/bin"
-          ARCH=$(uname -m)
-          [[ "${ARCH}" == "x86_64" ]] && ARCH="64bit" || ARCH="ARM64"
-          curl -sSL -o "${RUNNER_TEMP}/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"
-          tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C "${RUNNER_TEMP}/bin" trivy
-          chmod +x "${RUNNER_TEMP}/bin/trivy"
-          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
-          echo "Trivy installed successfully."
+          if command -v trivy >/dev/null 2>&1; then
+            echo "Trivy is already installed: $(trivy --version | head -n1)"
+          else
+            mkdir -p "${RUNNER_TEMP}/bin"
+            ARCH=$(uname -m)
+            [[ "${ARCH}" == "x86_64" ]] && ARCH="64bit" || ARCH="ARM64"
+            curl -sSL -o "${RUNNER_TEMP}/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"
+            tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C "${RUNNER_TEMP}/bin" trivy
+            chmod +x "${RUNNER_TEMP}/bin/trivy"
+            echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+            echo "Trivy installed successfully."
+          fi
           echo "::endgroup::"
 
       - name: "Execute Cloud-Free Plan & Speculative Analysis"
@@ -393,6 +477,7 @@ jobs:
           FAIL_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
         run: |
           set -euo pipefail
+          trap 'rm -f tfplan tfplan.json' EXIT INT TERM
           echo "=============================================================================="
           echo ">>> Executing Cloud-Free Speculative Plan for GCP Module"
           echo "=============================================================================="

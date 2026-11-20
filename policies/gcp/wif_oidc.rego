@@ -16,21 +16,48 @@ get_providers contains p if {
 	p := input.resource.google_iam_workload_identity_pool_provider[name][_]
 }
 
+# Helper: Check if an object has an oidc block (as object or array)
+has_oidc(p) if {
+	is_object(object.get(p, "oidc", null))
+}
+
+has_oidc(p) if {
+	is_array(object.get(p, "oidc", null))
+	count(p.oidc) > 0
+}
+
 get_providers contains p if {
 	is_array(input.provider)
 	some p in input.provider
-	is_object(p.oidc)
+	has_oidc(p)
 }
 
 get_providers contains p if {
 	is_object(input.provider)
-	is_object(input.provider.oidc)
+	has_oidc(input.provider)
 	p := input.provider
 }
 
 get_providers contains p if {
 	is_object(input.workload_identity_pool_provider)
 	p := input.workload_identity_pool_provider
+}
+
+# Helper: Extract oidc block regardless of whether represented as object or array
+get_oidc(p) := o if {
+	is_object(object.get(p, "oidc", null))
+	o := p.oidc
+}
+
+get_oidc(p) := o if {
+	is_array(object.get(p, "oidc", null))
+	count(p.oidc) > 0
+	o := p.oidc[0]
+}
+
+get_oidc(p) := {} if {
+	not is_object(object.get(p, "oidc", null))
+	not is_array(object.get(p, "oidc", null))
 }
 
 # Helper: Extract all service account IAM bindings/members
@@ -59,7 +86,8 @@ get_sa_bindings contains b if {
 # ------------------------------------------------------------------------------
 deny contains msg if {
 	some p in get_providers
-	issuer := object.get(object.get(p, "oidc", {}), "issuer_uri", "")
+	oidc := get_oidc(p)
+	issuer := object.get(oidc, "issuer_uri", "")
 	issuer != "https://token.actions.githubusercontent.com"
 	msg := sprintf("Workload Identity Provider issuer_uri '%v' is invalid; must strictly be 'https://token.actions.githubusercontent.com'", [issuer])
 }
@@ -69,7 +97,8 @@ deny contains msg if {
 # ------------------------------------------------------------------------------
 deny contains msg if {
 	some p in get_providers
-	audiences := object.get(object.get(p, "oidc", {}), "allowed_audiences", [])
+	oidc := get_oidc(p)
+	audiences := object.get(oidc, "allowed_audiences", [])
 	some aud in audiences
 	aud == "*"
 	msg := "Workload Identity Provider allows wildcard '*' audience; must specify explicit provider resource URI"
@@ -77,7 +106,8 @@ deny contains msg if {
 
 deny contains msg if {
 	some p in get_providers
-	audiences := object.get(object.get(p, "oidc", {}), "allowed_audiences", [])
+	oidc := get_oidc(p)
+	audiences := object.get(oidc, "allowed_audiences", [])
 	some aud in audiences
 	aud != ""
 	aud != "*"
@@ -121,12 +151,20 @@ deny contains msg if {
 # ------------------------------------------------------------------------------
 # RULE 5: Reject Wildcard Repository Access in Attribute Condition
 # ------------------------------------------------------------------------------
+has_repo_condition(cond) if {
+	contains(cond, "assertion.repository")
+}
+
+has_repo_condition(cond) if {
+	contains(cond, "assertion.repository_id")
+}
+
 deny contains msg if {
 	some p in get_providers
 	cond := object.get(p, "attribute_condition", "")
 	cond != ""
-	not contains(cond, "assertion.repository")
-	msg := "Workload Identity Provider attribute_condition must explicitly filter on 'assertion.repository'"
+	not has_repo_condition(cond)
+	msg := "Workload Identity Provider attribute_condition must explicitly filter on 'assertion.repository' or immutable 'assertion.repository_id'"
 }
 
 deny contains msg if {
@@ -134,6 +172,13 @@ deny contains msg if {
 	cond := object.get(p, "attribute_condition", "")
 	regex.match(`assertion\.repository\s*==\s*['"]\*['"]`, cond)
 	msg := "Workload Identity Provider attribute_condition allows wildcard '*' repository access"
+}
+
+deny contains msg if {
+	some p in get_providers
+	cond := object.get(p, "attribute_condition", "")
+	regex.match(`assertion\.repository_id\s*==\s*['"]\*['"]`, cond)
+	msg := "Workload Identity Provider attribute_condition allows wildcard '*' repository_id access"
 }
 
 # ------------------------------------------------------------------------------
@@ -146,6 +191,13 @@ deny contains msg if {
 	not contains(cond, "!= 'pull_request'")
 	not contains(cond, "!= \"pull_request\"")
 	msg := "Workload Identity Provider attribute_condition authorizes untrusted pull_request events; cloud authentication must be restricted to protected branches or environments"
+}
+
+deny contains msg if {
+	some p in get_providers
+	cond := object.get(p, "attribute_condition", "")
+	contains(cond, "refs/pull/")
+	msg := "Workload Identity Provider attribute_condition authorizes pull request refs ('refs/pull/'); must be restricted to protected branches or environments"
 }
 
 # ------------------------------------------------------------------------------
@@ -190,11 +242,7 @@ deny contains msg if {
 # RULE 9: Enforce Valid Member Format for WorkloadIdentityUser
 # ------------------------------------------------------------------------------
 is_valid_wif_member(m) if {
-	startswith(m, "principalSet://iam.googleapis.com/")
-}
-
-is_valid_wif_member(m) if {
-	startswith(m, "principal://iam.googleapis.com/")
+	regex.match(`^principal(Set)?://iam\.googleapis\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[a-zA-Z0-9_-]+/`, m)
 }
 
 deny contains msg if {
@@ -203,7 +251,7 @@ deny contains msg if {
 	member := object.get(b, "member", "")
 	member != ""
 	not is_valid_wif_member(member)
-	msg := sprintf("WorkloadIdentityUser member '%v' is invalid; must begin with 'principalSet://iam.googleapis.com/' or 'principal://iam.googleapis.com/'", [member])
+	msg := sprintf("WorkloadIdentityUser member '%v' is invalid; must target canonical global workloadIdentityPools resource", [member])
 }
 
 deny contains msg if {
@@ -211,7 +259,7 @@ deny contains msg if {
 	b.role == "roles/iam.workloadIdentityUser"
 	some member in object.get(b, "members", [])
 	not is_valid_wif_member(member)
-	msg := sprintf("WorkloadIdentityUser member '%v' is invalid; must begin with 'principalSet://iam.googleapis.com/' or 'principal://iam.googleapis.com/'", [member])
+	msg := sprintf("WorkloadIdentityUser member '%v' is invalid; must target canonical global workloadIdentityPools resource", [member])
 }
 
 # ------------------------------------------------------------------------------
@@ -221,7 +269,7 @@ deny contains msg if {
 	some b in get_sa_bindings
 	b.role == "roles/iam.workloadIdentityUser"
 	member := object.get(b, "member", "")
-	regex.match(`/attribute\.repository/[*]`, member)
+	regex.match(`/attribute\.repository(_id)?/[*]`, member)
 	msg := sprintf("WorkloadIdentityUser member '%v' allows wildcard repository access", [member])
 }
 
@@ -229,7 +277,7 @@ deny contains msg if {
 	some b in get_sa_bindings
 	b.role == "roles/iam.workloadIdentityUser"
 	some member in object.get(b, "members", [])
-	regex.match(`/attribute\.repository/[*]`, member)
+	regex.match(`/attribute\.repository(_id)?/[*]`, member)
 	msg := sprintf("WorkloadIdentityUser member '%v' allows wildcard repository access", [member])
 }
 
@@ -237,7 +285,18 @@ deny contains msg if {
 	some b in get_sa_bindings
 	b.role == "roles/iam.workloadIdentityUser"
 	member := object.get(b, "member", "")
-	contains(member, "/attribute.repository_owner/")
+	contains(member, "/attribute.repository_owner")
 	not contains(member, "/attribute.repository/")
+	not contains(member, "/attribute.repository_id/")
+	msg := sprintf("WorkloadIdentityUser member '%v' allows organization-wide repository_owner access without exact repository binding", [member])
+}
+
+deny contains msg if {
+	some b in get_sa_bindings
+	b.role == "roles/iam.workloadIdentityUser"
+	some member in object.get(b, "members", [])
+	contains(member, "/attribute.repository_owner")
+	not contains(member, "/attribute.repository/")
+	not contains(member, "/attribute.repository_id/")
 	msg := sprintf("WorkloadIdentityUser member '%v' allows organization-wide repository_owner access without exact repository binding", [member])
 }

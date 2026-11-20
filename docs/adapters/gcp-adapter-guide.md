@@ -1,7 +1,7 @@
 # InfraFlow — Google Cloud Adapter & Workload Identity Guide
-**Milestone:** G07.2 — Google Cloud Adapter & Workload Identity Foundation  
+**Milestone:** G07.3 — GCP Adapter Security Hardening & Offline Validation  
 **Classification:** Enterprise Security Architecture & Implementation Guide  
-**Status:** Implemented & Verified (Cloud-Free Simulation Foundation)
+**Status:** Hardened, Adversarially Tested & Verified (Cloud-Free Simulation Foundation)
 
 ---
 
@@ -118,19 +118,19 @@ The reference module located at `examples/gcp-reference-module/` demonstrates ho
 
 ## 6. Verification and Local Testing
 
-Execute the complete GCP validation suite locally:
+Execute the complete GCP validation and adversarial testing suite locally:
 
 ```bash
 # 1. Actionlint workflow syntax validation
-actionlint -shellcheck shellcheck .github/workflows/reusable-tf-gcp.yml
+actionlint .github/workflows/reusable-tf-gcp.yml
 
 # 2. Zizmor supply chain security audit
 zizmor -c .zizmor.yml --min-severity medium .github/workflows/reusable-tf-gcp.yml
 
-# 3. OPA / Conftest Rego unit tests
+# 3. OPA / Conftest Rego unit tests (128 tests)
 conftest verify --policy policies policies
 
-# 4. Reference module testing
+# 4. Reference module testing (mock provider)
 cd examples/gcp-reference-module
 terraform fmt -check
 terraform init -backend=false
@@ -138,9 +138,15 @@ terraform validate
 terraform test
 cd ../..
 
-# 5. Dedicated GCP Python test suite
+# 5. Dedicated GCP Python test suite (34 unit tests)
 python3 -m unittest tests/test_gcp_adapter.py
 
-# 6. Full local validation harness
+# 6. Dedicated GCP Adversarial Integration Suite (30 vectors)
+python3 -m unittest tests/test_gcp_adversarial_integration.py
+
+# 7. Complete Python unit test discovery (197 tests)
+python3 -m unittest discover tests
+
+# 8. Full local validation harness (276 checks)
 ./scripts/validate-local.sh
 ```

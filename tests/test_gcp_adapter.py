@@ -273,6 +273,31 @@ class TestGcpWorkflowGuardExecution(unittest.TestCase):
         })
         self.assertNotEqual(rc, 0)
 
+    def test_policy_directory_traversal_rejected(self):
+        rc, out = self.run_guard({"INPUT_POLICY_DIR": "policies/../../escaped"})
+        self.assertNotEqual(rc, 0)
+        self.assertIn("policy-directory", out)
+
+    def test_policy_directory_absolute_path_rejected(self):
+        rc, out = self.run_guard({"INPUT_POLICY_DIR": "/etc/policies"})
+        self.assertNotEqual(rc, 0)
+        self.assertIn("policy-directory", out)
+
+    def test_policy_evaluation_bypass_rejected(self):
+        rc, out = self.run_guard({"ENABLE_POLICY_EVAL": "false"})
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Disabling mandatory policy evaluation", out)
+
+    def test_trivy_scan_bypass_rejected(self):
+        rc, out = self.run_guard({"ENABLE_TRIVY": "false"})
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Disabling mandatory Trivy IaC scanning", out)
+
+    def test_unauthorized_severity_threshold_rejected(self):
+        rc, out = self.run_guard({"INPUT_SEVERITY": "LOW,MEDIUM"})
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Severity threshold", out)
+
 
 class TestGcpWorkflowSummaryAggregation(unittest.TestCase):
     """Verifies output aggregation and failure propagation from reusable-tf-gcp.yml."""

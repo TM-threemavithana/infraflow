@@ -243,13 +243,29 @@ Milestone G07.2 implements the foundation of the Google Cloud Platform (GCP) ada
 
 ---
 
-## 17. Quality Gate Definitions
+## 17. Milestone G07.3 — Acceptance Criteria (GCP Adapter Security Hardening & Offline Validation)
+
+Milestone G07.3 executes comprehensive security hardening, OPA discrepancy reconciliation, adversarial integration testing, and full offline regression verification of the Google Cloud Platform (GCP) adapter ($0.00 cloud spend, zero credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-09** | OPA Policy Test Count Reconciliation & Expansion | Reconcile the G06-to-G07.2 policy count discrepancy (unifying 89 baseline + 42 GCP tests = 128 total Rego unit tests) across `policies/gcp/wif_oidc_test.rego` (19 tests) and `policies/gcp/storage_backend_test.rego` (20 tests). | Automated conftest verification (`conftest verify`) — 128/128 tests passed | **PASS (G07.3 Implemented)** |
+| **AC-G07-10** | Workload Identity Federation (WIF) Policy Hardening | Harden WIF Rego policy ([`policies/gcp/wif_oidc.rego`](file:///home/tharuka/projects/infraflow/policies/gcp/wif_oidc.rego)) to inspect `members` arrays for org-wide owner bypasses (Rule 10), reject pull request ref conditions (Rule 6), enforce global pool format (Rule 9), and support immutable repository IDs. | Automated unit tests and adversarial vectors 6–11 | **PASS (G07.3 Implemented)** |
+| **AC-G07-11** | GCS State Backend Security Hardening | Harden GCS storage policies ([`policies/gcp/storage_backend.rego`](file:///home/tharuka/projects/infraflow/policies/gcp/storage_backend.rego)) enforcing non-empty `prefix` (Rule 11), rejecting primitive IAM roles (`roles/owner`, `roles/editor`, Rule 8), and blocking public ACL and IAM bindings (`allUsers`, `allAuthenticatedUsers`). | Automated unit tests and adversarial vectors 18–21, 30 | **PASS (G07.3 Implemented)** |
+| **AC-G07-12** | Reusable Workflow Security Hardening | Harden `.github/workflows/reusable-tf-gcp.yml` with `policy-directory` input sanitization, fatal rejection of mandatory security gate bypasses (`enable-policy-evaluation: false` / `enable-trivy: false`), workspace symlink containment (`verify_workspace`), and unencrypted plan cleanup traps (`trap 'rm -f tfplan tfplan.json'`). | `actionlint`, `zizmor` (0 findings), and adversarial vectors 23, 27, 29 | **PASS (G07.3 Implemented)** |
+| **AC-G07-13** | Dedicated 30-Vector Adversarial Integration Suite | Author comprehensive 30-vector adversarial suite ([`tests/test_gcp_adversarial_integration.py`](file:///home/tharuka/projects/infraflow/tests/test_gcp_adversarial_integration.py)) covering identity substitution, CEL condition manipulation, audience wildcards, storage tampering, symlink escapes, and failure propagation. | `python3 -m unittest tests/test_gcp_adversarial_integration.py` (30/30 passed) | **PASS (G07.3 Implemented)** |
+| **AC-G07-14** | Offline Local Regression Harness Expansion (276 Checks) | Expand Section 17 of `scripts/validate-local.sh` to 26 dedicated GCP checks (increasing total platform checks from 272 to 276). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G06. | `scripts/validate-local.sh` execution (276/276 PASS) | **PASS (G07.3 Implemented)** |
+| **AC-G07-15** | Adversarial Evidence & Hardening Documentation | Produce comprehensive security audit and adversarial report ([`docs/evidence/G07/G07-GCP-SECURITY-HARDENING-REPORT.md`](file:///home/tharuka/projects/infraflow/docs/evidence/G07/G07-GCP-SECURITY-HARDENING-REPORT.md)) detailing threat model analysis, vulnerability remediation, and test matrices. | Documentation audit and link verification | **PASS (G07.3 Implemented)** |
+
+---
+
+## 18. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G07:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (272/272 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (276/276 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.

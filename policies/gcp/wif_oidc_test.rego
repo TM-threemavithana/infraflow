@@ -150,7 +150,7 @@ test_invalid_member_format_rejected if {
 	res := wif_oidc.deny with input as {"binding": bad_b}
 	count(res) > 0
 	some r in res
-	contains(r, "must begin with 'principalSet://iam.googleapis.com/'")
+	contains(r, "must target canonical global workloadIdentityPools resource")
 }
 
 test_wildcard_repo_in_member_rejected if {
@@ -171,4 +171,51 @@ test_org_wide_repo_owner_in_member_rejected if {
 	count(res) > 0
 	some r in res
 	contains(r, "allows organization-wide repository_owner access")
+}
+
+test_org_wide_repo_owner_in_members_array_rejected if {
+	bad_b := {
+		"role": "roles/iam.workloadIdentityUser",
+		"members": [
+			"principalSet://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/p/attribute.repository/my-org/my-repo",
+			"principalSet://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/p/attribute.repository_owner/evil-org",
+		],
+	}
+	res := wif_oidc.deny with input as {"binding": bad_b}
+	count(res) > 0
+	some r in res
+	contains(r, "allows organization-wide repository_owner access")
+}
+
+test_immutable_repo_id_condition_accepted if {
+	imm_p := object.union(valid_provider, {
+		"attribute_mapping": {
+			"google.subject": "assertion.sub",
+			"attribute.repository": "assertion.repository",
+			"attribute.repository_id": "assertion.repository_id",
+		},
+		"attribute_condition": "assertion.repository_id == '12345678' && assertion.ref == 'refs/heads/main'",
+	})
+	res := wif_oidc.deny with input as {"provider": imm_p}
+	count(res) == 0
+}
+
+test_pull_request_ref_condition_rejected if {
+	bad_p := object.union(valid_provider, {
+		"attribute_condition": "assertion.repository == 'my-org/repo' && assertion.ref == 'refs/pull/1/merge'",
+	})
+	res := wif_oidc.deny with input as {"provider": bad_p}
+	count(res) > 0
+	some r in res
+	contains(r, "authorizes pull request refs")
+}
+
+test_malformed_pool_in_member_rejected if {
+	bad_b := object.union(valid_binding, {
+		"member": "principalSet://iam.googleapis.com/untrusted/path",
+	})
+	res := wif_oidc.deny with input as {"binding": bad_b}
+	count(res) > 0
+	some r in res
+	contains(r, "must target canonical global workloadIdentityPools resource")
 }

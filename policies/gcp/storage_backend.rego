@@ -167,9 +167,32 @@ deny contains msg if {
 	msg := sprintf("GCS ACL resource '%v' specifies disallowed public predefined_acl '%v'", [name, predefined])
 }
 
+deny contains msg if {
+	some name
+	acl_res := input.resource.google_storage_default_object_acl[name][_]
+	some role_entity in object.get(acl_res, "role_entity", [])
+	some public_ent in ["allUsers", "allAuthenticatedUsers"]
+	contains(role_entity, public_ent)
+	msg := sprintf("GCS default object ACL resource '%v' grants public access to '%v'", [name, public_ent])
+}
+
+deny contains msg if {
+	some name
+	ac_res := input.resource.google_storage_bucket_access_control[name][_]
+	entity := object.get(ac_res, "entity", "")
+	some public_ent in ["allUsers", "allAuthenticatedUsers"]
+	contains(entity, public_ent)
+	msg := sprintf("GCS bucket access control resource '%v' grants public access to '%v'", [name, public_ent])
+}
+
 # ------------------------------------------------------------------------------
-# RULE 7: Rejection of Public IAM Members on Storage Buckets
+# RULE 7: Rejection of Public IAM Members and Overprivileged Roles
 # ------------------------------------------------------------------------------
+disallowed_storage_roles := {
+	"roles/owner",
+	"roles/editor",
+}
+
 deny contains msg if {
 	some name
 	member_res := input.resource.google_storage_bucket_iam_member[name][_]
@@ -181,12 +204,28 @@ deny contains msg if {
 
 deny contains msg if {
 	some name
+	member_res := input.resource.google_storage_bucket_iam_member[name][_]
+	role := object.get(member_res, "role", "")
+	disallowed_storage_roles[role]
+	msg := sprintf("GCS IAM member '%v' assigns overprivileged primitive role '%v'; use fine-grained storage roles", [name, role])
+}
+
+deny contains msg if {
+	some name
 	binding_res := input.resource.google_storage_bucket_iam_binding[name][_]
 	members := object.get(binding_res, "members", [])
 	some member in members
 	some public_principal in ["allUsers", "allAuthenticatedUsers"]
 	contains(member, public_principal)
 	msg := sprintf("GCS IAM binding '%v' exposes bucket to public principal '%v'", [name, public_principal])
+}
+
+deny contains msg if {
+	some name
+	binding_res := input.resource.google_storage_bucket_iam_binding[name][_]
+	role := object.get(binding_res, "role", "")
+	disallowed_storage_roles[role]
+	msg := sprintf("GCS IAM binding '%v' assigns overprivileged primitive role '%v'; use fine-grained storage roles", [name, role])
 }
 
 # ------------------------------------------------------------------------------
@@ -229,6 +268,13 @@ deny contains msg if {
 }
 
 # Rule 8.2: Prefix validation
+deny contains msg if {
+	some backend in get_gcs_backends
+	prefix := object.get(backend, "prefix", "")
+	prefix == ""
+	msg := "Terraform GCS backend prefix must not be empty; must specify a segregated state path"
+}
+
 deny contains msg if {
 	some backend in get_gcs_backends
 	prefix := object.get(backend, "prefix", "")
