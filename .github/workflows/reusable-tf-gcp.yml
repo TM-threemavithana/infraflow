@@ -445,7 +445,8 @@ jobs:
       - name: "Install Trivy"
         if: inputs.enable-trivy == true
         env:
-          TRIVY_VERSION: "0.58.2"
+          TRIVY_VERSION: "0.76.2"
+          TRIVY_SHA: "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
         run: |
           set -euo pipefail
           echo "::group::Installing Trivy Scanner"
@@ -455,7 +456,8 @@ jobs:
             mkdir -p "${RUNNER_TEMP}/bin"
             ARCH=$(uname -m)
             [[ "${ARCH}" == "x86_64" ]] && ARCH="64bit" || ARCH="ARM64"
-            curl -sSL -o "${RUNNER_TEMP}/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"
+            curl -fsSL -o "${RUNNER_TEMP}/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"
+            echo "${TRIVY_SHA}  ${RUNNER_TEMP}/trivy.tar.gz" | sha256sum -c -
             tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C "${RUNNER_TEMP}/bin" trivy
             chmod +x "${RUNNER_TEMP}/bin/trivy"
             echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
