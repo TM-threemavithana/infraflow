@@ -137,6 +137,7 @@ jobs:
           INPUT_ROLE_DURATION: ${{ inputs.role-duration-seconds }}
           ENABLE_AWS_AUTH: ${{ inputs.enable-aws-auth }}
           EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF: ${{ github.ref }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
@@ -219,12 +220,20 @@ jobs:
             exit 1
           fi
 
-          # 12. Authentication Mode Validation & Untrusted PR Gate
+          # 12. Authentication Mode Validation & Untrusted PR / Context Gate
           if [[ "${ENABLE_AWS_AUTH}" == "true" ]]; then
             # Fail closed on untrusted PR triggers attempting cloud authentication
             if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "pull_request_target" ]]; then
-              echo "::error::Security Violation: Untrusted pull requests are prohibited from enabling live AWS authentication (SEC-02). Use enable-aws-auth: false for PR validation."
+              echo "::error::Security Violation: Untrusted pull requests (${EVENT_NAME}) are prohibited from enabling live AWS authentication (SEC-02). Use enable-aws-auth: false for PR validation."
               exit 1
+            fi
+
+            # Reject arbitrary, unprotected branches; enforce protected branch or release tag execution
+            if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+              if [[ ! "${TARGET_REF}" =~ ^refs/heads/(main|master|release/.*)$ ]] && [[ ! "${TARGET_REF}" =~ ^refs/tags/v.* ]]; then
+                echo "::error::Security Violation: AWS authentication can only be requested from protected branches (main, release/*) or release tags (v*). Target ref '${TARGET_REF}' is an arbitrary, unprotected branch."
+                exit 1
+              fi
             fi
 
             # Validate Role ARN format
@@ -307,7 +316,11 @@ jobs:
   aws-plan:
     name: "AWS Authenticated Speculative Plan"
     needs: [validate-inputs]
-    if: inputs.enable-aws-auth == true && github.event_name != 'pull_request'
+    if: |
+      inputs.enable-aws-auth == true &&
+      github.event_name != 'pull_request' &&
+      github.event_name != 'pull_request_target' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read

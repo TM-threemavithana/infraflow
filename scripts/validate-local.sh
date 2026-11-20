@@ -2767,6 +2767,7 @@ run_aws_guard_test() {
   local workflow_repo="${15:-TM-threemavithana/infraflow}"
   local workflow_sha="${16:-ed965edd00391b6b1461a65184838bb7cca5eb81}"
   local workflow_ref="${17:-TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81}"
+  local target_ref="${18:-refs/heads/main}"
 
   local code=0
   INPUT_VERSION="${version}" \
@@ -2783,6 +2784,7 @@ run_aws_guard_test() {
   INPUT_ROLE_DURATION="${role_duration}" \
   ENABLE_AWS_AUTH="${enable_aws_auth}" \
   EVENT_NAME="${event_name}" \
+  TARGET_REF="${target_ref}" \
   WORKFLOW_REPO="${workflow_repo}" \
   WORKFLOW_SHA="${workflow_sha}" \
   WORKFLOW_REF="${workflow_ref}" \
@@ -2838,26 +2840,35 @@ else
   record_fail "AWS Input Guard [6/9]: DynamoDB rejection" "Invalid DynamoDB table name was unexpectedly accepted"
 fi
 
-# Test 15.10: Security Invariant (SEC-02): Untrusted PR attempting AWS auth rejected
-if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "pull_request"; then
-  record_pass "AWS Security Guard [7/9]: Untrusted pull request enabling live AWS auth rejected (SEC-02 fail-closed)"
+# Test 15.10: Security Invariant (SEC-02): Untrusted PRs (pull_request & pull_request_target) attempting AWS auth rejected
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "pull_request" && \
+   ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "pull_request_target"; then
+  record_pass "AWS Security Guard [7/10]: Untrusted pull requests (pull_request & pull_request_target) enabling live AWS auth rejected (SEC-02 fail-closed)"
 else
-  record_fail "AWS Security Guard [7/9]: PR auth rejection" "Untrusted pull request was allowed to enable AWS authentication"
+  record_fail "AWS Security Guard [7/10]: PR auth rejection" "Untrusted pull request or pull_request_target was allowed to enable AWS authentication"
 fi
 
-# Test 15.11: Cloud-Free mode: PR allowed with enable-aws-auth: false
+# Test 15.11: Arbitrary branch scoping: Arbitrary feature branches rejected; protected release branches accepted
+if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/feature/untrusted-branch" && \
+   run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81" "refs/heads/release/v1.0"; then
+  record_pass "AWS Security Guard [8/10]: Arbitrary branch rejected and protected release branch accepted for live auth"
+else
+  record_fail "AWS Security Guard [8/10]: Branch scoping" "Arbitrary branch was accepted or protected branch rejected"
+fi
+
+# Test 15.12: Cloud-Free mode: PR allowed with enable-aws-auth: false
 if run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "" "" "" "" "HIGH,CRITICAL" "plan" "900" "false" "pull_request"; then
-  record_pass "AWS Security Guard [8/9]: Cloud-free pull request validation accepted (SEC-02 compliant)"
+  record_pass "AWS Security Guard [9/10]: Cloud-free pull request validation accepted (SEC-02 compliant)"
 else
-  record_fail "AWS Security Guard [8/9]: Cloud-free PR" "Cloud-free pull request was unexpectedly rejected"
+  record_fail "AWS Security Guard [9/10]: Cloud-free PR" "Cloud-free pull request was unexpectedly rejected"
 fi
 
-# Test 15.12: Platform Trust Boundary: Reusable AWS adapter enforces workflow repository & immutable commit SHA
+# Test 15.13: Platform Trust Boundary: Reusable AWS adapter enforces workflow repository & immutable commit SHA
 if ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "untrusted-attacker/infraflow" && \
    ! run_aws_guard_test "1.10.4" "." "" "production" "us-east-1" "arn:aws:iam::123456789012:role/role" "bucket" "key" "" "HIGH,CRITICAL" "plan" "900" "true" "push" "TM-threemavithana/infraflow" "ed965edd00391b6b1461a65184838bb7cca5eb81" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@main"; then
-  record_pass "AWS Trust Boundary [9/9]: Rogue workflow repository and mutable refs (@main) strictly rejected"
+  record_pass "AWS Trust Boundary [10/10]: Rogue workflow repository and mutable refs (@main) strictly rejected"
 else
-  record_fail "AWS Trust Boundary [9/9]: Trust boundary enforcement" "Rogue repo or mutable ref was unexpectedly accepted"
+  record_fail "AWS Trust Boundary [10/10]: Trust boundary enforcement" "Rogue repo or mutable ref was unexpectedly accepted"
 fi
 
 # Test 15.13: AWS Reference Module: Canonical formatting
