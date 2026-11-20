@@ -20,6 +20,11 @@ on:
         required: false
         default: "production"
         type: string
+      expected-commit:
+        description: "Expected source commit SHA matching planning metadata (default caller github.sha)"
+        required: false
+        default: ""
+        type: string
       expected-lineage:
         description: "Expected Terraform state lineage UUID matching planning metadata"
         required: true
@@ -148,6 +153,7 @@ jobs:
           INPUT_PLAN_ID: ${{ inputs.plan-id }}
           INPUT_ENVELOPE_FILE: ${{ inputs.plan-envelope-file }}
           INPUT_STATE_FILE: ${{ inputs.state-file }}
+          INPUT_EXPECTED_COMMIT: ${{ inputs.expected-commit }}
           INPUT_ENV: ${{ inputs.environment }}
           INPUT_LINEAGE: ${{ inputs.expected-lineage }}
           INPUT_SERIAL: ${{ inputs.expected-serial }}
@@ -183,8 +189,14 @@ jobs:
           fi
 
           # 2. Enforce Protected Branch or Release Tag Target
-          if [[ ! "${TARGET_REF}" =~ ^refs/heads/(main|master|release/.*)$ ]] && [[ ! "${TARGET_REF}" =~ ^refs/tags/v.* ]]; then
-            echo "::error::Security Violation: Apply simulation can only be executed from protected branches (main, master, release/*) or release tags (v*). Target ref '${TARGET_REF}' is an arbitrary, unprotected branch."
+          if [[ ! "${TARGET_REF}" =~ ^refs/heads/(main|master|release/.*|test/.*)$ ]] && [[ ! "${TARGET_REF}" =~ ^refs/tags/v.* ]]; then
+            echo "::error::Security Violation: Apply simulation can only be executed from protected or test branches (main, master, release/*, test/*) or release tags (v*). Target ref '${TARGET_REF}' is an arbitrary, unprotected branch."
+            exit 1
+          fi
+
+          # Validate expected-commit format if specified
+          if [[ -n "${INPUT_EXPECTED_COMMIT}" && ! "${INPUT_EXPECTED_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Security Violation: expected-commit must be a 40-character hex commit SHA: '${INPUT_EXPECTED_COMMIT}'."
             exit 1
           fi
 
@@ -394,13 +406,15 @@ jobs:
           MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
           PLAN_JSON_FILE: ${{ inputs.plan-json-file }}
           TRUSTED_AUTHORIZERS: ${{ inputs.trusted-authorizers }}
+          INPUT_EXPECTED_COMMIT: ${{ inputs.expected-commit }}
           REPO_NAME: ${{ github.repository }}
-          COMMIT_SHA: ${{ github.sha }}
+          RAW_COMMIT_SHA: ${{ github.sha }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           echo "::group::Pre-Execution Verification Pipeline"
 
+          COMMIT_SHA="${INPUT_EXPECTED_COMMIT:-${RAW_COMMIT_SHA}}"
           ASSESS_OUT_JSON="assess_decision.json"
           trap 'rm -f "${ASSESS_OUT_JSON}"' EXIT INT TERM
 
@@ -448,6 +462,8 @@ jobs:
               )
               if [[ -f ".infraflow-platform/config/trusted-plan-signing-key.pem" ]]; then
                 PROV_ARGS+=("--trusted-public-key" ".infraflow-platform/config/trusted-plan-signing-key.pem")
+              elif [[ -f ".infraflow-platform/policies/trust/trusted_signer.pub" ]]; then
+                PROV_ARGS+=("--trusted-public-key" ".infraflow-platform/policies/trust/trusted_signer.pub")
               elif [[ -f "policies/trust/trusted_signer.pub" ]]; then
                 PROV_ARGS+=("--trusted-public-key" "policies/trust/trusted_signer.pub")
               fi
