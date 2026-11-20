@@ -1,0 +1,28 @@
+name: "InfraFlow AWS Plan Pipeline"
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  aws-plan:
+    name: "Execute AWS Plan"
+    # Reusable AWS adapter workflow pinned to trusted commit SHA
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@ed965edd00391b6b1461a65184838bb7cca5eb81
+    with:
+      aws-region: "us-east-1"
+      working-directory: "."
+      terraform-version: "1.10.4"
+      environment: "production"
+      # By default, enable-aws-auth is false for offline/zero-cost validation.
+      # For protected branch deployment with AWS STS OIDC, set enable-aws-auth: true
+      # and provide role-to-assume, backend-bucket, and backend-key:
+      enable-aws-auth: false
+      # role-to-assume: "arn:aws:iam::123456789012:role/infraflow-planning-role"
+      # backend-bucket: "infraflow-state-bucket"
+      # backend-key: "env/prod/terraform.tfstate"
