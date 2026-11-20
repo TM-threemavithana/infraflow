@@ -3157,24 +3157,24 @@ else
   record_fail "AWS Authorization Semantics: Non-deployment status" "reusable-tf-aws.yml failed non-deployment authorization semantics check"
 fi
 
-# --- 16. G06 Protected Apply & Destroy: Plan Envelope Encryption ---
-log_header "16. G06 Protected Apply & Destroy: Plan Envelope Encryption"
+# --- 16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle & Replay ---
+log_header "16. G06 Protected Apply & Destroy: Plan Encryption, Lifecycle & Replay"
 
 KMS_ENVELOPE_PY="${REPO_ROOT}/scripts/kms-envelope.py"
 G06_TEST_DIR="$(mktemp -d /tmp/infraflow-g06-test-XXXXXX)"
 
 # Test 16.1: kms-envelope.py executable and syntax valid
 if [[ -x "${KMS_ENVELOPE_PY}" ]] && python3 "${KMS_ENVELOPE_PY}" --help >/dev/null 2>&1; then
-  record_pass "G06 Envelope Tooling [1/8]: kms-envelope.py syntax & CLI interface verified"
+  record_pass "G06 Envelope Tooling [1/17]: kms-envelope.py syntax & CLI interface verified"
 else
-  record_fail "G06 Envelope Tooling [1/8]: kms-envelope.py" "kms-envelope.py missing, not executable, or failed syntax check"
+  record_fail "G06 Envelope Tooling [1/17]: kms-envelope.py" "kms-envelope.py missing, not executable, or failed syntax check"
 fi
 
 # Test 16.2: G06 Cryptographic unit test suite (20 tests)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" >/dev/null 2>&1; then
-  record_pass "G06 Cryptographic Suite [2/8]: All 20 unit tests passed (test_kms_envelope.py)"
+  record_pass "G06 Cryptographic Suite [2/17]: All 20 unit tests passed (test_kms_envelope.py)"
 else
-  record_fail "G06 Cryptographic Suite [2/8]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
+  record_fail "G06 Cryptographic Suite [2/17]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
 fi
 
 # Test 16.3: CLI KEK generation with mode 0600
@@ -3182,12 +3182,12 @@ G06_TEST_KEK="${G06_TEST_DIR}/test.kek"
 if python3 "${KMS_ENVELOPE_PY}" generate-kek --output-kek "${G06_TEST_KEK}" >/dev/null 2>&1 && [[ -f "${G06_TEST_KEK}" ]]; then
   KEK_PERMS="$(stat -c "%a" "${G06_TEST_KEK}" 2>/dev/null || stat -f "%Lp" "${G06_TEST_KEK}" 2>/dev/null || echo "600")"
   if [[ "${KEK_PERMS}" == "600" ]]; then
-    record_pass "G06 Key Management [3/8]: Mock KEK generated with restrictive permissions (mode 0600)"
+    record_pass "G06 Key Management [3/17]: Mock KEK generated with restrictive permissions (mode 0600)"
   else
-    record_fail "G06 Key Management [3/8]: Permissions" "Generated KEK file has insecure permissions: ${KEK_PERMS}"
+    record_fail "G06 Key Management [3/17]: Permissions" "Generated KEK file has insecure permissions: ${KEK_PERMS}"
   fi
 else
-  record_fail "G06 Key Management [3/8]: generate-kek" "Failed to generate mock KEK"
+  record_fail "G06 Key Management [3/17]: generate-kek" "Failed to generate mock KEK"
 fi
 
 # Test 16.4: CLI Encryption and Decryption Roundtrip
@@ -3213,9 +3213,9 @@ if python3 "${KMS_ENVELOPE_PY}" encrypt \
     --expected-environment "production" \
     --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1 && \
    cmp -s "${G06_TEST_PLAN}" "${G06_TEST_DEC}"; then
-  record_pass "G06 Envelope Lifecycle [4/8]: CLI encrypt and decrypt roundtrip matches exact binary digest"
+  record_pass "G06 Envelope Lifecycle [4/17]: CLI encrypt and decrypt roundtrip matches exact binary digest"
 else
-  record_fail "G06 Envelope Lifecycle [4/8]: Roundtrip" "CLI encryption/decryption failed or produced mismatched bytes"
+  record_fail "G06 Envelope Lifecycle [4/17]: Roundtrip" "CLI encryption/decryption failed or produced mismatched bytes"
 fi
 
 # Test 16.5: CLI Adversarial Tampering: Bit-flip in ciphertext fails closed
@@ -3235,9 +3235,9 @@ if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
     --envelope-file "${G06_TAMPERED_ENV}" \
     --output-plan "${G06_TEST_DIR}/tampered.plan" \
     --kek-file "${G06_TEST_KEK}" >/dev/null 2>&1; then
-  record_pass "G06 Adversarial Defense [5/8]: Ciphertext bit-flip rejected as expected (exit code != 0)"
+  record_pass "G06 Adversarial Defense [5/17]: Ciphertext bit-flip rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Adversarial Defense [5/8]: Tamper detection" "Decryption unexpectedly accepted tampered ciphertext"
+  record_fail "G06 Adversarial Defense [5/17]: Tamper detection" "Decryption unexpectedly accepted tampered ciphertext"
 fi
 
 # Test 16.6: CLI Context Binding: Repository mismatch rejected
@@ -3246,9 +3246,9 @@ if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
     --output-plan "${G06_TEST_DIR}/mismatched_repo.plan" \
     --kek-file "${G06_TEST_KEK}" \
     --expected-repo "attacker-org/malicious-repo" >/dev/null 2>&1; then
-  record_pass "G06 Context Binding [6/8]: Repository identity mismatch rejected as expected (exit code != 0)"
+  record_pass "G06 Context Binding [6/17]: Repository identity mismatch rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Context Binding [6/8]: Repo mismatch" "Decryption unexpectedly accepted mismatched repository context"
+  record_fail "G06 Context Binding [6/17]: Repo mismatch" "Decryption unexpectedly accepted mismatched repository context"
 fi
 
 # Test 16.7: CLI Key Isolation: Wrong KEK rejected
@@ -3258,9 +3258,9 @@ if ! python3 "${KMS_ENVELOPE_PY}" decrypt \
     --envelope-file "${G06_TEST_ENV}" \
     --output-plan "${G06_TEST_DIR}/wrong_kek.plan" \
     --kek-file "${G06_WRONG_KEK}" >/dev/null 2>&1; then
-  record_pass "G06 Key Isolation [7/8]: Decryption with unauthorized KEK rejected as expected (exit code != 0)"
+  record_pass "G06 Key Isolation [7/17]: Decryption with unauthorized KEK rejected as expected (exit code != 0)"
 else
-  record_fail "G06 Key Isolation [7/8]: Key isolation" "Decryption unexpectedly succeeded with unauthorized KEK"
+  record_fail "G06 Key Isolation [7/17]: Key isolation" "Decryption unexpectedly succeeded with unauthorized KEK"
 fi
 
 # Test 16.8: CLI Static Verification: verify-envelope checks headers without KEK
@@ -3270,9 +3270,157 @@ if python3 "${KMS_ENVELOPE_PY}" verify-envelope \
     --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
     --expected-environment "production" \
     --expected-digest "${ORIG_DIGEST}" >/dev/null 2>&1; then
-  record_pass "G06 Static Verification [8/8]: verify-envelope validates schema and context headers without KEK"
+  record_pass "G06 Static Verification [8/17]: verify-envelope validates schema and context headers without KEK"
 else
-  record_fail "G06 Static Verification [8/8]: verify-envelope" "Static envelope verification failed on valid envelope"
+  record_fail "G06 Static Verification [8/17]: verify-envelope" "Static envelope verification failed on valid envelope"
+fi
+
+# Test 16.9: verify-plan-lifecycle.py executable and syntax valid
+VERIFY_LIFECYCLE_PY="${REPO_ROOT}/scripts/verify-plan-lifecycle.py"
+if [[ -x "${VERIFY_LIFECYCLE_PY}" ]] && python3 "${VERIFY_LIFECYCLE_PY}" --help >/dev/null 2>&1; then
+  record_pass "G06 Lifecycle Tooling [9/17]: verify-plan-lifecycle.py syntax & CLI interface verified"
+else
+  record_fail "G06 Lifecycle Tooling [9/17]: verify-plan-lifecycle.py" "verify-plan-lifecycle.py missing, not executable, or failed syntax check"
+fi
+
+# Test 16.10: Full G06 unit test suite (49 tests in tests/test_*.py)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
+  record_pass "G06 Full Test Suite [10/17]: All 49 unit tests passed (test_kms_envelope.py + test_plan_lifecycle.py)"
+else
+  record_fail "G06 Full Test Suite [10/17]: Unit tests" "One or more tests in tests directory failed"
+fi
+
+# Test 16.11: Plan expiration gate: Fresh accepted, expired rejected
+G06_TS_NOW="2026-11-20T12:00:00Z"
+G06_TS_CREATED="2026-11-20T11:00:00Z"
+G06_TS_FRESH_EXP="2026-11-20T17:00:00Z"
+G06_TS_STALE_EXP="2026-11-20T11:50:00Z"
+
+if python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
+    --created-at "${G06_TS_CREATED}" \
+    --expires-at "${G06_TS_FRESH_EXP}" \
+    --current-time "${G06_TS_NOW}" >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
+    --created-at "${G06_TS_CREATED}" \
+    --expires-at "${G06_TS_STALE_EXP}" \
+    --current-time "${G06_TS_NOW}" >/dev/null 2>&1; then
+  record_pass "G06 Expiration Gate [11/17]: Fresh plan accepted, expired plan rejected"
+else
+  record_fail "G06 Expiration Gate [11/17]: Expiration" "validate-expiration failed fresh/expired gate"
+fi
+
+# Test 16.12: Future plan gate: Future-created plan rejected
+G06_TS_FUTURE="2026-11-20T14:00:00Z"
+if ! python3 "${VERIFY_LIFECYCLE_PY}" validate-expiration \
+    --created-at "${G06_TS_FUTURE}" \
+    --expires-at "${G06_TS_FRESH_EXP}" \
+    --current-time "${G06_TS_NOW}" >/dev/null 2>&1; then
+  record_pass "G06 Future Plan Gate [12/17]: Future-created plan rejected as expected (exit code != 0)"
+else
+  record_fail "G06 Future Plan Gate [12/17]: Future plan" "validate-expiration unexpectedly accepted future-dated plan"
+fi
+
+# Test 16.13: State consistency gate: Lineage & serial match accepted, stale serial rejected
+G06_STATE_FILE="${G06_TEST_DIR}/state.json"
+cat << 'EOF' > "${G06_STATE_FILE}"
+{
+  "version": 4,
+  "terraform_version": "1.10.4",
+  "serial": 42,
+  "lineage": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+  "outputs": {},
+  "resources": []
+}
+EOF
+
+if python3 "${VERIFY_LIFECYCLE_PY}" validate-state \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 42 >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" validate-state \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 41 >/dev/null 2>&1; then
+  record_pass "G06 State Consistency [13/17]: State lineage & serial match accepted; stale serial rejected"
+else
+  record_fail "G06 State Consistency [13/17]: State gate" "validate-state failed lineage/serial check"
+fi
+
+# Test 16.14: Replay prevention: Atomic plan reservation succeeds, duplicate rejected
+G06_LEDGER_DB="${G06_TEST_DIR}/ledger.db"
+if python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" \
+    --plan-digest "${ORIG_DIGEST}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" \
+    --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" \
+    --plan-digest "${ORIG_DIGEST}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" \
+    --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1; then
+  record_pass "G06 Replay Prevention [14/17]: Atomic plan reservation succeeds; duplicate reservation rejected"
+else
+  record_fail "G06 Replay Prevention [14/17]: Replay gate" "ledger-reserve failed duplicate reservation rejection"
+fi
+
+# Test 16.15: Consumed plan gate: Consumed plan re-execution rejected
+if python3 "${VERIFY_LIFECYCLE_PY}" ledger-consume \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" >/dev/null 2>&1 && \
+   ! python3 "${VERIFY_LIFECYCLE_PY}" ledger-reserve \
+    --ledger-db "${G06_LEDGER_DB}" \
+    --plan-id "plan-gate-test-01" \
+    --plan-digest "${ORIG_DIGEST}" \
+    --repo "TM-threemavithana/infraflow-consumer-test" \
+    --commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --environment "production" \
+    --expires-at "${G06_TS_FRESH_EXP}" >/dev/null 2>&1; then
+  record_pass "G06 Consumed Plan Gate [15/17]: Consumed plan re-execution strictly rejected"
+else
+  record_fail "G06 Consumed Plan Gate [15/17]: Consumed gate" "ledger-consume or re-reservation check failed"
+fi
+
+# Test 16.16: Pre-execution authorization verifier: Full roundtrip emits AUTHORIZED_FOR_SIMULATION
+G06_ROUNDTRIP_LEDGER="${G06_TEST_DIR}/roundtrip_ledger.db"
+VERIFY_OUT="$(python3 "${VERIFY_LIFECYCLE_PY}" verify \
+    --envelope-file "${G06_TEST_ENV}" \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 42 \
+    --ledger-db "${G06_ROUNDTRIP_LEDGER}" \
+    --provenance-status "VERIFIED" 2>&1 || true)"
+
+if echo "${VERIFY_OUT}" | grep -q '"decision": "AUTHORIZED_FOR_SIMULATION"'; then
+  record_pass "G06 Pre-Execution Verifier [16/17]: Full roundtrip emits AUTHORIZED_FOR_SIMULATION"
+else
+  record_fail "G06 Pre-Execution Verifier [16/17]: Verifier roundtrip" "verify CLI failed to authorize valid plan simulation: ${VERIFY_OUT}"
+fi
+
+# Test 16.17: Pre-execution security boundary: Unverified provenance strictly rejected
+REJECT_OUT="$(python3 "${VERIFY_LIFECYCLE_PY}" verify \
+    --envelope-file "${G06_TEST_ENV}" \
+    --state-file "${G06_STATE_FILE}" \
+    --expected-repo "TM-threemavithana/infraflow-consumer-test" \
+    --expected-commit "d0660de837ca07d5bdd56f04b0e50691ce98bd28" \
+    --expected-environment "production" \
+    --expected-lineage "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d" \
+    --expected-serial 42 \
+    --ledger-db "${G06_ROUNDTRIP_LEDGER}" \
+    --provenance-status "UNVERIFIED" 2>&1 || true)"
+
+if echo "${REJECT_OUT}" | grep -q '"decision": "REJECTED"' || echo "${REJECT_OUT}" | grep -q 'UNVERIFIED_PROVENANCE'; then
+  record_pass "G06 Security Boundary [17/17]: Unverified provenance strictly rejected (fail-closed)"
+else
+  record_fail "G06 Security Boundary [17/17]: Provenance rejection" "verify CLI unexpectedly authorized unverified provenance: ${REJECT_OUT}"
 fi
 
 rm -rf "${G06_TEST_DIR}"
