@@ -4,20 +4,23 @@
 
 | Attribute | Details |
 | :--- | :--- |
-| **Milestone** | **G07.4 — External GCP Consumer Integration & GitHub Actions Verification** |
-| **Status** | **VERIFIED & RELEASE READY (Awaiting Final Review)** |
+| **Milestone** | **G07.4 — External GCP Consumer Integration & Finalization** |
+| **Status** | **COMPLETED & MERGED TO MAIN** |
 | **Platform Repository** | `TM-threemavithana/infraflow` |
-| **Platform Branch** | `feature/g07-gcp-adapter` |
-| **Platform Pull Request** | [PR #4: feat(g07): GCP cloud-free adapter, WIF policies and GCS security validation](https://github.com/TM-threemavithana/infraflow/pull/4) |
-| **Platform Verified SHA** | `96e43c2193532f1ebc39c8997990af530bf1b2e2` |
+| **Platform Base Branch** | `main` |
+| **Platform Pull Request** | [PR #4: feat(g07): GCP cloud-free adapter, WIF policies and GCS security validation](https://github.com/TM-threemavithana/infraflow/pull/4) (Merged) |
+| **Platform Merge Commit SHA** | `7c4dff9d5ab9e917fab79f59fa359bb413dca720` |
+| **Platform Post-Merge Run** | [Run 44811435316](https://github.com/TM-threemavithana/infraflow/actions/runs/44811435316) (All 3 jobs PASS) |
 | **Consumer Repository** | `TM-threemavithana/infraflow-consumer-test` |
-| **Consumer Branch** | `test/g07-gcp-adapter-smoke` |
-| **Consumer Pull Request** | [PR #4: test(g07): external GCP adapter cloud-free integration and adversarial validation](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4) |
-| **Consumer Verified SHA** | `6752462` |
-| **Published Baseline** | `v0.4.0` |
+| **Consumer Base Branch** | `main` |
+| **Consumer Pull Request** | [PR #4: test(g07): external GCP adapter cloud-free integration and adversarial validation](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4) (Merged) |
+| **Consumer Merge Commit SHA** | `c82a51956156787b723aa10dcf2166b35ce6c1b5` |
+| **Consumer Post-Merge Run** | [Run 44811811481](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481) (All 6 jobs PASS) |
+| **Published Baseline** | `v0.4.0` (Untouched, no new release tag) |
 | **Cloud Spend** | **$0.00 (Strict Invariant)** |
 | **Live Credentials** | **Zero GCP Credentials / Tokens Used** |
-| **Test Matrix** | **1 Positive Speculative Contract Test + 22 Negative Security Attack Scenarios + Full Historical Regressions** |
+| **Quality Gates** | **277/277 Quality Checks Passing (100%)** |
+| **Test Matrix** | **1 Positive Speculative Contract Test + 22 Negative Security Attack Scenarios + Full Historical Regressions (G04, G05, G06)** |
 
 ---
 
@@ -46,49 +49,88 @@ flowchart TD
     end
 
     Summary --> Contract["Verify Cloud-Free Output Contract"]
-    Contract --> Passed["authorization-status: not-applicable\nplan-status: success\ngcp-auth-status: disabled\nsecurity-status: success\nhas-changes: true\nhas-destructive-changes: false\ntotal-changes: 0"]
+    Contract --> Passed["authorization-status: not-applicable\nplan-status: success\ngcp-auth-status: disabled\nsecurity-status: success\nhas-changes: true\nhas-destructive-changes: false\ntotal-changes: 1"]
 ```
 
 ### Core Invariants Enforced
 1. **Zero Cloud Infrastructure Cost ($0.00)**: All speculative planning and policy evaluations execute completely offline without cloud API provisioning or billed resources.
 2. **Zero Cloud Credentials Required**: No Google Cloud service account keys, Workload Identity Federation STS tokens, or OAuth2 access tokens are utilized.
-3. **Immutable Platform Pinning**: Reusable workflow invocations in consumer workflows strictly enforce immutable 40-character hexadecimal commit SHA references (`@96e43c2193532f1ebc39c8997990af530bf1b2e2`). Mutable references (`@main`, `@v1`, etc.) fail closed immediately.
+3. **Immutable Platform Pinning**: Reusable workflow invocations in consumer workflows strictly enforce immutable 40-character hexadecimal commit SHA references (`@7c4dff9d5ab9e917fab79f59fa359bb413dca720`). Mutable references (`@main`, `@v1`, etc.) fail closed immediately.
 4. **Toolchain Isolation**: Platform scripts and OPA policies are cloned into `.infraflow-platform` and immediately moved to `${RUNNER_TEMP}/infraflow-platform`, completely outside the consumer workspace boundary.
 5. **Fail-Closed Execution**: Any policy violation, input anomaly, unauthorized PR cloud credential request, or disabled security gate triggers immediate workflow termination with exit code 1.
 
 ---
 
-## 2. GitHub Actions Verification Results
+## 2. G07.4 Defect Resolution & Corrective Actions
 
-### Platform PR #4 (`TM-threemavithana/infraflow`)
-* **Pull Request**: https://github.com/TM-threemavithana/infraflow/pull/4
-* **Run URL**: https://github.com/TM-threemavithana/infraflow/actions/runs/44807398877
+### Defect Description
+During the initial G07.4 external consumer verification, an output contract inconsistency was detected:
+- The consumer output contract emitted `has-changes: true` and `total-changes: 0` for the smoke test module containing 1 resource creation (`google_storage_bucket.example`).
+- Logically, `has-changes: true` requires `total-changes > 0`. A plan with changes cannot have a change count of 0.
+
+### Root Cause Analysis
+1. `scripts/analyze-plan.py` generates the structured JSON summary `plan-analysis.json`, which serializes the change metrics under `.metrics.total_changes`, `.metrics.has_changes`, and `.metrics.has_destructive_changes`.
+2. In `.github/workflows/reusable-tf-gcp.yml`, the extraction step read `.total_changes // 0` instead of `.metrics.total_changes`. Because `.total_changes` was `null` at the root, JQ defaulted to `0`.
+3. Consequently, `TOTAL_CHANGES` was set to `0` while `HAS_CHANGES` (read from `.metrics.has_changes`) evaluated to `true`.
+4. Furthermore, the workflow lacked strict type validation and invariant checks between `has-changes` and `total-changes`.
+
+### Corrective Actions Implemented
+1. **JSON Path Correction in `reusable-tf-gcp.yml`**:
+   - Corrected extraction to read `.metrics.total_changes`, `.metrics.has_changes`, and `.metrics.has_destructive_changes`.
+2. **Strict Type Validation & Fail-Closed Guardrails**:
+   - Added regex validation ensuring `TOTAL_CHANGES` is a non-negative integer (`^[0-9]+$`).
+   - Added boolean validation ensuring `HAS_CHANGES` and `HAS_DESTRUCTIVE` are strictly `"true"` or `"false"`.
+   - Added logical consistency enforcement:
+     - If `has-changes == true`, `total-changes` MUST be `> 0`.
+     - If `has-changes == false`, `total-changes` MUST be `== 0`.
+   - Any missing, malformed, or inconsistent values cause the step to exit 1 immediately.
+3. **Summary Aggregator Fail-Closed Logic**:
+   - Updated the `summary` job in `reusable-tf-gcp.yml` to re-validate type and consistency invariants. If metrics are inconsistent or missing, it fails closed with `authorization-status=rejected` and exits 1.
+4. **Regression Test Suite (`tests/test_gcp_plan_metrics.py`)**:
+   - Added 18 unit tests validating:
+     - Plan analysis extraction for no-change, 1-change, multiple-change, and destructive plans.
+     - Extraction shell logic against valid, negative, malformed string, and missing fields.
+     - Invariant enforcement (`has-changes=true` with 0 count, `has-changes=false` with >0 count).
+     - Summary aggregator propagation and fail-closed behaviors.
+   - Added Section 17.27 to `scripts/validate-local.sh`, bringing the total validation suite to **277 checks (100% pass)**.
+5. **Consumer Contract Strengthening**:
+   - Updated `Verify Cloud-Free Output Contract` in `infraflow-consumer-test` to assert non-negative integer typing, consistency between `has-changes` and `total-changes`, and exact values for the smoke fixture (`total-changes: 1`, `has-changes: true`, `has-destructive-changes: false`).
+
+---
+
+## 3. GitHub Actions Verification Results
+
+### Platform PR #4 & Main Push (`TM-threemavithana/infraflow`)
+* **Pull Request**: [PR #4](https://github.com/TM-threemavithana/infraflow/pull/4) (Merged into `main`)
+* **Merge Commit**: `7c4dff9d5ab9e917fab79f59fa359bb413dca720`
+* **Post-Merge Run URL**: [Run 44811435316](https://github.com/TM-threemavithana/infraflow/actions/runs/44811435316)
 
 | Job | Status | Duration | Evidence URL |
 | :--- | :---: | :---: | :--- |
-| `Lint & Audit GitHub Actions Workflows` | **PASS** | 6s | [Job 136534887777](https://github.com/TM-threemavithana/infraflow/actions/runs/44807398877/job/136534887777) |
-| `Self-Test Reusable Core (Cloud-Free Example)` | **PASS** | 6s | [Job 136534888385](https://github.com/TM-threemavithana/infraflow/actions/runs/44807398877/job/136534888385) |
-| `Self-Test Reusable Security (Cloud-Free Example)` | **PASS** | 11s | [Job 136534887989](https://github.com/TM-threemavithana/infraflow/actions/runs/44807398877/job/136534887989) |
+| `Lint & Audit GitHub Actions Workflows` | **PASS** | 5s | [Job 136548702561](https://github.com/TM-threemavithana/infraflow/actions/runs/44811435316/job/136548702561) |
+| `Self-Test Reusable Core (Cloud-Free Example)` | **PASS** | 6s | [Job 136548702464](https://github.com/TM-threemavithana/infraflow/actions/runs/44811435316/job/136548702464) |
+| `Self-Test Reusable Security (Cloud-Free Example)` | **PASS** | 14s | [Job 136548702198](https://github.com/TM-threemavithana/infraflow/actions/runs/44811435316/job/136548702198) |
 
-### Consumer PR #4 (`TM-threemavithana/infraflow-consumer-test`)
-* **Pull Request**: https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4
-* **Primary Run URL**: https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954
+### Consumer PR #4 & Main Push (`TM-threemavithana/infraflow-consumer-test`)
+* **Pull Request**: [PR #4](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4) (Merged into `main`)
+* **Merge Commit**: `c82a51956156787b723aa10dcf2166b35ce6c1b5`
+* **Post-Merge Run URL**: [Run 44811811481](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481)
 
 | Workflow / Job | Status | Duration | Evidence URL |
 | :--- | :---: | :---: | :--- |
 | **GCP Cloud Adapter Smoke Test** | | | |
-| ├─ `Validate & Guard GCP Adapter Inputs` | **PASS** | 2s | [Job 136534977068](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954/job/136534977068) |
-| ├─ `Cloud-Free Speculative Plan (Offline Validation)` | **PASS** | 9s | [Job 136535023588](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954/job/136535023588) |
-| ├─ `GCP Adapter Execution Summary` | **PASS** | 4s | [Job 136535133710](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954/job/136535133710) |
-| └─ `Verify Cloud-Free Output Contract` | **PASS** | 4s | [Job 136535196862](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954/job/136535196862) |
-| **Negative Security & Adversarial Test Harness (22 Vectors)** | **PASS** | 7s | [Job 136534976350](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954/job/136534976350) |
-| **PR Event Security Assertion (SEC-02 Fail-Closed)** | **PASS** | 10s | [Job 136534976861](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425954/job/136534976861) |
+| ├─ `Validate & Guard GCP Adapter Inputs` | **PASS** | 2s | [Job 136550028072](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481/job/136550028072) |
+| ├─ `Cloud-Free Speculative Plan (Offline Validation)` | **PASS** | 12s | [Job 136550074157](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481/job/136550074157) |
+| ├─ `GCP Adapter Execution Summary` | **PASS** | 2s | [Job 136550195638](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481/job/136550195638) |
+| └─ `Verify Cloud-Free Output Contract` | **PASS** | 2s | [Job 136550234511](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481/job/136550234511) |
+| **Negative Security & Adversarial Test Harness (22 Vectors)** | **PASS** | 6s | [Job 136550028079](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481/job/136550028079) |
+| **PR Event Security Assertion (SEC-02 Fail-Closed)** | **PASS** | 4s | [Job 136550027675](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481/job/136550027675) |
 
 ---
 
-## 3. Positive Contract Output Assertions
+## 4. Corrected Contract Output Assertions
 
-The positive smoke job executed in Consumer PR #4 asserted all seven contract outputs emitted by the platform adapter:
+Following the defect resolution, the positive smoke job in Consumer `main` confirmed the exact corrected output contract:
 
 ```text
 ==============================================================================
@@ -100,22 +142,24 @@ gcp-auth-status:         disabled
 security-status:         success
 has-changes:             true
 has-destructive-changes: false
-total-changes:           0
+total-changes:           1
 Cloud-free output contract verified successfully.
 ```
 
 ### Verification Highlights:
-- **`authorization-status: not-applicable`**: Correctly asserts that in cloud-free offline speculative planning mode, authorization is non-applicable rather than authorized. `authorized` is strictly reserved for live authenticated executions.
-- **`plan-status: success`**: Terraform speculative plan generated successfully without cloud backend.
+- **`total-changes: 1`**: Correctly asserts that exactly 1 resource creation is planned (`google_storage_bucket.example`).
+- **`has-changes: true`**: In full logical consistency with `total-changes > 0`.
+- **`authorization-status: not-applicable`**: In cloud-free speculative planning mode, authorization is non-applicable.
+- **`plan-status: success`**: Speculative plan generated successfully without cloud backend.
 - **`gcp-auth-status: disabled`**: Cloud authentication remained completely offline.
-- **`security-status: success`**: Both Trivy IaC scanner (0 HIGH/CRITICAL findings) and Conftest OPA policy verification passed cleanly.
+- **`security-status: success`**: Trivy IaC scan and Conftest OPA policy verification passed cleanly.
 - **`has-destructive-changes: false`**: Zero destructive modifications detected.
 
 ---
 
-## 4. Comprehensive 22-Vector Negative Security Test Matrix
+## 5. Comprehensive 22-Vector Negative Security Test Matrix
 
-The 22-vector negative security suite was executed in CI on the Ubuntu runner via `scripts/run_gcp_negative_tests.py`. All 22 attack vectors were rejected with fail-closed behavior:
+The 22-vector negative security suite was executed in CI on the Ubuntu runner via `scripts/run_gcp_negative_tests.py` pinned to platform `main` merge commit `7c4dff9`. All 22 attack vectors were rejected with fail-closed behavior:
 
 | # | Attack Vector / Scenario | Injected Anomaly / Payload | Expected Rejection Pattern | Observed Result | Exit Code |
 | :-: | :--- | :--- | :--- | :---: | :-: |
@@ -144,20 +188,21 @@ The 22-vector negative security suite was executed in CI on the Ubuntu runner vi
 
 ---
 
-## 5. Multi-Milestone Historical Regression Matrix
+## 6. Multi-Milestone Historical Regression Matrix
 
-To ensure that the new GCP adapter did not introduce regressions or weaken existing capabilities, all historical milestone workflows were executed and verified against Consumer PR #4:
+All historical milestone workflows were executed post-merge on Consumer `main` (`c82a51956156787b723aa10dcf2166b35ce6c1b5`), confirming zero regressions:
 
-| Milestone / Workflow | Primary Capability Tested | CI Run ID | Status |
+| Milestone / Workflow | Primary Capability Tested | Post-Merge Run ID | Status |
 | :--- | :--- | :---: | :---: |
-| **Core Validation** (`validate.yml`) | Terraform fmt, validate, and core checks | [Run 44807425978](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425978) | **PASS** |
-| **G04 Planning Engine** (`infraflow-plan.yml`) | Speculative planning, Sigstore provenance signing & verification, OPA gates | [Run 44807426013](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807426013) | **PASS** |
-| **G05 AWS Cloud Adapter** (`infraflow-aws-plan.yml`) | AWS cloud-free planning, IAM OIDC guards, S3 backend verification | [Run 44807426120](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807426120) | **PASS** |
-| **G06 Protected Apply** (`infraflow-protected-apply-simulation.yml`) | KMS envelope decryption, state consistency, blast radius guard, SEC-02 PR rejection | [Run 44807425937](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44807425937) | **PASS** |
+| **Core Validation** (`validate.yml`) | Terraform fmt, validate, and core checks | [Run 44811811367](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811367) | **PASS** |
+| **G04 Planning Engine** (`infraflow-plan.yml`) | Speculative planning, Sigstore provenance signing & verification, OPA gates | [Run 44811811320](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811320) | **PASS** |
+| **G05 AWS Cloud Adapter** (`infraflow-aws-plan.yml`) | AWS cloud-free planning, IAM OIDC guards, S3 backend verification | [Run 44811811448](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811448) | **PASS** |
+| **G06 Protected Apply** (`infraflow-protected-apply-simulation.yml`) | KMS envelope decryption, state consistency, blast radius guard, SEC-02 PR rejection | [Run 44811811744](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811744) | **PASS** |
+| **G07 GCP Cloud Adapter** (`infraflow-gcp-plan.yml`) | GCP cloud-free planning, WIF OIDC guards, GCS backend verification | [Run 44811811481](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44811811481) | **PASS** |
 
 ---
 
-## 6. Security and Supply-Chain Audit
+## 7. Security and Supply-Chain Audit
 
 | Control | Requirement | Audit Evidence |
 | :--- | :--- | :--- |
@@ -169,21 +214,13 @@ To ensure that the new GCP adapter did not introduce regressions or weaken exist
 
 ---
 
-## 7. Known Limitations & Future Roadmap
+## 8. Milestone Completion Audit
 
-1. **Simulation-Only Scope (G07.2–G07.4)**:
-   - Live Google Cloud authentication (STS token exchange, Google credentials generation via `google-github-actions/auth`) remains intentionally disabled and strictly blocked by policy.
-   - Real cloud infrastructure provisioning requires active GCP credentials and will be governed by future production milestones.
-2. **Microsoft Azure Adapter**:
-   - Azure multi-cloud adapter implementation (Workload Identity Federation via Azure AD / Entra ID, `azurerm` backend policies) is scheduled for subsequent milestones (G07.5+).
-
----
-
-## 8. Release Readiness Verdict
-
-* **Platform PR #4**: [https://github.com/TM-threemavithana/infraflow/pull/4](https://github.com/TM-threemavithana/infraflow/pull/4) — **ALL 3 CHECKS PASS**
-* **Consumer PR #4**: [https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4) — **ALL 11 CHECKS PASS**
-* **Local Quality Checks**: 276/276 checks passing cleanly.
+* **Platform PR #4**: [PR #4](https://github.com/TM-threemavithana/infraflow/pull/4) — **MERGED** (`7c4dff9d5ab9e917fab79f59fa359bb413dca720`)
+* **Consumer PR #4**: [PR #4](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/4) — **MERGED** (`c82a51956156787b723aa10dcf2166b35ce6c1b5`)
+* **Local Quality Checks**: 277/277 checks passing cleanly (`validate-local.sh`).
 * **Adversarial Security**: 22/22 attack vectors confirmed fail-closed.
 * **Historical Regressions**: Zero regressions across G01–G06.
-* **Branch Invariants**: Both PRs remain open and unmerged in accordance with milestone constraints.
+* **Published Baseline**: `v0.4.0` remains intact and unmodified. Zero release tags created.
+* **Cloud Spend**: $0.00 cloud expenditure across all verification phases.
+* **G07.5 Azure Adapter**: Development has NOT started; clean baseline prepared.
