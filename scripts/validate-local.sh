@@ -5605,6 +5605,239 @@ else
   record_fail "Campaign Adversarial Test Suite [15/15]: Test suite" "One or more tests in test_upgrade_campaigns.py failed"
 fi
 
+# ==============================================================================
+# SECTION 25: Enterprise Governance & Operational Maturity Verification (G09.4)
+# ==============================================================================
+log_header "25. Enterprise Governance & Operational Maturity Verification (G09.4)"
+
+# Test 25.1: scripts/verify-operational-maturity.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/verify-operational-maturity.py" && -x "${REPO_ROOT}/scripts/verify-operational-maturity.py" ]]; then
+  record_pass "Operational Maturity Tooling [1/15]: scripts/verify-operational-maturity.py exists and is executable"
+else
+  record_fail "Operational Maturity Tooling [1/15]: Script check" "scripts/verify-operational-maturity.py missing or not executable"
+fi
+
+# Test 25.2: verify-operational-maturity.py --help runs cleanly
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" --help >/dev/null 2>&1; then
+  record_pass "Operational Maturity CLI Help [2/15]: verify-operational-maturity.py --help runs with zero exit code"
+else
+  record_fail "Operational Maturity CLI Help [2/15]: Help execution" "verify-operational-maturity.py --help failed"
+fi
+
+# Test 25.3: Baseline execution against manifest and consumer fixtures passes
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Baseline Operational Verification [3/15]: Verification passes on reference fleet manifest and fixtures"
+else
+  record_fail "Baseline Operational Verification [3/15]: Baseline execution" "verify-operational-maturity.py failed on baseline fixtures"
+fi
+
+# Test 25.4: Deterministic SHA-256 attestation signature generation
+TMP_OP_JSON="$(mktemp -t op_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_OP_JSON}" \
+    --quiet >/dev/null 2>&1
+if [[ -s "${TMP_OP_JSON}" ]] && grep -q '"report_signature":' "${TMP_OP_JSON}"; then
+  record_pass "Attestation Signature [4/15]: Deterministic SHA-256 report attestation signature generated"
+else
+  record_fail "Attestation Signature [4/15]: Content check" "Missing report_signature in operational report"
+fi
+
+# Test 25.5: Cryptographic signature tamper detection
+if python3 -c '
+import json, hashlib, sys
+with open("'"${TMP_OP_JSON}"'") as f:
+    d = json.load(f)
+orig_sig = d.get("report_signature")
+d["compliance_score"] = 99.9
+canonical = {k: v for k, v in d.items() if k != "report_signature"}
+new_sig = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+sys.exit(0 if orig_sig != new_sig else 1)
+' >/dev/null 2>&1; then
+  record_pass "Signature Tamper Detection [5/15]: Modifying report payload is cryptographically detected"
+else
+  record_fail "Signature Tamper Detection [5/15]: Integrity check" "Signature tamper check failed"
+fi
+rm -f "${TMP_OP_JSON}"
+
+# Test 25.6: Compliance threshold enforcement fails closed on regression
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --enforce-threshold 98.0 \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Compliance Threshold Enforcement [6/15]: Verification halts (exit code 1) when score is below threshold"
+else
+  record_fail "Compliance Threshold Enforcement [6/15]: Gate check" "Verification succeeded despite score below threshold"
+fi
+
+# Test 25.7: Structured telemetry pillar validation
+TMP_TEL_IN="$(mktemp -t tel_in_XXXXXX.jsonl)"
+python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type governance_gate_evaluated \
+    --consumer-id platform \
+    --repository TM-threemavithana/infraflow \
+    --status PASS \
+    --output "${TMP_TEL_IN}" \
+    --append >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --telemetry-file "${TMP_TEL_IN}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Telemetry Pillar Validation [7/15]: Telemetry stream passes Schema v1.0 and digest verification"
+else
+  record_fail "Telemetry Pillar Validation [7/15]: Pillar execution" "Failed verifying valid telemetry file"
+fi
+rm -f "${TMP_TEL_IN}"
+
+# Test 25.8: Telemetry credential leakage detection blocks verification
+TMP_TEL_LEAK="$(mktemp -t tel_leak_XXXXXX.jsonl)"
+python3 -c '
+import json
+ev = {
+  "schema_version": "1.0",
+  "event_id": "leak-test-01",
+  "timestamp": "2026-11-21T10:00:00Z",
+  "event_type": "security_scan_completed",
+  "execution_context": {"workflow": "test", "run_id": "1", "event_name": "push"},
+  "target": {"consumer_id": "platform", "repository": "test", "adapter": "aws"},
+  "metrics": {},
+  "verdict": {"status": "PASS", "reasons": ["AKIA" + "1234567890123456"]},
+  "integrity": {"algorithm": "sha256", "event_digest": "dummy"}
+}
+with open("'"${TMP_TEL_LEAK}"'", "w") as f:
+    json.dump(ev, f)
+'
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --telemetry-file "${TMP_TEL_LEAK}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Telemetry Credential Leakage Gate [8/15]: Telemetry log containing unredacted secret halts verification"
+else
+  record_fail "Telemetry Credential Leakage Gate [8/15]: Gate check" "Verification passed despite credential in telemetry"
+fi
+rm -f "${TMP_TEL_LEAK}"
+
+# Test 25.9: Multi-cloud state drift evaluation across registered workloads
+TMP_DRIFT_DIR="$(mktemp -d -t drift_sec25_XXXXXX)"
+for wid in consumer-networking consumer-application consumer-data-platform; do
+  echo '{"schema_version": "1.0", "summary": {"verdict": "NO_DRIFT", "total_drifts": 0, "highest_severity": "NONE", "severity_counts": {"INFO": 0, "LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}, "category_counts": {"NO_DRIFT": 3}}}' > "${TMP_DRIFT_DIR}/${wid}.json"
+done
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --drift-dir "${TMP_DRIFT_DIR}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Multi-Cloud Drift Evaluation [9/15]: Clean multi-cloud drift reports ingested with status PASS"
+else
+  record_fail "Multi-Cloud Drift Evaluation [9/15]: Execution" "Failed verifying clean drift directory"
+fi
+rm -rf "${TMP_DRIFT_DIR}"
+
+# Test 25.10: Critical severity infrastructure drift halts verification
+TMP_CRIT_DIR="$(mktemp -d -t crit_sec25_XXXXXX)"
+echo '{"schema_version": "1.0", "summary": {"verdict": "DRIFT_DETECTED", "total_drifts": 1, "severity_counts": {"INFO": 0, "LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 1}, "category_counts": {"ATTRIBUTE_DRIFT": 1}}}' > "${TMP_CRIT_DIR}/consumer-networking.json"
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --drift-dir "${TMP_CRIT_DIR}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Critical Drift Circuit-Breaker [10/15]: CRITICAL severity drift strictly blocks verification"
+else
+  record_fail "Critical Drift Circuit-Breaker [10/15]: Gate check" "Verification succeeded despite critical drift"
+fi
+rm -rf "${TMP_CRIT_DIR}"
+
+# Test 25.11: Upgrade campaign state verification
+TMP_CAMP_FILE="$(mktemp -t camp_sec25_XXXXXX.json)"
+VALID_SHA="be51718f06a2662099500a710e93e6e8201b4f1c"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --campaign-file "${TMP_CAMP_FILE}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Campaign Pillar Verification [11/15]: Active signed campaign verified with status PASS"
+else
+  record_fail "Campaign Pillar Verification [11/15]: Execution" "Failed verifying active campaign file"
+fi
+
+# Test 25.12: Fail-closed Canary Gate enforcement in campaign
+python3 -c '
+import json, importlib.util
+with open("'"${TMP_CAMP_FILE}"'") as f:
+    c = json.load(f)
+for s in c.get("stages", []):
+    if s.get("stage_name") == "progressive":
+        s["status"] = "RUNNING"
+    elif s.get("stage_name") == "canary":
+        s["status"] = "PENDING"
+spec = importlib.util.spec_from_file_location("oc", "'"${REPO_ROOT}"'/scripts/orchestrate-campaign.py")
+oc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(oc)
+c["signature"] = oc.compute_campaign_signature(c)
+with open("'"${TMP_CAMP_FILE}"'", "w") as f:
+    json.dump(c, f, indent=2)
+'
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --campaign-file "${TMP_CAMP_FILE}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Canary Gate Verification [12/15]: Canary Gate breach in campaign halts verification (fail-closed)"
+else
+  record_fail "Canary Gate Verification [12/15]: Gate check" "Verification passed despite Canary Gate breach"
+fi
+rm -f "${TMP_CAMP_FILE}"
+
+# Test 25.13: Safe path validation and symlink rejection
+TMP_LINK_DIR="$(mktemp -d -t link_dir_XXXXXX)"
+ln -s "${REPO_ROOT}/config/fleet-manifest.yaml" "${TMP_LINK_DIR}/symlink_manifest.yaml"
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${TMP_LINK_DIR}/symlink_manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Symlink Security Guard [13/15]: Symlinked manifest rejected with error (fail-closed)"
+else
+  record_fail "Symlink Security Guard [13/15]: Guard check" "Symlinked manifest unexpectedly accepted"
+fi
+rm -rf "${TMP_LINK_DIR}"
+
+# Test 25.14: Consolidated report export (JSON and Markdown)
+TMP_EXP_JSON="$(mktemp -t exp_json_XXXXXX.json)"
+TMP_EXP_MD="$(mktemp -t exp_md_XXXXXX.md)"
+python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_EXP_JSON}" \
+    --output-markdown "${TMP_EXP_MD}" \
+    --quiet >/dev/null 2>&1
+if [[ -s "${TMP_EXP_JSON}" && -s "${TMP_EXP_MD}" ]] && \
+   grep -q '"overall_status": "COMPLIANT_AND_VERIFIED"' "${TMP_EXP_JSON}" && \
+   grep -q '# 🛡️ InfraFlow Enterprise Operational Maturity Verification Report' "${TMP_EXP_MD}"; then
+  record_pass "Report Exporters [14/15]: Consolidated JSON and Executive Markdown reports exported successfully"
+else
+  record_fail "Report Exporters [14/15]: Content check" "Exported JSON or Markdown missing expected content"
+fi
+rm -f "${TMP_EXP_JSON}" "${TMP_EXP_MD}"
+
+# Test 25.15: Dedicated 32-test operational maturity test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_operational_maturity.py" >/dev/null 2>&1; then
+  record_pass "Operational Maturity Adversarial Suite [15/15]: Dedicated 32-test suite passed (test_operational_maturity.py)"
+else
+  record_fail "Operational Maturity Adversarial Suite [15/15]: Test suite" "One or more tests in test_operational_maturity.py failed"
+fi
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 

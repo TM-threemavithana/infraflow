@@ -291,7 +291,7 @@ def evaluate_consumer_compliance(
             "drifted_count": summary_d.get("drifted_resources_count", 0),
             "highest_severity": summary_d.get("highest_severity", "NONE"),
         }
-        if verdict == "NO_DRIFT":
+        if verdict in ("NO_DRIFT", "CLEAN"):
             pillar_breakdown["drift_integrity"].append("Infrastructure state: CLEAN (zero drift detected)")
         else:
             highest_sev = summary_d.get("highest_severity", "MEDIUM")
@@ -344,13 +344,14 @@ def generate_compliance_report(
         repo_name = c.get("repository", "").split("/")[-1]
         cid = c.get("consumer_id", "")
 
-        # Try fleet_root / repo_name, then fleet_root / cid, then fixtures / consumers / ...
+        # Try fleet_root / repo_name, fleet_root / cid, fleet_root / workload_type, then fixtures / consumers / ...
+        cand0 = fleet_root / (c.get("workload_type") or "")
         cand1 = fleet_root / repo_name
         cand2 = fleet_root / cid
         cand3 = fleet_root / "fixtures" / "consumers" / (c.get("workload_type") or "")
 
         chosen_path = None
-        for cand in (cand1, cand2, cand3):
+        for cand in (cand0, cand1, cand2, cand3):
             if cand.is_dir():
                 chosen_path = cand
                 break

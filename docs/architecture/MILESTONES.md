@@ -444,14 +444,31 @@ Milestone G09.3 implements Pillar 4 of the InfraFlow Operational Maturity Archit
 
 ---
 
-## 29. Quality Gate Definitions
+## 29. Milestone G09.4 — Acceptance Criteria (Enterprise Governance Automation & Final Operational Maturity Verification)
+
+Milestone G09.4 finalizes Phase G09 by consolidating scheduled observability, multi-tenant fleet compliance scoring, continuous state drift simulation, and automated upgrade campaigns into a unified, fail-closed Enterprise Governance Verification Engine ([`scripts/verify-operational-maturity.py`](../../scripts/verify-operational-maturity.py)). It introduces deterministic SHA-256 evidence attestation signatures, fail-closed compliance threshold enforcement, critical drift circuit-breakers, Canary Gate validation, and a complete root [`README.md`](../../README.md) redesign ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G09-25** | Operational Maturity Governance Architecture | Formulate and document the 4-pillar unified governance verification framework, CLI specifications, and threat boundaries in [`docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md`](../operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md). | Documentation audit & review | **PASS (G09.4 Implemented)** |
+| **AC-G09-26** | Unified Operational Verification Engine CLI | Implement [`scripts/verify-operational-maturity.py`](../../scripts/verify-operational-maturity.py) orchestrating Telemetry (P1), Compliance (P2), Drift (P3), and Campaigns (P4) with full options suite (`--manifest`, `--fleet-root`, `--drift-dir`, `--campaign-file`, `--telemetry-file`, `--enforce-threshold`, `--output-json`, `--output-markdown`, `--emit-telemetry`). | CLI execution & option test suite | **PASS (G09.4 Implemented)** |
+| **AC-G09-27** | Deterministic Cryptographic Report Signatures | Compute deterministic SHA-256 report attestation signatures over canonical report payload representations (`report_signature`), strictly detecting and rejecting tampered evidence files. | Unit tests `test_signature_*` & CLI validation | **PASS (G09.4 Implemented)** |
+| **AC-G09-28** | Fail-Closed Compliance Threshold Enforcement | Evaluate multi-tenant compliance across 5 governance pillars; enforce minimum fleet compliance threshold (`--enforce-threshold`, default 90.0%), failing closed with exit code 1 if violated. | Adversarial tests & CLI threshold tests | **PASS (G09.4 Implemented)** |
+| **AC-G09-29** | Multi-Cloud State Drift Integration & Circuit-Breaker | Ingest drift reports across AWS, Azure, GCP; detect critical severity drift as a blocking governance circuit-breaker, enforcing read-only safety with zero destructive automated remediation. | Adversarial fixtures & CLI execution | **PASS (G09.4 Implemented)** |
+| **AC-G09-30** | Upgrade Campaign Lifecycle & Canary Verification | Ingest campaign state; verify Canary Gate enforcement (blocking progressive rollout when canary is pending/failed), SHA-256 state signatures, and rollback preparedness (`rollback_sha`). | Unit tests & tampered campaign tests | **PASS (G09.4 Implemented)** |
+| **AC-G09-31** | Supply-Chain & Defensive Security Guards | Enforce strict symlink rejection (`os.path.islink`), path traversal protection (`..`), and automatic recursive secret scrubbing across all exported payloads. | Adversarial security unit tests | **PASS (G09.4 Implemented)** |
+| **AC-G09-32** | 32-Scenario Adversarial Test Suite & Harness Section 25 | Author [`tests/test_operational_maturity.py`](../../tests/test_operational_maturity.py) (32 tests) and add Section 25 to `scripts/validate-local.sh` (15 checks, raising platform quality checks to 407). | `validate-local.sh` (407/407 passed) | **PASS (G09.4 Implemented)** |
+
+---
+
+## 30. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G09:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (392/392 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (407/407 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

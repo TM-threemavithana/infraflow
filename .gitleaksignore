@@ -1,0 +1,13 @@
+# Synthetic test fixtures for secret detection and scrubbing tests
+f264cc97f8a73c5b1679b312e5e14ace312abb0f:fixtures/drift/malformed/secret-leakage.json:github-pat:1
+fixtures/drift/malformed/secret-leakage.json:github-pat:1
+f264cc97f8a73c5b1679b312e5e14ace312abb0f:tests/test_drift_detection.py:github-pat:357
+tests/test_drift_detection.py:github-pat:357
+f264cc97f8a73c5b1679b312e5e14ace312abb0f:tests/test_drift_detection.py:github-pat:364
+tests/test_drift_detection.py:github-pat:364
+45809586a069bed77ad007b06de4588284d12366:tests/test_observability_and_compliance.py:jwt:128
+tests/test_observability_and_compliance.py:jwt:128
+59500fddecd40cf50d4b53e1852b5aca8ed8f192:policies/azure/storage_backend_test.rego:generic-api-key:149
+policies/azure/storage_backend_test.rego:generic-api-key:149
+7ab3c1cc104f3ef253b8bf5b21791e8b6d4ea19c:policies/azure/storage_backend_test.rego:generic-api-key:133
+policies/azure/storage_backend_test.rego:generic-api-key:133
