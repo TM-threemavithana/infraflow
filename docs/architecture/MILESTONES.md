@@ -19,7 +19,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, centralized governance, fleet upgrade orchestration, and release v0.6.0. | **PASS (Completed)** |
-| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1 Implemented) |
+| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1 & G09.2 Implemented) |
 
 ---
 
@@ -410,14 +410,31 @@ Milestone G09.1 establishes the foundational observability and compliance archit
 
 ---
 
-## 27. Quality Gate Definitions
+## 27. Milestone G09.2 — Acceptance Criteria (Continuous State & Speculative Drift Detection Simulation)
+
+Milestone G09.2 establishes a provider-neutral, multi-cloud Continuous State & Speculative Drift Detection Simulation engine, supporting AWS, Azure, and GCP resources. It introduces deterministic 6-category drift classification (NO_DRIFT, ATTRIBUTE_DRIFT, UNTRACKED_RESOURCE, RESOURCE_DELETED, UNKNOWN_RESOURCE, STATE_INCONSISTENCY), severity calculation (CRITICAL to NONE), strict schema validation, symlink rejection, identity binding, sensitive secret scrubbing, telemetry bus integration (`drift_detected`, `drift_assessment_completed`, `drift_assessment_failed`), and backward-compatible integration with the Central Compliance Dashboard ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G09-09** | Infrastructure Drift Detection Security Architecture | Document drift architecture, comparison models, three core drift categories, difference between simulation and live cloud drift detection, and STRIDE threat mitigations in [`docs/security/G09-DRIFT-DETECTION.md`](file:///home/tharuka/projects/infraflow/docs/security/G09-DRIFT-DETECTION.md). | Documentation audit & architecture review | **PASS (G09.2 Implemented)** |
+| **AC-G09-10** | Normalized Multi-Cloud State Schema & Fixtures | Implement Schema v1.0 normalized resource representations and create comprehensive fixtures across AWS, Azure, GCP, and malformed vectors in [`fixtures/drift/`](file:///home/tharuka/projects/infraflow/fixtures/drift/). | Schema validation & fixture parsing | **PASS (G09.2 Implemented)** |
+| **AC-G09-11** | Speculative Drift Simulation Engine | Implement [`scripts/simulate-drift.py`](file:///home/tharuka/projects/infraflow/scripts/simulate-drift.py) evaluating expected vs observed state snapshots, supporting attribute drift, untracked resources (shadow IT), and remote deletions across AWS, Azure, and GCP. | CLI execution & test suite | **PASS (G09.2 Implemented)** |
+| **AC-G09-12** | Deterministic Classification & Severity Calculation | Enforce deterministic classification (`NO_DRIFT`, `ATTRIBUTE_DRIFT`, `UNTRACKED_RESOURCE`, `RESOURCE_DELETED`, `UNKNOWN_RESOURCE`, `STATE_INCONSISTENCY`) and severity weighting (`CRITICAL` for security downgrades/deletions, `HIGH`, `MEDIUM`, `NONE`). | Python unit tests & adversarial vectors | **PASS (G09.2 Implemented)** |
+| **AC-G09-13** | Strict Security Boundaries & Secret Sanitization | Enforce strict JSON schema validation, explicit symlink rejection (`os.path.islink`), repository/workspace identity binding, and automated multi-tier sensitive secret scrubbing. Strictly no automatic remediation. | Adversarial unit tests & symlink vectors | **PASS (G09.2 Implemented)** |
+| **AC-G09-14** | Telemetry Bus Event Integration | Integrate [`scripts/emit-telemetry.py`](file:///home/tharuka/projects/infraflow/scripts/emit-telemetry.py) to publish `drift_detected`, `drift_assessment_completed`, and `drift_assessment_failed` events with canonical SHA-256 integrity digests. | Telemetry schema validation & CLI tests | **PASS (G09.2 Implemented)** |
+| **AC-G09-15** | Central Compliance Dashboard Drift Integration | Integrate per-consumer drift assessments into [`scripts/generate-compliance-dashboard.py`](file:///home/tharuka/projects/infraflow/scripts/generate-compliance-dashboard.py) under Pillar 5 (Drift Integrity), preserving backward compatibility while applying explicit evidence and penalties. | Dashboard generation & CLI execution | **PASS (G09.2 Implemented)** |
+| **AC-G09-16** | Dedicated 34-Scenario Adversarial Test Suite & Harness Integration | Implement [`tests/test_drift_detection.py`](file:///home/tharuka/projects/infraflow/tests/test_drift_detection.py) (34 tests) and integrate Section 23 into `scripts/validate-local.sh` (15 new checks, 377 total platform checks). | `validate-local.sh` (377/377 passed) | **PASS (G09.2 Implemented)** |
+
+---
+
+## 28. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G09:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (362/362 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (377/377 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

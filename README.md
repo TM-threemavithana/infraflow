@@ -22,9 +22,10 @@ InfraFlow separates infrastructure delivery into distinct layers:
    - **Consumer Validation Toolkit (`validate-consumer.py`)**: Standalone schema v1.0 and permission boundary validator.
    - **Fleet Upgrade Orchestrator (`plan-fleet-upgrade.py`)**: Transactional fleet upgrades, compatibility checking, 15-vector drift detection, and atomic rollback.
    - **Central Fleet Auditor (`audit-consumer-fleet.py`)**: Out-of-band monitoring and remote branch protection auditing.
-7. **Tier 3 — Fleet Observability, Telemetry & Central Compliance Engine (G09.1)**:
+7. **Tier 3 — Fleet Observability, Telemetry & Central Compliance Engine (G09.1/G09.2)**:
    - **Structured Telemetry Engine (`emit-telemetry.py`)**: Standardized OpenTelemetry/RFC 5424 schema v1.0 event emission with automated multi-tier sensitive secret scrubbing (AWS keys, GitHub tokens, JWTs, private keys) and deterministic SHA-256 anti-tampering digests.
    - **Central Compliance Dashboard Generator (`generate-compliance-dashboard.py`)**: Deterministic 5-pillar scoring engine (Contract Validity, Supply Chain Immutability, Mandatory Scanners, Least Privilege, Version Drift) exporting machine-readable JSON, GitHub Step Summary Markdown, and offline standalone HTML reports.
+   - **Speculative Drift Detection Engine (`simulate-drift.py`)**: Multi-cloud continuous state drift simulator detecting attribute drift, shadow IT creation, and remote deletions across AWS, Azure, and GCP ($0.00 cloud spend, zero live credentials).
    - **Fleet Observability Pipeline (`fleet-observability.yml`)**: Supply-chain hardened, scheduled (`0 6 * * 1`) observability workflow running with minimal privileges (`contents: read`).
 
 > [!IMPORTANT]
@@ -176,8 +177,8 @@ jobs:
 
 InfraFlow enforces rigorous quality and security standards across offline test harnesses and authoritative CI runners:
 
-- **Local Automated Quality Harness (`scripts/validate-local.sh`)**: **362/362** passing checks (100% pass rate) across 22 distinct test sections covering G01 through G09.
-- **Python Unit & Adversarial Test Suites**: **437/437** passing tests (`tests/`), including dedicated consumer onboarding (31), consumer governance (40), fleet upgrade orchestration (36), and observability & compliance (31) suites.
+- **Local Automated Quality Harness (`scripts/validate-local.sh`)**: **377/377** passing checks (100% pass rate) across 23 distinct test sections covering G01 through G09.2.
+- **Python Unit & Adversarial Test Suites**: **471/471** passing tests (`tests/`), including dedicated consumer onboarding (31), consumer governance (40), fleet upgrade orchestration (36), observability & compliance (31), and drift detection (34) suites.
 - **OPA / Conftest Rego Policy Suites**: **194/194** passing unit tests (`policies/`) covering naming, tags, S3, GCS, Azure Blob, AWS OIDC, GCP WIF, Azure Entra ID, and consumer governance deny policies.
 - **Reference Module & Fixture Testing**: 4 complete reference modules (`cloud-free-module`, `aws-reference-module`, `gcp-reference-module`, `azure-reference-module`) and 3 reference consumer fixtures (`fixtures/consumers/`) verified with zero cloud spend ($0.00).
 - **External Consumer Integration**: Independently verified on live GitHub Actions runners across 3 independent repositories:
@@ -238,10 +239,11 @@ infraflow/
 │   │   ├── G06/                       # Protected apply simulation evidence
 │   │   ├── G07/                       # Multi-cloud assessment, GCP, Azure & release evidence
 │   │   ├── G08/                       # Multi-repo adoption, governance & release evidence
-│   │   └── G09/                       # Operational maturity & compliance evidence (G09.1)
+│   │   └── G09/                       # Operational maturity, compliance & drift evidence (G09.1/G09.2)
 │   ├── planning/                      # Planning & approval specifications (G04)
-│   └── security/                      # DevSecOps security specifications (G03/G08)
-│       └── G08-CONSUMER-GOVERNANCE-MODEL.md
+│   └── security/                      # DevSecOps security specifications (G03/G08/G09)
+│       ├── G08-CONSUMER-GOVERNANCE-MODEL.md
+│       └── G09-DRIFT-DETECTION.md
 ├── examples/
 │   ├── cloud-free-module/             # Cloud-neutral reference module (terraform_data)
 │   ├── aws-reference-module/          # AWS mock-provider reference module
@@ -249,7 +251,8 @@ infraflow/
 │   ├── azure-reference-module/        # Azure mock-provider reference module
 │   └── consumer-workflow/             # Calling workflow integration patterns
 ├── fixtures/                          # Verification, security & planning test fixtures
-│   └── consumers/                     # Reference consumer fixtures (Networking, App, Data)
+│   ├── consumers/                     # Reference consumer fixtures (Networking, App, Data)
+│   └── drift/                         # Multi-cloud expected & observed drift fixtures (G09.2)
 ├── policies/                          # Declarative Rego Policy-as-Code suites
 │   ├── common/                        # Mandatory tags, naming, plan policies
 │   ├── aws/                           # AWS S3, security groups & OIDC policies
@@ -267,10 +270,11 @@ infraflow/
 │   ├── audit-consumer-fleet.py        # Out-of-band fleet governance auditor (G08.3)
 │   ├── emit-telemetry.py              # Structured event telemetry & anti-tampering (G09.1)
 │   ├── generate-compliance-dashboard.py # 5-pillar compliance scoring engine (G09.1)
-│   └── validate-local.sh              # Local automated verification harness (362 checks)
+│   ├── simulate-drift.py              # Continuous state & speculative drift simulator (G09.2)
+│   └── validate-local.sh              # Local automated verification harness (377 checks)
 ├── templates/
 │   └── consumer-repository/           # Self-service consumer starter template (G08.1)
-├── tests/                             # Python unit & adversarial test suites (437 tests)
+├── tests/                             # Python unit & adversarial test suites (471 tests)
 ├── .tflint.hcl                        # Standardized TFLint configuration
 ├── .zizmor.yml                        # Zizmor workflow audit configuration
 ├── LICENSE                            # Apache License 2.0
@@ -295,6 +299,7 @@ infraflow/
 - [Consumer Onboarding Guide](docs/adoption/CONSUMER-ONBOARDING-GUIDE.md)
 - [Platform Versioning & Upgrades](docs/adoption/PLATFORM-VERSIONING-AND-UPGRADES.md)
 - [Consumer Governance Model](docs/security/G08-CONSUMER-GOVERNANCE-MODEL.md)
+- [Infrastructure Drift Detection (G09.2)](docs/security/G09-DRIFT-DETECTION.md)
 
 ### Cloud Adapter Guides
 - [AWS Adapter Guide](docs/adapters/aws-adapter-guide.md)
@@ -314,3 +319,4 @@ infraflow/
 - [G08 Fleet Upgrade & Rollback Report](docs/evidence/G08/G08-4-FLEET-UPGRADE-AND-ROLLBACK-REPORT.md)
 - [G08 Final Multi-Repository Release Report](docs/evidence/G08/G08-FINAL-RELEASE-REPORT.md)
 - [G09.1 Observability & Compliance Report](docs/evidence/G09/G09-1-OBSERVABILITY-AND-COMPLIANCE-REPORT.md)
+- [G09.2 Drift Detection Report](docs/evidence/G09/G09-2-DRIFT-DETECTION-REPORT.md)

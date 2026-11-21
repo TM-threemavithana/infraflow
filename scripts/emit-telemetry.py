@@ -34,6 +34,8 @@ VALID_EVENT_TYPES = {
     "upgrade_applied",
     "rollback_executed",
     "drift_detected",
+    "drift_assessment_completed",
+    "drift_assessment_failed",
     "fleet_audit_completed",
     "compliance_evaluated",
 }

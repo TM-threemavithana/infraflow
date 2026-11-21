@@ -5121,6 +5121,239 @@ else
 fi
 rm -f "${TMP_ROUNDTRIP}"
 
+# ==============================================================================
+# 23. Continuous State & Speculative Drift Detection Simulation (G09.2)
+# ==============================================================================
+log_header "23. Continuous State & Speculative Drift Detection Simulation (G09.2)"
+
+# Test 23.1: scripts/simulate-drift.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/simulate-drift.py" && -x "${REPO_ROOT}/scripts/simulate-drift.py" ]]; then
+  record_pass "Drift Tooling [1/15]: scripts/simulate-drift.py exists and is executable"
+else
+  record_fail "Drift Tooling [1/15]: Script check" "scripts/simulate-drift.py missing or not executable"
+fi
+
+# Test 23.2: Clean AWS state comparison yields NO_DRIFT
+TMP_DRIFT_AWS_CLEAN="$(mktemp -t drift_aws_clean_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" \
+    --output-json "${TMP_DRIFT_AWS_CLEAN}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "NO_DRIFT"' "${TMP_DRIFT_AWS_CLEAN}" && grep -q '"highest_severity": "NONE"' "${TMP_DRIFT_AWS_CLEAN}"; then
+    record_pass "Drift Clean State AWS [2/15]: Clean AWS state comparison yields NO_DRIFT (exit code 0)"
+  else
+    record_fail "Drift Clean State AWS [2/15]: Output check" "AWS clean state did not emit expected NO_DRIFT verdict"
+  fi
+else
+  record_fail "Drift Clean State AWS [2/15]: Execution" "Failed evaluating AWS clean drift state"
+fi
+rm -f "${TMP_DRIFT_AWS_CLEAN}"
+
+# Test 23.3: Clean Azure state comparison yields NO_DRIFT
+TMP_DRIFT_AZ_CLEAN="$(mktemp -t drift_az_clean_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/azure/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/azure/clean/observed.json" \
+    --output-json "${TMP_DRIFT_AZ_CLEAN}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "NO_DRIFT"' "${TMP_DRIFT_AZ_CLEAN}"; then
+    record_pass "Drift Clean State Azure [3/15]: Clean Azure state comparison yields NO_DRIFT (exit code 0)"
+  else
+    record_fail "Drift Clean State Azure [3/15]: Output check" "Azure clean state did not emit expected NO_DRIFT verdict"
+  fi
+else
+  record_fail "Drift Clean State Azure [3/15]: Execution" "Failed evaluating Azure clean drift state"
+fi
+rm -f "${TMP_DRIFT_AZ_CLEAN}"
+
+# Test 23.4: Clean GCP state comparison yields NO_DRIFT
+TMP_DRIFT_GCP_CLEAN="$(mktemp -t drift_gcp_clean_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/gcp/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/gcp/clean/observed.json" \
+    --output-json "${TMP_DRIFT_GCP_CLEAN}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "NO_DRIFT"' "${TMP_DRIFT_GCP_CLEAN}"; then
+    record_pass "Drift Clean State GCP [4/15]: Clean GCP state comparison yields NO_DRIFT (exit code 0)"
+  else
+    record_fail "Drift Clean State GCP [4/15]: Output check" "GCP clean state did not emit expected NO_DRIFT verdict"
+  fi
+else
+  record_fail "Drift Clean State GCP [4/15]: Execution" "Failed evaluating GCP clean drift state"
+fi
+rm -f "${TMP_DRIFT_GCP_CLEAN}"
+
+# Test 23.5: Attribute drift detected and classified as ATTRIBUTE_DRIFT (CRITICAL for security)
+TMP_DRIFT_ATTR="$(mktemp -t drift_attr_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --output-json "${TMP_DRIFT_ATTR}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "DRIFT_DETECTED"' "${TMP_DRIFT_ATTR}" && \
+     grep -q '"drift_category": "ATTRIBUTE_DRIFT"' "${TMP_DRIFT_ATTR}" && \
+     grep -q '"highest_severity": "CRITICAL"' "${TMP_DRIFT_ATTR}"; then
+    record_pass "Drift Classification Attribute [5/15]: Attribute drift classified as ATTRIBUTE_DRIFT (CRITICAL)"
+  else
+    record_fail "Drift Classification Attribute [5/15]: Output check" "Attribute drift not correctly classified"
+  fi
+else
+  record_fail "Drift Classification Attribute [5/15]: Execution" "Failed executing attribute drift evaluation"
+fi
+rm -f "${TMP_DRIFT_ATTR}"
+
+# Test 23.6: Untracked shadow resource detected and classified as UNTRACKED_RESOURCE
+TMP_DRIFT_UNTRACK="$(mktemp -t drift_untrack_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/untracked-resource/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/untracked-resource/observed.json" \
+    --output-json "${TMP_DRIFT_UNTRACK}" >/dev/null 2>&1; then
+  if grep -q '"drift_category": "UNTRACKED_RESOURCE"' "${TMP_DRIFT_UNTRACK}" && \
+     grep -q '"highest_severity": "HIGH"' "${TMP_DRIFT_UNTRACK}"; then
+    record_pass "Drift Classification Untracked [6/15]: Shadow resource classified as UNTRACKED_RESOURCE (HIGH)"
+  else
+    record_fail "Drift Classification Untracked [6/15]: Output check" "Untracked resource not correctly classified"
+  fi
+else
+  record_fail "Drift Classification Untracked [6/15]: Execution" "Failed executing untracked drift evaluation"
+fi
+rm -f "${TMP_DRIFT_UNTRACK}"
+
+# Test 23.7: Remote deletion detected and classified as RESOURCE_DELETED
+TMP_DRIFT_DEL="$(mktemp -t drift_del_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/remote-deletion/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/remote-deletion/observed.json" \
+    --output-json "${TMP_DRIFT_DEL}" >/dev/null 2>&1; then
+  if grep -q '"drift_category": "RESOURCE_DELETED"' "${TMP_DRIFT_DEL}" && \
+     grep -q '"highest_severity": "CRITICAL"' "${TMP_DRIFT_DEL}"; then
+    record_pass "Drift Classification Deletion [7/15]: Remote deletion classified as RESOURCE_DELETED (CRITICAL)"
+  else
+    record_fail "Drift Classification Deletion [7/15]: Output check" "Remote deletion not correctly classified"
+  fi
+else
+  record_fail "Drift Classification Deletion [7/15]: Execution" "Failed executing deletion drift evaluation"
+fi
+rm -f "${TMP_DRIFT_DEL}"
+
+# Test 23.8: Symlink input state file rejected fail-closed (exit code != 0)
+TMP_SYMLINK="/tmp/symlink_drift_test_${RANDOM}.json"
+ln -sf "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" "${TMP_SYMLINK}"
+if ! python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${TMP_SYMLINK}" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" >/dev/null 2>&1; then
+  record_pass "Drift Security Symlink [8/15]: Symlink input state file rejected fail-closed (exit code != 0)"
+else
+  record_fail "Drift Security Symlink [8/15]: Security bypass" "simulate-drift.py unexpectedly accepted a symlink"
+fi
+rm -f "${TMP_SYMLINK}"
+
+# Test 23.9: Repository identity mismatch rejected fail-closed (exit code != 0)
+if ! python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/malformed/identity-mismatch.json" >/dev/null 2>&1; then
+  record_pass "Drift Security Identity [9/15]: Repository identity mismatch rejected fail-closed (exit code != 0)"
+else
+  record_fail "Drift Security Identity [9/15]: Security bypass" "simulate-drift.py accepted cross-repository state comparison"
+fi
+
+# Test 23.10: Secret credentials scrubbed from drift reports
+TMP_DRIFT_SEC="$(mktemp -t drift_sec_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/malformed/secret-leakage.json" \
+    --output-json "${TMP_DRIFT_SEC}" >/dev/null 2>&1
+if [[ -s "${TMP_DRIFT_SEC}" ]] && \
+   ! grep -q "AKIAIOSFODNN7EXAMPLE" "${TMP_DRIFT_SEC}" && \
+   ! grep -q "ghp_secrettoken" "${TMP_DRIFT_SEC}" && \
+   grep -q "\[REDACTED_AWS_KEY\]" "${TMP_DRIFT_SEC}"; then
+  record_pass "Drift Security Redaction [10/15]: Secret credentials (AKIA, tokens) automatically scrubbed"
+else
+  record_fail "Drift Security Redaction [10/15]: Redaction check" "Secret tokens found unredacted in drift report"
+fi
+rm -f "${TMP_DRIFT_SEC}"
+
+# Test 23.11: --enforce-zero-drift passes on clean state and fails closed on drifted state
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" \
+    --enforce-zero-drift >/dev/null 2>&1 && \
+   ! python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --enforce-zero-drift >/dev/null 2>&1; then
+  record_pass "Drift Zero Enforcement [11/15]: --enforce-zero-drift enforces fail-closed gate (0 on clean, 1 on drift)"
+else
+  record_fail "Drift Zero Enforcement [11/15]: Gate check" "--enforce-zero-drift failed exit code assertion"
+fi
+
+# Test 23.12: --output-markdown generates formatted GitHub Step Summary report
+TMP_DRIFT_MD="$(mktemp -t drift_md_XXXXXX.md)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --output-markdown "${TMP_DRIFT_MD}" >/dev/null 2>&1; then
+  if grep -q "## 🔍 InfraFlow Speculative Drift Detection Assessment" "${TMP_DRIFT_MD}" && \
+     grep -q "ATTRIBUTE_DRIFT" "${TMP_DRIFT_MD}"; then
+    record_pass "Drift Reporting Markdown [12/15]: --output-markdown generated formatted GitHub Step Summary"
+  else
+    record_fail "Drift Reporting Markdown [12/15]: Content check" "Markdown report missing expected drift headers"
+  fi
+else
+  record_fail "Drift Reporting Markdown [12/15]: Execution" "Failed generating markdown drift report"
+fi
+rm -f "${TMP_DRIFT_MD}"
+
+# Test 23.13: --emit-telemetry emits valid schema v1.0 drift events
+TMP_DRIFT_TEL="$(mktemp -t drift_tel_XXXXXX.jsonl)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --emit-telemetry \
+    --telemetry-output "${TMP_DRIFT_TEL}" >/dev/null 2>&1; then
+  if [[ -s "${TMP_DRIFT_TEL}" ]] && \
+     grep -q '"event_type": "drift_detected"' "${TMP_DRIFT_TEL}" && \
+     grep -q '"event_type": "drift_assessment_completed"' "${TMP_DRIFT_TEL}"; then
+    record_pass "Drift Telemetry Integration [13/15]: --emit-telemetry emitted valid schema v1.0 drift events"
+  else
+    record_fail "Drift Telemetry Integration [13/15]: Content check" "Emitted telemetry missing required drift event types"
+  fi
+else
+  record_fail "Drift Telemetry Integration [13/15]: Execution" "Failed emitting drift telemetry"
+fi
+rm -f "${TMP_DRIFT_TEL}"
+
+# Test 23.14: generate-compliance-dashboard.py evaluates per-consumer drift reports
+TMP_DRIFT_DIR="$(mktemp -d -t drift_dir_XXXXXX)"
+python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" \
+    --output-json "${TMP_DRIFT_DIR}/consumer-networking.json" >/dev/null 2>&1
+python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/azure/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/azure/attribute-drift/observed.json" \
+    --output-json "${TMP_DRIFT_DIR}/consumer-application.json" >/dev/null 2>&1
+TMP_COMP_JSON="$(mktemp -t comp_drift_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --drift-dir "${TMP_DRIFT_DIR}" \
+    --output-json "${TMP_COMP_JSON}" >/dev/null 2>&1; then
+  if grep -q '"drift_summary"' "${TMP_COMP_JSON}" && \
+     grep -q '"fleet_drift_verdict": "DRIFT_DETECTED"' "${TMP_COMP_JSON}"; then
+    record_pass "Drift Compliance Integration [14/15]: Compliance dashboard evaluates per-consumer drift reports"
+  else
+    record_fail "Drift Compliance Integration [14/15]: Content check" "Compliance dashboard JSON missing drift summary or verdict"
+  fi
+else
+  record_fail "Drift Compliance Integration [14/15]: Execution" "Failed executing compliance dashboard with drift-dir"
+fi
+rm -rf "${TMP_DRIFT_DIR}" "${TMP_COMP_JSON}"
+
+# Test 23.15: Dedicated 34-test drift detection test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_drift_detection.py" >/dev/null 2>&1; then
+  record_pass "Drift Adversarial Test Suite [15/15]: Dedicated 34-test suite passed (test_drift_detection.py)"
+else
+  record_fail "Drift Adversarial Test Suite [15/15]: Test suite" "One or more tests in test_drift_detection.py failed"
+fi
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 

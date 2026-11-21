@@ -74,6 +74,7 @@ def evaluate_consumer_compliance(
     consumer_entry: Dict[str, Any],
     repo_path: Optional[Path],
     telemetry_events: Optional[List[Dict[str, Any]]] = None,
+    drift_report: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Evaluates a single consumer repository across the 5 Governance Pillars.
@@ -93,6 +94,17 @@ def evaluate_consumer_compliance(
     findings: List[str] = []
     pillar_breakdown: Dict[str, List[str]] = {p: [] for p in pillar_scores}
 
+    # Pre-evaluate drift_info if drift_report provided (G09.2)
+    drift_info = None
+    if drift_report and isinstance(drift_report, dict):
+        summary_d = drift_report.get("summary", {})
+        verdict = summary_d.get("verdict", "NO_DRIFT")
+        drift_info = {
+            "verdict": verdict,
+            "drifted_count": summary_d.get("drifted_resources_count", 0),
+            "highest_severity": summary_d.get("highest_severity", "NONE"),
+        }
+
     if not repo_path or not repo_path.is_dir():
         findings.append(f"Repository local clone not available at '{repo_path}'")
         return {
@@ -106,6 +118,7 @@ def evaluate_consumer_compliance(
             "status": "NON_COMPLIANT",
             "findings": findings,
             "pillar_breakdown": pillar_breakdown,
+            "drift_assessment": drift_info,
         }
 
     # =========================================================================
@@ -268,6 +281,28 @@ def evaluate_consumer_compliance(
     else:
         findings.append(f"Consumer config SHA ({config_sha[:8] if config_sha else 'none'}...) does not match manifest target ({target_sha[:8] if target_sha else 'none'}...)")
 
+    # Optional Infrastructure State Drift Assessment Integration (G09.2)
+    drift_info = None
+    if drift_report and isinstance(drift_report, dict):
+        summary_d = drift_report.get("summary", {})
+        verdict = summary_d.get("verdict", "NO_DRIFT")
+        drift_info = {
+            "verdict": verdict,
+            "drifted_count": summary_d.get("drifted_resources_count", 0),
+            "highest_severity": summary_d.get("highest_severity", "NONE"),
+        }
+        if verdict == "NO_DRIFT":
+            pillar_breakdown["drift_integrity"].append("Infrastructure state: CLEAN (zero drift detected)")
+        else:
+            highest_sev = summary_d.get("highest_severity", "MEDIUM")
+            if highest_sev == "CRITICAL":
+                penalty = 10.0
+            else:
+                penalty = 5.0
+            pillar_scores["drift_integrity"] = max(0.0, pillar_scores["drift_integrity"] - penalty)
+            findings.append(f"Infrastructure state {highest_sev} drift: {summary_d.get('drifted_resources_count', 0)} drifted resources")
+            pillar_breakdown["drift_integrity"].append(f"Penalty: -{int(penalty)} pts for {highest_sev} infrastructure drift")
+
     total_score = float(sum(pillar_scores.values()))
 
     # Determine status
@@ -289,6 +324,7 @@ def evaluate_consumer_compliance(
         "status": status,
         "findings": findings,
         "pillar_breakdown": pillar_breakdown,
+        "drift_assessment": drift_info,
     }
 
 
@@ -296,6 +332,7 @@ def generate_compliance_report(
     manifest_path: Path,
     fleet_root: Path,
     telemetry_path: Optional[Path] = None,
+    drift_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Generates the full fleet compliance summary."""
     manifest = load_fleet_manifest(manifest_path)
@@ -322,7 +359,22 @@ def generate_compliance_report(
             if cand4.is_dir():
                 chosen_path = cand4
 
-        r = evaluate_consumer_compliance(c, chosen_path)
+        # Check for per-consumer drift report if drift_dir provided
+        consumer_drift_report = None
+        if drift_dir and drift_dir.is_dir():
+            for name_candidate in (cid, repo_name, c.get("workload_type")):
+                if not name_candidate:
+                    continue
+                cand_file = drift_dir / f"{name_candidate}.json"
+                if cand_file.is_file() and not (cand_file.is_symlink() or os.path.islink(cand_file)):
+                    try:
+                        with open(cand_file, "r", encoding="utf-8") as df:
+                            consumer_drift_report = json.load(df)
+                        break
+                    except Exception:
+                        pass
+
+        r = evaluate_consumer_compliance(c, chosen_path, drift_report=consumer_drift_report)
         reports.append(r)
 
     total_scores = [r["total_score"] for r in reports]
@@ -336,6 +388,15 @@ def generate_compliance_report(
         fleet_status = "NON_COMPLIANT"
 
     platform_info = manifest.get("platform", {})
+
+    drift_assessed = [r for r in reports if r.get("drift_assessment") is not None]
+    drift_summary = {
+        "evaluated": len(drift_assessed) > 0,
+        "total_assessed": len(drift_assessed),
+        "clean_consumers": sum(1 for r in drift_assessed if r["drift_assessment"]["verdict"] == "NO_DRIFT"),
+        "drifted_consumers": sum(1 for r in drift_assessed if r["drift_assessment"]["verdict"] == "DRIFT_DETECTED"),
+        "fleet_drift_verdict": "DRIFT_DETECTED" if any(r["drift_assessment"]["verdict"] == "DRIFT_DETECTED" for r in drift_assessed) else ("CLEAN" if drift_assessed else "NOT_EVALUATED"),
+    }
 
     return {
         "schema_version": "1.0",
@@ -354,6 +415,7 @@ def generate_compliance_report(
             "fleet_compliance_score": fleet_score,
             "fleet_status": fleet_status,
         },
+        "drift_summary": drift_summary,
         "consumers": reports,
     }
 
@@ -379,12 +441,22 @@ def render_markdown_dashboard(data: Dict[str, Any]) -> str:
         f"| **Fully Compliant Workloads** | **{summary['compliant_consumers']} / {summary['total_consumers']}** | 100% | 🟢 PASS |",
         f"| **Workloads with Warnings** | **{summary['warning_consumers']}** | 0 | {'🟡 WARN' if summary['warning_consumers'] > 0 else '🟢 ZERO'} |",
         f"| **Non-Compliant Workloads** | **{summary['non_compliant_consumers']}** | 0 | {'🔴 FAIL' if summary['non_compliant_consumers'] > 0 else '🟢 ZERO'} |",
+    ]
+
+    drift_s = data.get("drift_summary", {})
+    if drift_s.get("evaluated"):
+        drift_badge = "🟢 CLEAN" if drift_s.get("fleet_drift_verdict") == "CLEAN" else "🔴 DRIFT IDENTIFIED"
+        lines.append(
+            f"| **Infrastructure State Drift** | **{drift_s.get('clean_consumers')}/{drift_s.get('total_assessed')} Clean** | 100% Synchronized | {drift_badge} |"
+        )
+
+    lines.extend([
         "",
         "## 2. Multi-Tenant Workload Posture",
         "",
         "| Consumer ID | Workload / Repo | Adapter | P1 (Contract) | P2 (Immutability) | P3 (Security) | P4 (Permissions) | P5 (Drift) | Total Score | Status |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
-    ]
+    ])
 
     for c in data["consumers"]:
         ps = c["pillar_scores"]
@@ -716,6 +788,10 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Minimum overall fleet compliance percentage required (default: 0.0, e.g. 80.0)",
     )
+    parser.add_argument(
+        "--drift-dir",
+        help="Optional directory containing per-consumer drift report JSON files (G09.2)",
+    )
     return parser.parse_args()
 
 
@@ -725,12 +801,14 @@ def main() -> int:
     manifest_p = Path(args.manifest)
     fleet_r = Path(args.fleet_root)
     telemetry_p = Path(args.telemetry_path) if args.telemetry_path else None
+    drift_d = Path(args.drift_dir) if args.drift_dir else None
 
     try:
         report_data = generate_compliance_report(
             manifest_path=manifest_p,
             fleet_root=fleet_r,
             telemetry_path=telemetry_p,
+            drift_dir=drift_d,
         )
     except Exception as e:
         sys.stderr.write(f"[ERROR] Compliance report generation failed: {e}\n")

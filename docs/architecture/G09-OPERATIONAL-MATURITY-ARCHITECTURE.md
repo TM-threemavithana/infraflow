@@ -140,6 +140,7 @@ $$\text{Compliance Score} = P_1 + P_2 + P_3 + P_4 + P_5$$
    - Config `platform_sha` exactly matches workflow caller SHAs: **+10 pts**
    - Config `adapter` matches fleet manifest adapter: **+5 pts**
    - Consumer config SHA matches approved platform deployment target: **+5 pts**
+   - *Infrastructure State Drift (G09.2)*: Evaluates per-consumer state drift. Clean state retains full score with explicit evidence. Critical drift (deletions, security downgrades) applies **-10 pts** penalty; High/Medium drift applies **-5 pts** penalty.
 
 ### 4.2 Status Classification & Grading Bands
 - **`COMPLIANT` (Score $\ge 95.0\%$):** Workload meets all strict governance, security, and supply-chain requirements.
@@ -153,20 +154,40 @@ $$\text{Compliance Score} = P_1 + P_2 + P_3 + P_4 + P_5$$
 
 ---
 
-## 5. Security & Threat Modeling for Observability
+## 5. Pillar 3: Continuous State & Speculative Drift Detection Simulation (G09.2)
+
+### 5.1 Architecture & Objectives
+Milestone G09.2 implements speculative infrastructure drift detection ([`scripts/simulate-drift.py`](../../scripts/simulate-drift.py)) evaluating expected Terraform state ($S_{expected}$) against observed state ($S_{observed}$) across AWS, Azure, and GCP resources with zero cloud spend ($0.00) and zero credentials.
+
+### 5.2 Deterministic 6-Category Drift Taxonomy
+1. **`NO_DRIFT`**: Resource is synchronized across both states with identical normalized attributes (Severity: `NONE`).
+2. **`ATTRIBUTE_DRIFT`**: Resource exists in both states but attributes differ (Severity: `CRITICAL`, `HIGH`, or `MEDIUM`).
+3. **`UNTRACKED_RESOURCE`**: Resource exists only in observed state (shadow IT creation) (Severity: `HIGH`).
+4. **`RESOURCE_DELETED`**: Resource exists in expected state but missing from observed state (Severity: `CRITICAL`).
+5. **`UNKNOWN_RESOURCE`**: Unsupported provider or malformed resource identifier (Severity: `HIGH`).
+6. **`STATE_INCONSISTENCY`**: Type mismatch under identical resource ID, schema violation, or tenant cross-contamination (Severity: `CRITICAL`).
+
+### 5.3 Simulated vs. Live Cloud Drift Detection
+- **Simulation Mode**: Evaluates normalized state snapshots locally and in CI/CD pre-merge gates. Safe, deterministic, zero-spend ($0.00), tests severe failure modes (deletions, TLS downgrades, symlinks, secret leaks) without production risk. Strictly read-only with no automatic remediation.
+- **Live Cloud Runtime**: Read-only ingestion adapters query cloud APIs via OIDC tokens out-of-band, producing normalized state snapshots that feed directly into the same `simulate-drift.py` engine.
+
+---
+
+## 6. Security & Threat Modeling for Observability & Drift
 
 | Threat (STRIDE) | Attack Vector | InfraFlow Mitigation |
 | :--- | :--- | :--- |
-| **Information Disclosure** | Telemetry logs leaking cloud secrets, PATs, or JWTs | Automatic recursive regex scrubbing in `emit-telemetry.py` before event serialization or digest calculation. |
-| **Tampering** | Rogue actor altering telemetry logs or compliance scores | Deterministic SHA-256 event digest over canonical payload; validation fails closed on digest mismatch. |
-| **Elevation of Privilege** | Observability pipeline requesting write tokens or cloud credentials | Workflow runs strictly with `permissions: contents: read` and `persist-credentials: false`. |
+| **Spoofing** | Cross-tenant state comparison to inspect unauthorized infrastructure | Repository & workspace identity binding enforced; mismatches raise `DriftSecurityError`. |
+| **Information Disclosure** | Telemetry logs or drift diffs leaking cloud secrets, PATs, or JWTs | Automatic recursive regex scrubbing in `emit-telemetry.py` and `simulate-drift.py`. |
+| **Tampering** | Rogue actor altering telemetry logs, drift reports, or using symlinks | Explicit symlink rejection (`os.path.islink`) and deterministic SHA-256 event digest over canonical payload. |
+| **Elevation of Privilege** | Observability or drift pipeline attempting automated destructive actions | Zero automatic remediation invariant: strictly read-only reporting and telemetry emission. |
 | **Denial of Service** | Corrupted or massive telemetry files crashing parser | Strict schema v1.0 validation and size containment. |
 | **Repudiation** | Unverified audit claims without execution evidence | Every event records `event_id`, UTC timestamp, `execution_context` (run ID, actor, commit SHA). |
 
 ---
 
-## 6. Implementation Roadmap
+## 7. Implementation Roadmap
 
 - **G09.1 (Completed Foundation):** Fleet Observability Engine, Telemetry Schema v1.0, 5-Pillar Compliance Dashboard Generator, Offline HTML Reporting, Scheduled CI Pipeline.
-- **G09.2 (Next Phase):** Continuous Drift Detection Simulation & State Reconciliation Engine.
-- **G09.3 (Future Phase):** Automated Upgrade Campaigns & Fleet Rollout Tracking.
+- **G09.2 (Completed):** Continuous State & Speculative Drift Detection Simulation, Multi-Cloud Normalization, 6-Category Drift Engine, Compliance Dashboard Integration.
+- **G09.3 (Next Phase):** Automated Upgrade Campaigns & Fleet Rollout Tracking.
