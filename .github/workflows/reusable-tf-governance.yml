@@ -1,0 +1,246 @@
+name: "InfraFlow Consumer Governance Gate"
+
+# ==============================================================================
+# INFRAFLOW CENTRAL GOVERNANCE REUSABLE WORKFLOW (Milestone G08.3)
+#
+# Enforces enterprise adoption contracts, configuration schema, directory
+# containment, least-privilege permissions, immutable platform commit pinning,
+# and centralized OPA/Conftest governance policy compliance across consumer repos.
+#
+# Invariants:
+# 1. Zero Cloud Spend ($0.00) & Zero Live Credentials.
+# 2. Minimum Permissions: contents: read (Zero id-token: write).
+# 3. Authoritative Tooling: Fetches validator & policies from platform at immutable SHA.
+# 4. Fail-Closed: Blocks PR if contract, permissions, or policies are violated.
+# ==============================================================================
+
+on:
+  workflow_call:
+    inputs:
+      config-file:
+        description: "Relative path to consumer configuration file (infraflow.config.yaml)"
+        required: false
+        default: "infraflow.config.yaml"
+        type: string
+      working-directory:
+        description: "Relative path to consumer repository root"
+        required: false
+        default: "."
+        type: string
+      expected-adapter:
+        description: "Expected cloud adapter (aws, azure, gcp, generic, apply-simulation)"
+        required: false
+        default: ""
+        type: string
+      platform-ref:
+        description: "Canonical InfraFlow platform repository"
+        required: false
+        default: "TM-threemavithana/infraflow"
+        type: string
+      platform-sha:
+        description: "Pinned immutable 40-character commit SHA of InfraFlow platform"
+        required: true
+        type: string
+      enforce-rego-policy:
+        description: "Whether to evaluate central OPA/Conftest governance policy"
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      governance-status:
+        description: "Final status of governance validation (success or failure)"
+        value: ${{ jobs.evaluate-governance.outputs.governance-status }}
+      consumer-id:
+        description: "Validated consumer identifier"
+        value: ${{ jobs.evaluate-governance.outputs.consumer-id }}
+      adapter:
+        description: "Validated cloud adapter"
+        value: ${{ jobs.evaluate-governance.outputs.adapter }}
+      platform-sha:
+        description: "Validated platform commit SHA"
+        value: ${{ jobs.evaluate-governance.outputs.platform-sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate-governance:
+    name: "Evaluate Consumer Governance & Adoption Contracts"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      governance-status: ${{ steps.aggregate.outputs.governance-status }}
+      consumer-id: ${{ steps.aggregate.outputs.consumer-id }}
+      adapter: ${{ steps.aggregate.outputs.adapter }}
+      platform-sha: ${{ steps.aggregate.outputs.platform-sha }}
+
+    steps:
+      - name: "Checkout Consumer Repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Security Guard: Validate Governance Inputs"
+        id: guard
+        env:
+          INPUT_CONFIG: ${{ inputs.config-file }}
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_PLATFORM_REF: ${{ inputs.platform-ref }}
+          INPUT_PLATFORM_SHA: ${{ inputs.platform-sha }}
+        run: |
+          set -euo pipefail
+          echo "::group::Validating Governance Workflow Inputs"
+
+          # 1. Reject path traversals
+          if [[ "${INPUT_CONFIG}" =~ (\.\.[/\\]|[/\\]\.\.) ]]; then
+            echo "::error::Security Violation: Path traversal in config-file '${INPUT_CONFIG}'."
+            exit 1
+          fi
+          if [[ "${INPUT_DIR}" =~ (\.\.[/\\]|[/\\]\.\.) ]]; then
+            echo "::error::Security Violation: Path traversal in working-directory '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 2. Validate canonical platform repository
+          if [[ "${INPUT_PLATFORM_REF}" != "TM-threemavithana/infraflow" ]]; then
+            echo "::error::Security Violation: Unauthorized platform reference '${INPUT_PLATFORM_REF}'. Must be TM-threemavithana/infraflow."
+            exit 1
+          fi
+
+          # 3. Enforce immutable 40-character commit SHA
+          if [[ ! "${INPUT_PLATFORM_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Security Violation: Platform reference must be an immutable 40-character commit SHA, got: '${INPUT_PLATFORM_SHA}'."
+            exit 1
+          fi
+
+          echo "Governance input parameters validated."
+          echo "::endgroup::"
+
+      - name: "Checkout Authoritative Platform Toolchain (Immutable SHA)"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ inputs.platform-ref }}
+          ref: ${{ inputs.platform-sha }}
+          path: ".infraflow-platform"
+          persist-credentials: false
+
+      - name: "Setup Python 3.11 Environment"
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.11"
+
+      - name: "Install Authoritative Python Dependencies"
+        run: |
+          python3 -m pip install --no-cache-dir pyyaml
+
+      - name: "Execute Authoritative Consumer Validator"
+        id: validator
+        env:
+          CONFIG_FILE: ${{ inputs.config-file }}
+          REPO_DIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Executing InfraFlow Consumer Contract & Security Validator"
+
+          mkdir -p .infraflow-temp
+          python3 .infraflow-platform/scripts/validate-consumer.py \
+            --config "${CONFIG_FILE}" \
+            --repo-dir "${REPO_DIR}" \
+            --export-governance-payload .infraflow-temp/gov-payload.json \
+            --json > .infraflow-temp/val-result.json
+
+          echo "Validator completed successfully."
+          cat .infraflow-temp/val-result.json
+          echo "::endgroup::"
+
+      - name: "Setup Conftest Policy Engine"
+        if: inputs.enforce-rego-policy
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Conftest Policy Engine"
+          mkdir -p "${RUNNER_TEMP}/bin"
+          if command -v conftest >/dev/null 2>&1; then
+            echo "Conftest already installed on runner: $(conftest --version | head -n1)"
+            cp "$(command -v conftest)" "${RUNNER_TEMP}/bin/conftest"
+          else
+            CONFTEST_VERSION="0.56.0"
+            CONFTEST_SHA="b8d4f40f3b0e129dd9dd299cb8f9d8a39d482bb2b45e2ef11eb1752b7bceb83e"
+            curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+            echo "${CONFTEST_SHA}  ${RUNNER_TEMP}/conftest.tar.gz" | sha256sum -c -
+            tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
+            chmod +x "${RUNNER_TEMP}/bin/conftest"
+          fi
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          echo "::endgroup::"
+
+      - name: "Evaluate Central OPA Governance Policies"
+        id: conftest
+        if: inputs.enforce-rego-policy
+        run: |
+          set -euo pipefail
+          echo "::group::Evaluating Central OPA Consumer Governance Policies"
+          conftest test \
+            --namespace governance.consumer \
+            --policy .infraflow-platform/policies/governance \
+            .infraflow-temp/gov-payload.json \
+            --no-color
+          echo "All governance Rego policies satisfied."
+          echo "::endgroup::"
+
+      - name: "Aggregate Governance Results & Emit Outputs"
+        id: aggregate
+        if: always()
+        env:
+          VALIDATOR_OUTCOME: ${{ steps.validator.outcome }}
+          CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          ENFORCE_POLICY: ${{ inputs.enforce-rego-policy }}
+          PLATFORM_SHA: ${{ inputs.platform-sha }}
+        run: |
+          set -euo pipefail
+          echo "::group::Aggregating Consumer Governance Results"
+
+          GOV_STATUS="failed"
+          CONSUMER_ID="unknown"
+          ADAPTER="unknown"
+
+          if [[ -f .infraflow-temp/gov-payload.json ]]; then
+            CONSUMER_ID=$(python3 -c "import json; d=json.load(open('.infraflow-temp/gov-payload.json')); print(d.get('consumer_id', 'unknown'))")
+            ADAPTER=$(python3 -c "import json; d=json.load(open('.infraflow-temp/gov-payload.json')); print(d.get('adapter', 'unknown'))")
+          fi
+
+          if [[ "${VALIDATOR_OUTCOME}" == "success" ]]; then
+            if [[ "${ENFORCE_POLICY}" != "true" || "${CONFTEST_OUTCOME}" == "success" ]]; then
+              GOV_STATUS="success"
+            fi
+          fi
+
+          {
+            echo "governance-status=${GOV_STATUS}"
+            echo "consumer-id=${CONSUMER_ID}"
+            echo "adapter=${ADAPTER}"
+            echo "platform-sha=${PLATFORM_SHA}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "=============================================================================="
+          echo ">>> InfraFlow Consumer Governance Evaluation Summary"
+          echo "=============================================================================="
+          echo "Consumer ID:       ${CONSUMER_ID}"
+          echo "Adapter:           ${ADAPTER}"
+          echo "Platform SHA:      ${PLATFORM_SHA}"
+          echo "Validator Outcome: ${VALIDATOR_OUTCOME}"
+          echo "Policy Outcome:    ${CONFTEST_OUTCOME}"
+          echo "Final Status:      ${GOV_STATUS}"
+          echo "=============================================================================="
+
+          if [[ "${GOV_STATUS}" != "success" ]]; then
+            echo "::error::InfraFlow consumer governance gate failed closed."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: "Security Workspace Cleanup"
+        if: always()
+        run: |
+          rm -rf .infraflow-platform .infraflow-temp

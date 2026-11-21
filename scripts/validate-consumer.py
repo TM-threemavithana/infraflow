@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-InfraFlow Consumer Repository Onboarding Validator (Milestone G08.1)
+InfraFlow Consumer Repository Onboarding & Governance Validator (Milestone G08.3)
 
 Validates consumer repository configuration (infraflow.config.yaml), workflow
-security permissions, directory containment, and platform dependency pinning
-against InfraFlow enterprise adoption contracts.
+security permissions, directory containment, platform dependency pinning, and
+mandatory adapter workflow invocations against InfraFlow enterprise governance contracts.
 
 Exit Codes:
   0 - All validation checks passed cleanly.
@@ -12,15 +12,18 @@ Exit Codes:
 """
 
 import argparse
+import copy
 import json
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
     import yaml
+    from yaml.constructor import ConstructorError
+    from yaml.resolver import BaseResolver
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
@@ -31,10 +34,45 @@ except ImportError:
 # ==============================================================================
 
 SUPPORTED_SCHEMA_VERSIONS = {"1.0"}
-SUPPORTED_WORKLOAD_TYPES = {"networking", "application", "data-platform", "general"}
-SUPPORTED_ENVIRONMENTS = {"dev", "staging", "prod"}
-SUPPORTED_ADAPTERS = {"provider-neutral", "aws", "gcp", "azure", "apply-simulation"}
+SUPPORTED_WORKLOAD_TYPES = {
+    "networking",
+    "application",
+    "data-platform",
+    "general",
+    "database",
+    "mlops",
+    "shared-services",
+    "test",
+}
+SUPPORTED_ENVIRONMENTS = {"dev", "staging", "prod", "sand", "test"}
+SUPPORTED_ADAPTERS = {"provider-neutral", "aws", "gcp", "azure", "apply-simulation", "generic"}
 CANONICAL_PLATFORM_REF = "TM-threemavithana/infraflow"
+
+ADAPTER_WORKFLOW_MAP = {
+    "aws": "reusable-tf-aws.yml",
+    "azure": "reusable-tf-azure.yml",
+    "gcp": "reusable-tf-gcp.yml",
+    "provider-neutral": "reusable-tf-validate.yml",
+    "generic": "reusable-tf-validate.yml",
+    "apply-simulation": "reusable-tf-apply.yml",
+}
+
+ALLOWED_PLATFORM_WORKFLOWS = {
+    "reusable-tf-aws.yml",
+    "reusable-tf-azure.yml",
+    "reusable-tf-gcp.yml",
+    "reusable-tf-validate.yml",
+    "reusable-tf-security.yml",
+    "reusable-tf-plan.yml",
+    "reusable-tf-apply.yml",
+    "reusable-tf-governance.yml",
+}
+
+CLOUD_ADAPTER_WORKFLOWS = {
+    "reusable-tf-aws.yml",
+    "reusable-tf-azure.yml",
+    "reusable-tf-gcp.yml",
+}
 
 RE_CONSUMER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 RE_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -112,68 +150,32 @@ class ValidationResult:
 
 
 # ==============================================================================
-# Lightweight YAML Parser Fallback (When PyYAML is absent)
+# Secure YAML Parser with Duplicate Key Detection
 # ==============================================================================
 
-def parse_simple_yaml(text: str) -> Dict[str, Any]:
-    """Basic line-based parser supporting simple key: value and 1-level nested dicts."""
-    data: Dict[str, Any] = {}
-    current_dict = data
-    current_parent_key = None
-
-    for line_num, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        indent = len(line) - len(line.lstrip())
-
-        if indent > 0 and current_parent_key is not None:
-            # Sub-key
-            if ":" in stripped:
-                k, v = stripped.split(":", 1)
-                k = k.strip()
-                v = v.strip().split("#")[0].strip()
-                parsed_v = _parse_yaml_scalar(v)
-                if isinstance(data.get(current_parent_key), dict):
-                    data[current_parent_key][k] = parsed_v
-            continue
-
-        if ":" in stripped:
-            k, v = stripped.split(":", 1)
-            k = k.strip()
-            v = v.strip().split("#")[0].strip()
-            if not v:
-                # Parent key of a block
-                current_parent_key = k
-                data[k] = {}
-            else:
-                current_parent_key = None
-                data[k] = _parse_yaml_scalar(v)
-
-    return data
-
-
-def _parse_yaml_scalar(val: str) -> Any:
-    if val.startswith('"') and val.endswith('"'):
-        return val[1:-1]
-    if val.startswith("'") and val.endswith("'"):
-        return val[1:-1]
-    if val.lower() == "true":
-        return True
-    if val.lower() == "false":
-        return False
-    if val.lower() == "null":
-        return None
-    try:
-        return int(val)
-    except ValueError:
+if HAS_YAML:
+    class DuplicateKeyCheckLoader(yaml.SafeLoader):
+        """SafeLoader that detects and rejects duplicate keys in any mapping."""
         pass
-    try:
-        return float(val)
-    except ValueError:
-        pass
-    return val
+
+    def _construct_mapping(loader, node, deep=False):
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"Duplicate key '{key}' detected in YAML document",
+                    key_node.start_mark,
+                )
+            mapping[key] = loader.construct_object(value_node, deep=deep)
+        return mapping
+
+    DuplicateKeyCheckLoader.add_constructor(
+        BaseResolver.DEFAULT_MAPPING_TAG,
+        _construct_mapping,
+    )
 
 
 def load_config_file(config_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -185,20 +187,16 @@ def load_config_file(config_path: Path) -> Tuple[Optional[Dict[str, Any]], Optio
     except Exception as e:
         return None, f"Failed to read configuration file: {e}"
 
-    if HAS_YAML:
-        try:
-            parsed = yaml.safe_load(content)
-            if not isinstance(parsed, dict):
-                return None, f"Configuration root must be a YAML dictionary, got {type(parsed).__name__}"
-            return parsed, None
-        except Exception as e:
-            return None, f"Malformed YAML syntax in {config_path.name}: {e}"
-    else:
-        try:
-            parsed = parse_simple_yaml(content)
-            return parsed, None
-        except Exception as e:
-            return None, f"Failed parsing YAML: {e}"
+    if not HAS_YAML:
+        return None, "PyYAML parser library is required for authoritative configuration loading. Failing closed."
+
+    try:
+        parsed = yaml.load(content, Loader=DuplicateKeyCheckLoader)
+        if not isinstance(parsed, dict):
+            return None, f"Configuration root must be a YAML dictionary, got {type(parsed).__name__}"
+        return parsed, None
+    except Exception as e:
+        return None, f"Malformed YAML or duplicate key in {config_path.name}: {e}"
 
 
 # ==============================================================================
@@ -362,7 +360,6 @@ def validate_consumer_filesystem(config: Dict[str, Any], repo_dir: Path, result:
 
         target_tf_dir = raw_tf_dir.resolve()
         try:
-            # Check containment within repo_dir
             target_tf_dir.relative_to(repo_dir)
         except ValueError:
             result.record_fail("Workspace Containment", f"Terraform directory '{tf_dir_rel}' resolves outside repository root")
@@ -377,48 +374,277 @@ def validate_consumer_filesystem(config: Dict[str, Any], repo_dir: Path, result:
             else:
                 result.record_pass(f"Terraform Workspace: Contained ({len(tf_files)} .tf files found)")
 
-    # 2. GitHub Actions Workflow Inspection
+    # 2. GitHub Actions Workflow Inspection (GOV-G08-01: Must fail closed if missing)
     workflows_dir = repo_dir / ".github" / "workflows"
     if not workflows_dir.is_dir():
-        result.record_warn("Workflow Directory", "No '.github/workflows/' directory found in repository")
+        result.record_fail(
+            "Workflow Directory",
+            "Missing mandatory '.github/workflows/' directory. Consumer repository must declare at least one active InfraFlow workflow.",
+        )
         return
 
-    workflow_files = list(workflows_dir.glob("*.yml")) + list(workflows_dir.glob("*.yaml"))
+    workflow_files = sorted(list(workflows_dir.glob("*.yml")) + list(workflows_dir.glob("*.yaml")))
     if not workflow_files:
-        result.record_warn("Workflows", "No workflow YAML files found in '.github/workflows/'")
+        result.record_fail(
+            "Workflows",
+            "No workflow YAML files found in '.github/workflows/'. Consumer repository must define an active InfraFlow caller workflow.",
+        )
+        return
+
+    if not HAS_YAML:
+        result.record_fail(
+            "YAML Parser",
+            "PyYAML parser library is required for authoritative workflow security parsing. Failing closed.",
+        )
         return
 
     expected_sha = config.get("platform_sha", "")
+    expected_adapter = str(config.get("adapter", "")).strip().lower()
+    expected_adapter_wf = ADAPTER_WORKFLOW_MAP.get(expected_adapter)
+
+    all_called_workflows: Set[str] = set()
+
     for wf in workflow_files:
-        _inspect_workflow_security(wf, expected_sha, result)
+        called = _inspect_workflow_security(wf, expected_sha, expected_adapter, result)
+        all_called_workflows.update(called)
+
+    # 3. Adapter Workflow Invocation Verification (GOV-G08-02)
+    if not all_called_workflows:
+        result.record_fail(
+            "Platform Invocation",
+            "No InfraFlow reusable workflows are invoked in repository workflows. Configuration claims InfraFlow adoption while skipping its execution.",
+        )
+        return
+
+    if expected_adapter_wf and expected_adapter_wf not in all_called_workflows:
+        result.record_fail(
+            "Adapter Invocation",
+            f"Config specifies adapter '{expected_adapter}' (requires '{expected_adapter_wf}'), but no workflow in '.github/workflows/' invokes this reusable workflow.",
+        )
+    else:
+        result.record_pass(f"Adapter Invocation: Expected workflow '{expected_adapter_wf}' invoked")
+
+    # Check for contradictory cloud adapters (e.g. AWS repo invoking GCP adapter)
+    called_cloud_adapters = all_called_workflows.intersection(CLOUD_ADAPTER_WORKFLOWS)
+    if expected_adapter_wf in CLOUD_ADAPTER_WORKFLOWS:
+        contradictory = called_cloud_adapters - {expected_adapter_wf}
+        if contradictory:
+            result.record_fail(
+                "Contradictory Adapter Invocation",
+                f"Config specifies adapter '{expected_adapter}' but workflow invokes contradictory cloud adapter(s): {sorted(list(contradictory))}",
+            )
 
 
-def _inspect_workflow_security(wf_path: Path, expected_sha: str, result: ValidationResult):
+def _inspect_workflow_security(
+    wf_path: Path, expected_sha: str, expected_adapter: str, result: ValidationResult
+) -> Set[str]:
+    called_platform_workflows: Set[str] = set()
+
     try:
         content = wf_path.read_text(encoding="utf-8")
     except Exception as e:
-        result.record_fail("Workflow Read", f"Failed reading workflow {wf_path.name}: {e}")
+        result.record_fail(f"Workflow Read ({wf_path.name})", f"Failed reading workflow: {e}")
+        return called_platform_workflows
+
+    # Structural YAML parsing with duplicate key check (GOV-G08-03)
+    try:
+        doc = yaml.load(content, Loader=DuplicateKeyCheckLoader)
+    except Exception as e:
+        result.record_fail(f"Workflow Syntax ({wf_path.name})", f"Malformed YAML syntax or duplicate key: {e}")
+        return called_platform_workflows
+
+    if not isinstance(doc, dict):
+        result.record_fail(f"Workflow Structure ({wf_path.name})", f"Root element must be a mapping, got {type(doc).__name__}")
+        return called_platform_workflows
+
+    # 1. Trigger Inspection (Handle PyYAML parsing 'on:' as boolean True or string 'on')
+    triggers = doc.get("on") if "on" in doc else doc.get(True)
+    if triggers is not None:
+        trigger_names: Set[str] = set()
+        if isinstance(triggers, dict):
+            trigger_names = set(triggers.keys())
+        elif isinstance(triggers, list):
+            trigger_names = set(triggers)
+        elif isinstance(triggers, str):
+            trigger_names = {triggers}
+
+        if "pull_request_target" in trigger_names:
+            result.record_fail(
+                f"Trigger Safety ({wf_path.name})",
+                "'pull_request_target' trigger is strictly forbidden due to privilege escalation risks.",
+            )
+
+    # 2. Workflow-Level Permissions Inspection
+    wf_perms = doc.get("permissions")
+    _inspect_permissions(wf_perms, f"Workflow Permissions ({wf_path.name})", result)
+
+    # 3. Jobs Inspection
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict) or not jobs:
+        result.record_fail(f"Workflow Structure ({wf_path.name})", "Missing or empty 'jobs' dictionary in workflow.")
+        return called_platform_workflows
+
+    for job_id, job_data in jobs.items():
+        if not isinstance(job_data, dict):
+            continue
+
+        # Check job-level permissions
+        job_perms = job_data.get("permissions")
+        _inspect_permissions(job_perms, f"Job Permissions ({wf_path.name} -> {job_id})", result)
+
+        # Check secrets inheritance
+        if job_data.get("secrets") == "inherit":
+            result.record_fail(
+                f"Secret Safety ({wf_path.name} -> {job_id})",
+                "Job specifies 'secrets: inherit'. Secret inheritance is strictly forbidden in consumer workflows.",
+            )
+
+        # Check reusable workflow invocation
+        uses_ref = str(job_data.get("uses", "")).strip()
+        if not uses_ref:
+            continue
+
+        match = re.match(r"^([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)/\.github/workflows/([^@\s]+)@([^\s#]+)", uses_ref)
+        if match:
+            repo_name = match.group(1)
+            wf_name = match.group(2)
+            ref_sha = match.group(3)
+
+            # Check repo boundary
+            if repo_name != CANONICAL_PLATFORM_REF:
+                result.record_fail(
+                    f"Platform Repository ({wf_path.name} -> {job_id})",
+                    f"Workflow calls unauthorized repository '{repo_name}'. Expected '{CANONICAL_PLATFORM_REF}'.",
+                )
+                continue
+
+            # Check allowed workflows
+            if wf_name not in ALLOWED_PLATFORM_WORKFLOWS:
+                result.record_fail(
+                    f"Platform Workflow ({wf_path.name} -> {job_id})",
+                    f"Workflow calls unknown platform workflow '{wf_name}'. Must be one of: {sorted(list(ALLOWED_PLATFORM_WORKFLOWS))}",
+                )
+                continue
+
+            called_platform_workflows.add(wf_name)
+
+            # Check immutable SHA pinning
+            if ref_sha in {"main", "master", "latest", "dev", "HEAD", "v0.5.0", "v0.4.0", "v1"}:
+                result.record_fail(
+                    f"Platform Pinning ({wf_path.name} -> {job_id})",
+                    f"Reusable workflow '{wf_name}' references mutable ref '@{ref_sha}'. Must pin immutable 40-character commit SHA.",
+                )
+            elif not RE_COMMIT_SHA.match(ref_sha):
+                result.record_fail(
+                    f"Platform Pinning ({wf_path.name} -> {job_id})",
+                    f"Reusable workflow '{wf_name}' reference '@{ref_sha}' is not a valid 40-character hex commit SHA.",
+                )
+            elif expected_sha and ref_sha != expected_sha:
+                result.record_fail(
+                    f"Platform Pinning ({wf_path.name} -> {job_id})",
+                    f"Workflow references SHA '{ref_sha[:8]}...' but infraflow.config.yaml specifies '{expected_sha[:8]}...'. Hashes must match.",
+                )
+            else:
+                result.record_pass(f"Workflow Pinning ({wf_path.name} -> {job_id}): Pinned to immutable SHA ({ref_sha[:8]}...)")
+
+            # Check job inputs in 'with:'
+            inputs = job_data.get("with", {})
+            if isinstance(inputs, dict):
+                for bad_key in DISALLOWED_CLOUD_AUTH_KEYS:
+                    if inputs.get(bad_key) is True:
+                        result.record_fail(
+                            f"Cloud Auth Safety ({wf_path.name} -> {job_id})",
+                            f"Input '{bad_key}: true' attempts to enable live cloud authentication. Live cloud auth is strictly forbidden.",
+                        )
+
+    return called_platform_workflows
+
+
+def _inspect_permissions(perms: Any, context: str, result: ValidationResult):
+    if perms is None:
         return
 
-    # Check for excessive permissions
-    if re.search(r"^\s*permissions:\s*write-all", content, re.MULTILINE):
-        result.record_fail(f"Permissions ({wf_path.name})", "Excessive permissions detected: 'write-all' is strictly forbidden.")
+    if perms == "write-all":
+        result.record_fail(context, "Excessive permissions detected: 'write-all' is strictly forbidden.")
+        return
 
-    # Check for pull_request_target
-    if re.search(r"^\s*pull_request_target:", content, re.MULTILINE):
-        result.record_fail(f"Trigger Safety ({wf_path.name})", "'pull_request_target' trigger is strictly forbidden due to privilege escalation risks.")
+    if isinstance(perms, dict):
+        if perms.get("id-token") == "write":
+            result.record_fail(context, "Excessive permissions detected: 'id-token: write' is strictly forbidden in cloud-free consumer workflows.")
 
-    # Check if workflow calls InfraFlow reusable workflow
-    infraflow_call_matches = re.findall(r"uses:\s*TM-threemavithana/infraflow/\.github/workflows/([^@\s]+)@([^\s#]+)", content)
-    for wf_name, ref in infraflow_call_matches:
-        if ref in {"main", "master", "latest", "dev"}:
-            result.record_fail(f"Platform Pinning ({wf_path.name})", f"Reusable workflow '{wf_name}' references mutable ref '@{ref}'. Must pin immutable 40-character commit SHA.")
-        elif not RE_COMMIT_SHA.match(ref):
-            result.record_fail(f"Platform Pinning ({wf_path.name})", f"Reusable workflow '{wf_name}' reference '@{ref}' is not a valid 40-character hex commit SHA.")
-        elif expected_sha and ref != expected_sha:
-            result.record_fail(f"Platform Pinning ({wf_path.name})", f"Workflow references SHA '{ref[:8]}...' but infraflow.config.yaml specifies '{expected_sha[:8]}...'. Hashes must match.")
-        else:
-            result.record_pass(f"Workflow Pinning ({wf_path.name}): Pinned to immutable SHA ({ref[:8]}...)")
+        for perm_name, perm_val in perms.items():
+            if perm_val in {"write", "write-all"}:
+                result.record_fail(context, f"Excessive permission '{perm_name}: {perm_val}' detected. Consumer workflows must strictly enforce read-only permissions.")
+
+
+# ==============================================================================
+# Normalized Governance Payload Generator (For OPA / Conftest)
+# ==============================================================================
+
+def generate_governance_payload(config: Dict[str, Any], repo_dir: Path) -> Dict[str, Any]:
+    """Generates normalized JSON document consumed by policies/governance/consumer_governance.rego."""
+    repo_dir = repo_dir.resolve()
+    workflows_dir = repo_dir / ".github" / "workflows"
+
+    workflow_calls = []
+    triggers = set()
+    permissions_summary = {}
+
+    if workflows_dir.is_dir():
+        for wf in sorted(list(workflows_dir.glob("*.yml")) + list(workflows_dir.glob("*.yaml"))):
+            try:
+                content = wf.read_text(encoding="utf-8")
+                doc = yaml.load(content, Loader=DuplicateKeyCheckLoader) if HAS_YAML else {}
+                if isinstance(doc, dict):
+                    wf_trig = doc.get("on") if "on" in doc else doc.get(True)
+                    if isinstance(wf_trig, dict):
+                        triggers.update(wf_trig.keys())
+                    elif isinstance(wf_trig, list):
+                        triggers.update(wf_trig)
+                    elif isinstance(wf_trig, str):
+                        triggers.add(wf_trig)
+
+                    if isinstance(doc.get("permissions"), dict):
+                        permissions_summary.update(doc.get("permissions"))
+                    elif isinstance(doc.get("permissions"), str):
+                        permissions_summary["_root"] = doc.get("permissions")
+
+                    jobs = doc.get("jobs", {})
+                    if isinstance(jobs, dict):
+                        for job_id, job_info in jobs.items():
+                            if isinstance(job_info, dict):
+                                uses = str(job_info.get("uses", ""))
+                                m = re.match(r"^([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)/\.github/workflows/([^@\s]+)@([^\s#]+)", uses)
+                                if m:
+                                    workflow_calls.append({
+                                        "workflow_file": wf.name,
+                                        "job_id": job_id,
+                                        "platform_repo": m.group(1),
+                                        "platform_workflow": m.group(2),
+                                        "platform_sha": m.group(3),
+                                        "inputs": job_info.get("with", {}),
+                                        "permissions": job_info.get("permissions", {}),
+                                        "secrets": job_info.get("secrets", ""),
+                                    })
+            except Exception:
+                pass
+
+    return {
+        "version": config.get("version"),
+        "consumer_id": config.get("consumer_id"),
+        "team": config.get("team"),
+        "workload_type": config.get("workload_type"),
+        "environment": config.get("environment"),
+        "adapter": config.get("adapter"),
+        "platform_ref": config.get("platform_ref"),
+        "platform_sha": config.get("platform_sha"),
+        "terraform_version": config.get("terraform_version"),
+        "terraform_dir": config.get("terraform_dir"),
+        "security_controls": config.get("security_controls", {}),
+        "workflow_calls": workflow_calls,
+        "triggers": sorted(list(triggers)),
+        "permissions": permissions_summary,
+    }
 
 
 # ==============================================================================
@@ -427,7 +653,7 @@ def _inspect_workflow_security(wf_path: Path, expected_sha: str, result: Validat
 
 def main():
     parser = argparse.ArgumentParser(
-        description="InfraFlow Consumer Repository Onboarding Validator",
+        description="InfraFlow Consumer Repository Onboarding & Governance Validator",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -450,6 +676,12 @@ def main():
         help="Emit results as JSON payload",
     )
     parser.add_argument(
+        "--export-governance-payload",
+        type=Path,
+        default=None,
+        help="Export normalized governance JSON payload for OPA/Conftest evaluation",
+    )
+    parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
@@ -469,6 +701,12 @@ def main():
     else:
         validate_consumer_config(config_data, result)
         validate_consumer_filesystem(config_data, repo_dir, result)
+
+    if args.export_governance_payload:
+        out_path = args.export_governance_payload
+        if config_data:
+            gov_payload = generate_governance_payload(config_data, repo_dir)
+            out_path.write_text(json.dumps(gov_payload, indent=2), encoding="utf-8")
 
     if args.json:
         payload = {

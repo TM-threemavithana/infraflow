@@ -13,8 +13,18 @@ permissions:
   contents: read
 
 jobs:
+  governance-gate:
+    name: "InfraFlow Governance Gate"
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-governance.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
+    with:
+      config-file: "infraflow.config.yaml"
+      working-directory: "."
+      platform-sha: "2ce0ddd5de01530b6bf7aba749f0081620fb9b27"
+      expected-adapter: "gcp"
+
   gcp-speculative-plan:
     name: "GCP Speculative Plan (Cloud-Free)"
+    needs: [governance-gate]
     uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
       gcp-project-id: "infraflow-data-dev-01"

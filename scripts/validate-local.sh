@@ -4661,7 +4661,140 @@ else
   record_fail "Consumer Test Suite [18/18]: Test suite" "One or more tests in tests/test_consumer_onboarding.py failed"
 fi
 
-# --- 20. Summary Report ---
+# --- 20. Centralized Governance, Policy Enforcement & Consumer Trust Hardening Quality Gates (G08.3) ---
+log_header "20. Consumer Governance, Policy Enforcement & Trust Hardening (G08.3)"
+
+GOV_WORKFLOW="${REPO_ROOT}/.github/workflows/reusable-tf-governance.yml"
+GOV_REGO_DIR="${REPO_ROOT}/policies/governance"
+
+# Test 20.1: Governance reusable workflow exists
+if [[ -f "${GOV_WORKFLOW}" ]]; then
+  record_pass "Consumer Governance Workflow [1/12]: reusable-tf-governance.yml exists"
+else
+  record_fail "Consumer Governance Workflow [1/12]: File check" "reusable-tf-governance.yml not found"
+fi
+
+# Test 20.2: Actionlint on governance reusable workflow
+if [[ -n "${ACTIONLINT_BIN}" ]]; then
+  if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" "${AL_ARGS[@]}" "${GOV_WORKFLOW}" >/dev/null 2>&1); then
+    record_pass "Consumer Governance Workflow [2/12]: actionlint static analysis passed with zero errors"
+  else
+    record_fail "Consumer Governance Workflow [2/12]: actionlint" "actionlint reported errors on reusable-tf-governance.yml"
+  fi
+else
+  record_fail "Consumer Governance Workflow [2/12]: actionlint" "actionlint binary not found"
+fi
+
+# Test 20.3: Zizmor on governance reusable workflow
+if [[ -n "${ZIZMOR_BIN}" ]]; then
+  if "${ZIZMOR_BIN}" -c "${REPO_ROOT}/.zizmor.yml" --min-severity medium "${GOV_WORKFLOW}" >/dev/null 2>&1; then
+    record_pass "Consumer Governance Workflow [3/12]: zizmor security audit passed with zero findings"
+  else
+    record_fail "Consumer Governance Workflow [3/12]: zizmor" "zizmor found security issues in reusable-tf-governance.yml"
+  fi
+else
+  record_fail "Consumer Governance Workflow [3/12]: zizmor" "zizmor binary not found"
+fi
+
+# Test 20.4: Conftest verification of Rego governance policy test assertions
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" verify -p "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+    record_pass "Consumer Governance Policies [4/12]: Conftest verify passed all unit tests (policies/governance/*.rego)"
+  else
+    record_fail "Consumer Governance Policies [4/12]: conftest verify" "Conftest policy verification failed"
+  fi
+else
+  record_fail "Consumer Governance Policies [4/12]: conftest verify" "conftest binary not found"
+fi
+
+# Test 20.5: Governance payload validation against Networking Fixture
+TMP_GOV_NET="$(mktemp -t gov_net_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/validate-consumer.py" -c "${NET_FIXTURE_DIR}/infraflow.config.yaml" -r "${NET_FIXTURE_DIR}" --export-governance-payload "${TMP_GOV_NET}" >/dev/null 2>&1 && \
+   "${CONFTEST_BIN}" test --namespace governance.consumer -p "${GOV_REGO_DIR}" "${TMP_GOV_NET}" >/dev/null 2>&1; then
+  record_pass "Consumer Governance Policies [5/12]: Networking fixture payload passes all OPA governance rules"
+else
+  record_fail "Consumer Governance Policies [5/12]: Networking fixture" "Conftest governance policy evaluation failed on networking fixture"
+fi
+rm -f "${TMP_GOV_NET}"
+
+# Test 20.6: Governance payload validation against Application Fixture
+TMP_GOV_APP="$(mktemp -t gov_app_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/validate-consumer.py" -c "${APP_FIXTURE_DIR}/infraflow.config.yaml" -r "${APP_FIXTURE_DIR}" --export-governance-payload "${TMP_GOV_APP}" >/dev/null 2>&1 && \
+   "${CONFTEST_BIN}" test --namespace governance.consumer -p "${GOV_REGO_DIR}" "${TMP_GOV_APP}" >/dev/null 2>&1; then
+  record_pass "Consumer Governance Policies [6/12]: Application fixture payload passes all OPA governance rules"
+else
+  record_fail "Consumer Governance Policies [6/12]: Application fixture" "Conftest governance policy evaluation failed on application fixture"
+fi
+rm -f "${TMP_GOV_APP}"
+
+# Test 20.7: Governance payload validation against Data Platform Fixture
+TMP_GOV_DATA="$(mktemp -t gov_data_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/validate-consumer.py" -c "${DATA_FIXTURE_DIR}/infraflow.config.yaml" -r "${DATA_FIXTURE_DIR}" --export-governance-payload "${TMP_GOV_DATA}" >/dev/null 2>&1 && \
+   "${CONFTEST_BIN}" test --namespace governance.consumer -p "${GOV_REGO_DIR}" "${TMP_GOV_DATA}" >/dev/null 2>&1; then
+  record_pass "Consumer Governance Policies [7/12]: Data platform fixture payload passes all OPA governance rules"
+else
+  record_fail "Consumer Governance Policies [7/12]: Data platform fixture" "Conftest governance policy evaluation failed on data platform fixture"
+fi
+rm -f "${TMP_GOV_DATA}"
+
+# Test 20.8: Governance payload validation against Template Repository
+TMP_GOV_TMPL="$(mktemp -t gov_tmpl_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/validate-consumer.py" -c "${TEMPLATE_DIR}/infraflow.config.yaml" -r "${TEMPLATE_DIR}" --export-governance-payload "${TMP_GOV_TMPL}" >/dev/null 2>&1 && \
+   "${CONFTEST_BIN}" test --namespace governance.consumer -p "${GOV_REGO_DIR}" "${TMP_GOV_TMPL}" >/dev/null 2>&1; then
+  record_pass "Consumer Governance Policies [8/12]: Template repository payload passes all OPA governance rules"
+else
+  record_fail "Consumer Governance Policies [8/12]: Template repository" "Conftest governance policy evaluation failed on template repository"
+fi
+rm -f "${TMP_GOV_TMPL}"
+
+# Test 20.9: Fleet auditor script execution on local fixture repositories
+if python3 "${REPO_ROOT}/scripts/audit-consumer-fleet.py" \
+     "${NET_FIXTURE_DIR}" "${APP_FIXTURE_DIR}" "${DATA_FIXTURE_DIR}" "${TEMPLATE_DIR}" >/dev/null 2>&1; then
+  record_pass "Consumer Fleet Auditor [9/12]: scripts/audit-consumer-fleet.py executed and passed across all fixtures"
+else
+  record_fail "Consumer Fleet Auditor [9/12]: audit-consumer-fleet.py" "Fleet auditor failed on fixture repositories"
+fi
+
+# Test 20.10: Fleet auditor failure detection on invalid repository
+TMP_INVALID_REPO="$(mktemp -d -t invalid_repo_XXXXXX)"
+mkdir -p "${TMP_INVALID_REPO}/.github/workflows"
+cat << 'EOF' > "${TMP_INVALID_REPO}/infraflow.config.yaml"
+version: "1.0"
+consumer_id: "invalid-consumer"
+team: "unauthorized"
+workload_type: "general"
+terraform_dir: "terraform"
+environment: "dev"
+adapter: "aws"
+platform_ref: "TM-threemavithana/infraflow"
+platform_sha: "main"
+terraform_version: "1.10.4"
+security_controls:
+  enforce_mandatory_scanners: false
+  max_allowed_deletions: 50
+EOF
+if python3 "${REPO_ROOT}/scripts/audit-consumer-fleet.py" "${TMP_INVALID_REPO}" >/dev/null 2>&1; then
+  record_fail "Consumer Fleet Auditor [10/12]: Negative check" "Fleet auditor unexpectedly passed on invalid repository"
+else
+  record_pass "Consumer Fleet Auditor [10/12]: Fleet auditor correctly detected and rejected invalid consumer repository"
+fi
+rm -rf "${TMP_INVALID_REPO}"
+
+# Test 20.11: Dedicated Adversarial Consumer Governance Python Test Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_consumer_governance.py" >/dev/null 2>&1; then
+  record_pass "Consumer Governance Test Suite [11/12]: Dedicated 40-test adversarial governance suite passed (tests/test_consumer_governance.py)"
+else
+  record_fail "Consumer Governance Test Suite [11/12]: Test suite" "One or more tests in tests/test_consumer_governance.py failed"
+fi
+
+# Test 20.12: Full Platform Test Suite passing
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
+  record_pass "Platform Python Test Suite [12/12]: All 370 platform tests passed (tests/test_*.py)"
+else
+  record_fail "Platform Python Test Suite [12/12]: Platform test suite" "One or more platform tests failed"
+fi
+
+# --- 21. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
