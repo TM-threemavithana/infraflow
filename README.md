@@ -91,9 +91,9 @@ Without a centralized infrastructure delivery platform, modern multi-cloud engin
 
 1. **Zero Cloud Spending Invariant ($0.00)**: All workflows, adapters, test suites, and drift detection engines operate locally or in CI without live cloud credentials or cloud resource costs.
 2. **Read-Only Governance & Zero Destructive Remediation**: The platform detects, classifies, and reports policy violations and infrastructure drift without performing unapproved, automated cloud resource destruction.
-3. **Cryptographic Integrity & Supply Chain Immutability**: All external actions and platform references are pinned to immutable 40-character commit SHAs. Plans, campaigns, and governance reports are sealed with deterministic SHA-256 signatures.
+3. **Cryptographic Integrity & Supply Chain Immutability**: All external actions and platform references are pinned to immutable 40-character commit SHAs. Plans are attested with ECDSA P-256 digital signatures, and campaigns/governance reports are sealed with deterministic SHA-256 state integrity digests.
 4. **Least Privilege & Strict Isolation**: Workflows run with default `contents: read` permissions. Cloud OIDC credentials are never exposed across unprivileged stages.
-5. **Fail-Closed Defensive Architecture**: Missing contracts, tampered signatures, path traversal attempts, or Canary Gate breaches result in immediate execution halts.
+5. **Fail-Closed Defensive Architecture**: Missing contracts, tampered integrity digests or signatures, path traversal attempts, or Canary Gate breaches result in immediate execution halts.
 
 ---
 
@@ -372,7 +372,7 @@ The **Drift Detection Engine** ([`scripts/simulate-drift.py`](scripts/simulate-d
 ## 17. Automated Upgrade Campaigns
 
 The **Campaign Orchestrator** ([`scripts/orchestrate-campaign.py`](scripts/orchestrate-campaign.py)) manages fleet-wide platform version transitions:
-- **Schema v1.0 Signed State**: Every campaign is signed with a deterministic SHA-256 signature calculated over canonical state. Tampered files are rejected.
+- **Schema v1.0 State Integrity**: Every campaign is sealed with a deterministic SHA-256 integrity digest calculated over canonical state. Tampered files are rejected.
 - **7-Stage Lifecycle Machine**: `PLANNED` -> `CANARY_IN_PROGRESS` -> `CANARY_VERIFIED` -> `PROGRESSIVE_IN_PROGRESS` -> `COMPLETED` / `ROLLED_BACK`.
 - **Canary Gate Invariant**: Progressive rollout is strictly blocked if designated canary workloads are `PENDING`, `RUNNING`, or `FAILED`.
 - **Simulated Pull Requests**: Generates deterministic simulated PR branches, numbers, and Markdown review summaries with $0.00 cloud spend.
@@ -582,6 +582,10 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 3. **Live OIDC Exchanges**: Reusable workflows declare full OIDC token exchange steps. Live execution requires configuring GitHub repository trust relationships in the target cloud identity providers.
 4. **State Storage**: State backends in reference fixtures use local storage. Production environments must provision actual S3 buckets, Azure Storage containers, or GCS buckets with matching permissions.
 5. **Human Approval Authority**: Pull Request approval gates and environment protections rely on GitHub repository environment configuration and branch protection rules.
+6. **Cryptographic Signatures vs. State Integrity Digests**: Asymmetric digital signatures (ECDSA P-256 with in-toto DSSE envelopes) are specifically implemented for Plan Provenance Attestations in `scripts/verify-plan-integrity.py`. For upgrade campaign state files and operational verification reports, deterministic SHA-256 canonical hashing is used for state integrity and tamper detection against accidental or unauthorized mutation.
+7. **Speculative Drift Simulation vs. Live Cloud Drift**: Drift detection simulates differences between expected and observed state snapshots; it does not connect to live cloud APIs to inspect live AWS, Azure, or GCP infrastructure.
+8. **Simulated vs. Real Upgrade Execution**: Upgrade campaigns generate simulated PR branches and metadata locally; actual remote branch creation and pull request merging remain under human operator authority.
+9. **Branch Protection Auditing vs. Administration**: Branch protection and ruleset compliance are audited via GitHub API checks (`scripts/audit-consumer-fleet.py`); InfraFlow does not programmatically override or configure organization-level repository administration settings.
 
 ---
 
