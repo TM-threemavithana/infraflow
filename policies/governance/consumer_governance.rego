@@ -16,6 +16,42 @@ is_terraform_artifact if {
 }
 
 is_terraform_artifact if {
+	input.variable
+}
+
+is_terraform_artifact if {
+	input.output
+}
+
+is_terraform_artifact if {
+	input.terraform
+}
+
+is_terraform_artifact if {
+	input.run
+}
+
+is_terraform_artifact if {
+	input.locals
+}
+
+is_terraform_artifact if {
+	input.data
+}
+
+is_terraform_artifact if {
+	input.provider
+}
+
+is_terraform_artifact if {
+	input.check
+}
+
+is_terraform_artifact if {
+	input.module
+}
+
+is_terraform_artifact if {
 	input.resource_changes
 }
 
