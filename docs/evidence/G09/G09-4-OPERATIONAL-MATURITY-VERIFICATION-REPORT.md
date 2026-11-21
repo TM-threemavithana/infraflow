@@ -21,20 +21,20 @@ Milestone **G09.4** completes the operational maturity phase of the InfraFlow pl
 
 ### Key Deliverables Achieved:
 
-1. **Unified Operational Maturity Verification Engine ([`scripts/verify-operational-maturity.py`](../../scripts/verify-operational-maturity.py))**:
+1. **Unified Operational Maturity Verification Engine ([`scripts/verify-operational-maturity.py`](../../../scripts/verify-operational-maturity.py))**:
    - Single fail-closed CLI that evaluates all 4 operational maturity pillars in a single deterministic pass.
    - Enforces configurable compliance scoring thresholds (`--enforce-threshold`, default 90.0%).
    - Generates machine-readable JSON summaries (`--output-json`) and GitHub Step Summary Markdown (`--output-markdown`).
-   - Implements deterministic SHA-256 report attestation signatures (`report_signature`) with tamper detection.
-2. **Dedicated Unit & Adversarial Test Suite ([`tests/test_operational_maturity.py`](../../tests/test_operational_maturity.py))**:
+   - Implements deterministic SHA-256 report attestation integrity digests (`report_signature`) with tamper detection.
+2. **Dedicated Unit & Adversarial Test Suite ([`tests/test_operational_maturity.py`](../../../tests/test_operational_maturity.py))**:
    - 32 comprehensive tests covering CLI flag parsing, signature calculation, telemetry validation, compliance scoring, drift gating, Canary gate breaches, symlink attacks, and secret leakage.
    - Discovered Python tests raised to **535 passing tests** with 100% success rate.
-3. **Local Quality Harness Section 25 ([`scripts/validate-local.sh`](../../scripts/validate-local.sh))**:
+3. **Local Quality Harness Section 25 ([`scripts/validate-local.sh`](../../../scripts/validate-local.sh))**:
    - Added Section 25 containing 15 automated validation gates.
    - Total quality gates elevated from 392 to **407 checks passing (100%)**.
 4. **Comprehensive Documentation & Root README Redesign**:
-   - Complete redesign of the root [`README.md`](../../README.md) into a world-class, 28-section open-source project landing page with cohesive architecture diagrams, verified badges, and quickstart workflows.
-   - Full operational guide created in [`docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md`](../../docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md).
+   - Complete redesign of the root [`README.md`](../../../README.md) into a world-class, 28-section open-source project landing page with cohesive architecture diagrams, verified badges, and quickstart workflows.
+   - Full operational guide created in [`docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md`](../../operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md).
 
 ---
 
@@ -42,14 +42,14 @@ Milestone **G09.4** completes the operational maturity phase of the InfraFlow pl
 
 | AC ID | Acceptance Criteria Summary | Target Deliverable / Scope | Verification Method | Status |
 |---|---|---|---|---|
-| **AC-G09-25** | Operational Maturity Architecture Specification | Document 4-pillar consolidation and governance architecture in [`docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md`](../../docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md). | Documentation audit & review | **PASS (G09.4 Implemented)** |
-| **AC-G09-26** | Unified Operational Verification Engine CLI | Implement [`scripts/verify-operational-maturity.py`](../../scripts/verify-operational-maturity.py) with options `--manifest`, `--fleet-root`, `--drift-dir`, `--campaign-file`, `--telemetry-file`, `--enforce-threshold`, `--output-json`, `--output-markdown`. | CLI execution & `--help` verification | **PASS (G09.4 Implemented)** |
-| **AC-G09-27** | Deterministic Cryptographic Report Signatures | Compute deterministic SHA-256 report attestation signature over canonical report payload, rejecting tampered payloads. | Unit tests `test_signature_*` & CLI validation | **PASS (G09.4 Implemented)** |
+| **AC-G09-25** | Operational Maturity Architecture Specification | Document 4-pillar consolidation and governance architecture in [`docs/operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md`](../../operations/G09-OPERATIONAL-MATURITY-VERIFICATION.md). | Documentation audit & review | **PASS (G09.4 Implemented)** |
+| **AC-G09-26** | Unified Operational Verification Engine CLI | Implement [`scripts/verify-operational-maturity.py`](../../../scripts/verify-operational-maturity.py) with options `--manifest`, `--fleet-root`, `--drift-dir`, `--campaign-file`, `--telemetry-file`, `--enforce-threshold`, `--output-json`, `--output-markdown`. | CLI execution & `--help` verification | **PASS (G09.4 Implemented)** |
+| **AC-G09-27** | Deterministic Report Attestation Digests | Compute deterministic SHA-256 report attestation integrity digest over canonical report payload, rejecting tampered payloads. | Unit tests `test_signature_*` & CLI validation | **PASS (G09.4 Implemented)** |
 | **AC-G09-28** | Fail-Closed Compliance Threshold Enforcement | Evaluate multi-tenant compliance across 5 governance pillars; halt execution with exit code 1 if score < threshold. | Adversarial tests & CLI threshold tests | **PASS (G09.4 Implemented)** |
 | **AC-G09-29** | Multi-Cloud State Drift Integration & Circuit-Breaker | Ingest drift reports across AWS, Azure, GCP; detect critical severity drift as a blocking governance circuit-breaker. | Adversarial fixtures & CLI execution | **PASS (G09.4 Implemented)** |
 | **AC-G09-30** | Upgrade Campaign Lifecycle & Canary Verification | Ingest campaign state; verify Canary Gate enforcement, state signatures, and rollback preparedness. | Unit tests & tampered campaign tests | **PASS (G09.4 Implemented)** |
 | **AC-G09-31** | Supply-Chain & Defensive Security Guards | Enforce strict symlink rejection (`os.path.islink`), path traversal protection (`..`), and automatic secret sanitization. | Adversarial security unit tests | **PASS (G09.4 Implemented)** |
-| **AC-G09-32** | 32-Scenario Adversarial Test Suite & Harness Section 25 | Author [`tests/test_operational_maturity.py`](../../tests/test_operational_maturity.py) (32 tests) and add Section 25 to `scripts/validate-local.sh` (15 checks, 407 total platform checks). | `validate-local.sh` (407/407 passed) | **PASS (G09.4 Implemented)** |
+| **AC-G09-32** | 32-Scenario Adversarial Test Suite & Harness Section 25 | Author [`tests/test_operational_maturity.py`](../../../tests/test_operational_maturity.py) (32 tests) and add Section 25 to `scripts/validate-local.sh` (15 checks, 407 total platform checks). | `validate-local.sh` (407/407 passed) | **PASS (G09.4 Implemented)** |
 
 ---
 
