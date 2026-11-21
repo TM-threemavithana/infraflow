@@ -28,7 +28,7 @@ Both the scheduled observability workflow ([`.github/workflows/fleet-observabili
 
 | Repository | Role / Cloud Adapter | Verified `main` Commit SHA | Integration Path | Status |
 |---|---|---|---|---|
-| `TM-threemavithana/infraflow` | Platform Core Engine | `feature/g09-operational-maturity` (PR #7) | `.` (Root) | **VERIFIED** |
+| `TM-threemavithana/infraflow` | Platform Core Engine | `cb7d8167848492129fa549f03ccf8fc9b3d860f5` (PR #7) | `.` (Root) | **VERIFIED** |
 | `TM-threemavithana/infraflow-consumer-networking` | Canary Consumer (AWS) | `f27c9eb2ab5b59632fea9ac12632534a5a8a05bc` | `fleet/infraflow-consumer-networking` | **100.0% COMPLIANT** |
 | `TM-threemavithana/infraflow-consumer-application` | Progressive Consumer (Azure) | `0c2bca294490f329b246652e306730a2c5c7af20` | `fleet/infraflow-consumer-application` | **100.0% COMPLIANT** |
 | `TM-threemavithana/infraflow-consumer-data-platform` | Progressive Consumer (GCP) | `e9de14a2648b2ced4202aefdef28bc55b98a7f34` | `fleet/infraflow-consumer-data-platform` | **100.0% COMPLIANT** |
@@ -43,10 +43,15 @@ Both the scheduled observability workflow ([`.github/workflows/fleet-observabili
 - **Fleet Resolution:** Enhanced to check out all registered consumer repositories into `fleet/` using `actions/checkout@v4` with `persist-credentials: false`.
 - **Inputs Evaluated:**
   - Evaluates `config/fleet-manifest.yaml` against `--fleet-root fleet`.
-  - Runs `scripts/plan-fleet-upgrade.py --manifest config/fleet-manifest.yaml --check-drift`.
+  - Runs `scripts/plan-fleet-upgrade.py --manifest config/fleet-manifest.yaml --fleet-root fleet --platform-dir . --check-drift`.
   - Runs `scripts/generate-compliance-dashboard.py --manifest config/fleet-manifest.yaml --fleet-root fleet`.
   - Runs `scripts/verify-operational-maturity.py --manifest config/fleet-manifest.yaml --fleet-root fleet`.
   - Emits telemetry event `fleet_audit_completed`.
+- **Live Run Validation:**
+  - **Run URL:** [InfraFlow Fleet Observability Run #44901702482](https://github.com/TM-threemavithana/infraflow/actions/runs/44901702482)
+  - **Execution Time:** 10s
+  - **Job Status:** `✓ Fleet Observability & Compliance Gate` (PASS)
+  - **Artifacts:** `infraflow-fleet-compliance-reports`
 
 ### 3.2 PR Operational Maturity Verification Job (`ci.yml`)
 - Added dedicated job `operational-maturity-verification` ("Operational Maturity & Fleet Governance (Cloud-Free)").
@@ -58,6 +63,11 @@ Both the scheduled observability workflow ([`.github/workflows/fleet-observabili
   - `reports/active-upgrade-campaign.json`
   - `reports/operational-maturity-report.json`
   - `reports/OPERATIONAL-MATURITY-SUMMARY.md`
+- **Live Run Validation:**
+  - **Run URL:** [InfraFlow CI Run #44901702579](https://github.com/TM-threemavithana/infraflow/actions/runs/44901702579)
+  - **Execution Time:** 25s
+  - **Job Status:** `✓ Operational Maturity & Fleet Governance (Cloud-Free)` (PASS)
+  - **Artifacts:** `infraflow-operational-maturity-evidence`
 
 ---
 
