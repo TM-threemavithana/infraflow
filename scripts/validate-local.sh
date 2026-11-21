@@ -5838,6 +5838,138 @@ else
   record_fail "Operational Maturity Adversarial Suite [15/15]: Test suite" "One or more tests in test_operational_maturity.py failed"
 fi
 
+# ==============================================================================
+# SECTION 26: Unified Platform Developer Experience, CLI & Diagnostic Engine (G10.1)
+# ==============================================================================
+log_header "26. Unified Platform Developer Experience, CLI & Diagnostic Engine (G10.1)"
+
+# Test 26.1: scripts/infraflow-cli.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/infraflow-cli.py" && -x "${REPO_ROOT}/scripts/infraflow-cli.py" ]]; then
+  record_pass "Unified Platform CLI [1/13]: scripts/infraflow-cli.py exists and is executable"
+else
+  record_fail "Unified Platform CLI [1/13]: CLI check" "scripts/infraflow-cli.py missing or not executable"
+fi
+
+# Test 26.2: Version command reports 0.7.0 and canonical reference
+CLI_VER_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --version 2>&1)"
+if [[ "${CLI_VER_OUT}" == *"infraflow version 0.7.0"* && "${CLI_VER_OUT}" == *"TM-threemavithana/infraflow"* ]]; then
+  record_pass "Platform Version Flag [2/13]: --version returns platform version 0.7.0 and canonical reference"
+else
+  record_fail "Platform Version Flag [2/13]: Version check" "Expected version 0.7.0, got: ${CLI_VER_OUT}"
+fi
+
+# Test 26.3: Help command enumerates all required subcommands
+CLI_HELP_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --help 2>&1)"
+if [[ "${CLI_HELP_OUT}" == *"doctor"* && "${CLI_HELP_OUT}" == *"validate"* && "${CLI_HELP_OUT}" == *"drift"* && "${CLI_HELP_OUT}" == *"upgrade"* ]]; then
+  record_pass "Platform Help & Discovery [3/13]: --help lists doctor, validate, drift, and upgrade subcommands"
+else
+  record_fail "Platform Help & Discovery [3/13]: Help check" "Help output missing required subcommands"
+fi
+
+# Test 26.4: Platform Doctor non-destructive execution passes cleanly
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" doctor >/dev/null 2>&1; then
+  record_pass "Platform Doctor Engine [4/13]: doctor executes and reports healthy platform state (exit code 0)"
+else
+  record_fail "Platform Doctor Engine [4/13]: Doctor check" "Platform doctor returned unexpected failure"
+fi
+
+# Test 26.5: Platform Doctor JSON emission contains all 12 diagnostic checks
+TMP_DOC_JSON="$(mktemp -t doc_json_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/infraflow-cli.py" doctor --json > "${TMP_DOC_JSON}" 2>&1
+if [[ -s "${TMP_DOC_JSON}" ]] && \
+   grep -q '"overall_status": "HEALTHY"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-01-PYTHON"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-02-TERRAFORM"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-06-CONFTEST"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-12-GITSTATE"' "${TMP_DOC_JSON}"; then
+  record_pass "Platform Doctor JSON API [5/13]: doctor --json produces structured 12-check diagnostic payload"
+else
+  record_fail "Platform Doctor JSON API [5/13]: JSON check" "Doctor JSON missing expected diagnostic checks"
+fi
+rm -f "${TMP_DOC_JSON}"
+
+# Test 26.6: Consumer onboarding validation via unified CLI
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
+    --config "${REPO_ROOT}/fixtures/consumers/networking/infraflow.config.yaml" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Consumer Config Validator [6/13]: validate --config succeeds on valid consumer fixture"
+else
+  record_fail "Consumer Config Validator [6/13]: Config check" "validate --config failed on compliant consumer config"
+fi
+
+# Test 26.7: Fleet manifest validation via unified CLI
+TMP_VAL_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate -m "${REPO_ROOT}/config/fleet-manifest.yaml" 2>&1)"
+if [[ "${TMP_VAL_OUT}" == *"Fleet Manifest Valid"* && "${TMP_VAL_OUT}" == *"be51718f06a2662099500a710e93e6e8201b4f1c"* ]]; then
+  record_pass "Fleet Manifest Validator [7/13]: validate -m verifies fleet manifest schema and candidate SHA"
+else
+  record_fail "Fleet Manifest Validator [7/13]: Manifest check" "validate -m failed on config/fleet-manifest.yaml"
+fi
+
+# Test 26.8: OPA policy evaluation with policy error enhancement
+TMP_POL_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
+    -p "${REPO_ROOT}/policies/aws/s3.rego" \
+    -i "${REPO_ROOT}/fixtures/security/policies/invalid-aws/main.tf" \
+    -n "aws.s3" 2>&1 || true)"
+if [[ "${TMP_POL_OUT}" == *"AWS-SEC-S3-ACL-001"* && \
+      "${TMP_POL_OUT}" == *"CRITICAL"* && \
+      "${TMP_POL_OUT}" == *"aws_s3_bucket.bad_acl_bucket"* && \
+      "${TMP_POL_OUT}" == *"main.tf:5"* && \
+      "${TMP_POL_OUT}" == *"Remediation:"* ]]; then
+  record_pass "Policy Error Enhancement [8/13]: Enhanced policy diagnostics map violation ID, line, and remediation"
+else
+  record_fail "Policy Error Enhancement [8/13]: Diagnostic check" "Enhanced policy output missing mapped fields: ${TMP_POL_OUT}"
+fi
+
+# Test 26.9: Drift detection simulation (clean state -> NO_DRIFT)
+TMP_DRIFT_CLEAN="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" drift \
+    -e "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    -o "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" 2>&1)"
+if [[ "${TMP_DRIFT_CLEAN}" == *"Verdict: NO_DRIFT"* ]]; then
+  record_pass "Drift Detection Simulator [9/13]: drift reports NO_DRIFT on clean state snapshots"
+else
+  record_fail "Drift Detection Simulator [9/13]: Clean drift check" "Expected NO_DRIFT, got: ${TMP_DRIFT_CLEAN}"
+fi
+
+# Test 26.10: Zero-drift enforcement gate fails closed on drift
+if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" drift \
+    -e "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    -o "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --enforce-zero-drift >/dev/null 2>&1; then
+  record_pass "Zero-Drift Enforcement Gate [10/13]: --enforce-zero-drift exits with code 1 on detected drift"
+else
+  record_fail "Zero-Drift Enforcement Gate [10/13]: Gate check" "Drift gate unexpectedly passed on drifted state"
+fi
+
+# Test 26.11: Fleet upgrade planning dry-run via unified CLI
+TMP_UP_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" upgrade \
+    -m "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --plan 2>&1)"
+if [[ "${TMP_UP_OUT}" == *"InfraFlow Fleet Upgrade Plan (Dry-Run)"* && \
+      "${TMP_UP_OUT}" == *"Stage 1 — Canary Rollout"* && \
+      "${TMP_UP_OUT}" == *"Stage 2 — Progressive Rollout"* ]]; then
+  record_pass "Fleet Upgrade Planner [11/13]: upgrade --plan generates staged canary/progressive rollout plan"
+else
+  record_fail "Fleet Upgrade Planner [11/13]: Upgrade check" "Upgrade plan output missing expected stages: ${TMP_UP_OUT}"
+fi
+
+# Test 26.12: Security controls: symlink rejection & secret sanitization
+TMP_SYM_DIR="$(mktemp -d -t sym_dir_XXXXXX)"
+ln -s "${REPO_ROOT}/config/fleet-manifest.yaml" "${TMP_SYM_DIR}/sym_manifest.yaml"
+if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
+    -m "${TMP_SYM_DIR}/sym_manifest.yaml" >/dev/null 2>&1; then
+  record_pass "Fail-Closed Security Invariant [12/13]: Symlink input paths rejected with security exit code"
+else
+  record_fail "Fail-Closed Security Invariant [12/13]: Symlink check" "Symlinked manifest unexpectedly accepted by CLI"
+fi
+rm -rf "${TMP_SYM_DIR}"
+
+# Test 26.13: Dedicated 19-test unified CLI test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_cli.py" >/dev/null 2>&1; then
+  record_pass "Unified CLI Test Suite [13/13]: Dedicated 19-test suite passed (test_cli.py)"
+else
+  record_fail "Unified CLI Test Suite [13/13]: Test suite" "One or more tests in test_cli.py failed"
+fi
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 
@@ -5846,7 +5978,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08/G09 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08/G09/G10 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

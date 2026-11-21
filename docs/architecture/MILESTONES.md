@@ -461,14 +461,31 @@ Milestone G09.4 finalizes Phase G09 by consolidating scheduled observability, mu
 
 ---
 
-## 30. Quality Gate Definitions
+## 30. Milestone G10.1 — Acceptance Criteria (Unified Platform Developer Experience, CLI & Diagnostic Engine)
 
-To achieve status **PASS** for G01 through G09:
+Milestone G10.1 establishes the unified developer experience (DevEx) for the InfraFlow enterprise platform, introducing the single-binary-like command-line utility ([`scripts/infraflow-cli.py`](../../scripts/infraflow-cli.py)). It consolidates platform diagnostics (`infraflow doctor`), consumer onboarding validation (`infraflow validate`), continuous state and speculative drift detection simulation (`infraflow drift`), and fleet upgrade campaign lifecycle management (`infraflow upgrade`). Furthermore, it introduces intelligent OPA/Conftest policy error enrichment, fail-closed symlink guards, and automated secret redaction ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-01** | Unified CLI Architecture Specification | Formulate and document the unified CLI architecture, 12-check diagnostic matrix, policy error enhancement pipeline, and STRIDE threat boundaries in [`docs/architecture/G10-CLI-ARCHITECTURE.md`](G10-CLI-ARCHITECTURE.md). | Documentation audit & review | **PASS (G10.1 Implemented)** |
+| **AC-G10-02** | Unified Platform CLI Engine | Implement [`scripts/infraflow-cli.py`](../../scripts/infraflow-cli.py) with subcommands (`doctor`, `validate`, `drift`, `upgrade`) and standardized flags (`--json`, `--verbose`, `--no-color`). Strictly reject `shell=True` in all subprocesses. | CLI execution & test suite | **PASS (G10.1 Implemented)** |
+| **AC-G10-03** | Non-Destructive Platform Doctor (12 Dimensions) | Implement `infraflow doctor` evaluating 12 dimensions: Python (>=3.10), Terraform (>=1.6.0), Git, TFLint, Trivy, Conftest, Actionlint, Zizmor, Directory Hierarchy, Rego Policies, Dependencies, Git Workspace. | CLI execution (Text & JSON) | **PASS (G10.1 Implemented)** |
+| **AC-G10-04** | Intelligent Policy Error Enrichment | Implement `PolicyErrorEnhancer` mapping raw Conftest deny outputs to human-readable Policy IDs, severity classifications, resource names, exact source line numbers, and actionable remediation advice. | Adversarial policy evaluation tests | **PASS (G10.1 Implemented)** |
+| **AC-G10-05** | Continuous Drift Simulation Integration | Implement `infraflow drift` wrapping continuous state and speculative drift detection simulation with `--enforce-zero-drift` CI gating, Markdown/JSON export, and telemetry emission. | Adversarial drift fixtures & CLI gates | **PASS (G10.1 Implemented)** |
+| **AC-G10-06** | Fleet Upgrade Planning & Rollout Integration | Implement `infraflow upgrade` wrapping fleet manifest evaluation, staged dry-run planning, Canary Gate enforcement, and local upgrade/rollback execution. | CLI execution & dry-run plan audit | **PASS (G10.1 Implemented)** |
+| **AC-G10-07** | Defensive Security Guards & Secret Redaction | Enforce fail-closed symbolic link rejection (`os.path.islink`), path traversal protection (`..`), and automatic recursive secret scrubbing across all console streams and exported payloads. | Adversarial security unit tests | **PASS (G10.1 Implemented)** |
+| **AC-G10-08** | 19-Scenario CLI Test Suite & Harness Section 26 | Author [`tests/test_cli.py`](../../tests/test_cli.py) (19 tests) and add Section 26 to `scripts/validate-local.sh` (13 checks, raising platform quality checks to 420). | `validate-local.sh` (420/420 passed) | **PASS (G10.1 Implemented)** |
+
+---
+
+## 31. Quality Gate Definitions
+
+To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (407/407 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (420/420 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).
