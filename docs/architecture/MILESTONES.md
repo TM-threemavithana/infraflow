@@ -358,14 +358,32 @@ Milestone G08.3 establishes centralized governance, Open Policy Agent (OPA) poli
 
 ---
 
-## 24. Quality Gate Definitions
+## 24. Milestone G08.4 — Acceptance Criteria (Fleet-Wide Upgrade Orchestration, Configuration Drift Detection & Rollback Validation)
+
+Milestone G08.4 establishes an automated, auditable, and fail-safe fleet-wide upgrade orchestration framework, versioned fleet registry, candidate compatibility verification, 15-vector drift detection, canary isolation, progressive rollout coordination, and atomic rollback guarantees across all consumer repositories ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-25** | Fleet Upgrade Architecture & Operating Model | Define the six-stage upgrade lifecycle model (Inventory, Compatibility, Canary, Progressive, Verification, Rollback), strict cloud-free scope boundary, and 15-vector configuration/version/governance drift taxonomy in [`docs/architecture/G08-FLEET-UPGRADE-ARCHITECTURE.md`](file:///home/tharuka/projects/infraflow/docs/architecture/G08-FLEET-UPGRADE-ARCHITECTURE.md). | Documentation audit & architecture review | **PASS (G08.4 Implemented)** |
+| **AC-G08-26** | Versioned Fleet Upgrade Manifest Specification | Implement authoritative registry [`config/fleet-manifest.yaml`](file:///home/tharuka/projects/infraflow/config/fleet-manifest.yaml) (Schema 1.0) defining registered consumers, adapters, workload types, current/target/rollback commit SHAs, candidate SHAs, and adapter workflow output contracts. | Schema validation & YAML parsing | **PASS (G08.4 Implemented)** |
+| **AC-G08-27** | Automated Fleet Upgrade Orchestration & Planning Tool | Implement Python engine [`scripts/plan-fleet-upgrade.py`](file:///home/tharuka/projects/infraflow/scripts/plan-fleet-upgrade.py) with `--list`, `--inventory`, `--check-drift`, `--compatibility`, `--plan`, `--apply`, and `--rollback` actions. | CLI execution & test suite | **PASS (G08.4 Implemented)** |
+| **AC-G08-28** | Platform Contract Compatibility Matrix Verification | Enforce pre-rollout evaluation verifying that candidate platform commit provides all mandatory outputs across AWS, Azure, GCP, and generic reusable workflows. Fail closed on contract deviations. | `plan-fleet-upgrade.py --compatibility` | **PASS (G08.4 Implemented)** |
+| **AC-G08-29** | Controlled Canary Deployment & Fleet Isolation (AWS) | Upgrade canary consumer (`infraflow-consumer-networking`) to candidate platform commit (`1630e619...`). Verify that remaining consumers remain strictly isolated on baseline commit (`f1ad39fb...`). Verify canary CI passes 100% on GitHub Actions. | Live GitHub Actions execution ([Run 44876169983](https://github.com/TM-threemavithana/infraflow-consumer-networking/actions/runs/44876169983)) | **PASS (G08.4 Implemented)** |
+| **AC-G08-29A**| Safe Rollback & Reversion Verification | Demonstrate atomic rollback restoring consumer configuration and workflow references back to known-good baseline (`f1ad39fb...`). Verify all local validation tests pass cleanly post-rollback. | CLI execution & test suite verification | **PASS (G08.4 Implemented)** |
+| **AC-G08-30** | Progressive Rollout & Multi-Cloud Fleet CI Verification | Upon canary success, progressively upgrade Application (`infraflow-consumer-application`, Azure) and Data Platform (`infraflow-consumer-data-platform`, GCP) consumers. Verify all GitHub Actions CI runs pass cleanly. | Live GitHub Actions execution ([Run 44876281497](https://github.com/TM-threemavithana/infraflow-consumer-application/actions/runs/44876281497) & [Run 44876291264](https://github.com/TM-threemavithana/infraflow-consumer-data-platform/actions/runs/44876291264)) | **PASS (G08.4 Implemented)** |
+| **AC-G08-31** | Dedicated 32-Scenario Adversarial Upgrade Test Suite | Implement comprehensive test suite [`tests/test_fleet_upgrades.py`](file:///home/tharuka/projects/infraflow/tests/test_fleet_upgrades.py) (32 tests) verifying manifest schema rules, staged planning, 15-vector drift detection, breaking change detection, canary failure containment, and rollback atomicity. | `python3 -m unittest tests/test_fleet_upgrades.py` (32/32 passed) | **PASS (G08.4 Implemented)** |
+| **AC-G08-32** | Local Validation Harness Expansion (Section 21) | Expand `scripts/validate-local.sh` with Section 21 quality gates (14 new checks, raising total platform checks from 333 to 347). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G08.3. | `scripts/validate-local.sh` (347/347 passed) | **PASS (G08.4 Implemented)** |
+
+---
+
+## 25. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G08:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (333/333 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (347/347 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

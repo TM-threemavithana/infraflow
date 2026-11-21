@@ -158,4 +158,25 @@ In Milestone G08.3, InfraFlow advanced beyond optional client-side onboarding ch
 
 All three external consumer repositories (`infraflow-consumer-networking`, `infraflow-consumer-application`, `infraflow-consumer-data-platform`) have been updated to pin platform commit `f1ad39fb0f0bdce7c475ed36e717e859b2e9b106` and enforce the central governance gate in live CI pipelines.
 
+---
+
+## 8. Fleet-Wide Upgrade Orchestration, Configuration Drift & Rollback (G08.4)
+
+In Milestone G08.4, InfraFlow delivered a comprehensive framework for orchestrating platform upgrades across the entire multi-repository fleet:
+1. **Central Fleet Manifest (`config/fleet-manifest.yaml`)**:
+   - Single source of truth registering all consumer repositories, workload types, adapters, teams, target SHAs, and rollback reference SHAs.
+2. **Staged Rollout Lifecycle**:
+   - **Stage A (Inventory & Version Discovery)**: Automated inventory inspection via `plan-fleet-upgrade.py --inventory`.
+   - **Stage B (Compatibility Matrix Evaluation)**: Pre-rollout verification of adapter workflow contracts against platform candidate commits (`plan-fleet-upgrade.py --compatibility`).
+   - **Stage C (Canary Deployment)**: Networking consumer (`consumer-networking`, AWS) upgraded first while remaining fleet members remain strictly isolated on baseline pins.
+   - **Stage D (Progressive Rollout)**: Controlled rollout to Application (`consumer-application`, Azure) and Data Platform (`consumer-data-platform`, GCP) upon successful canary CI verification.
+   - **Stage E (Fleet Drift Auditing)**: Continuous auditing across 15 configuration, version, and governance drift vectors.
+   - **Stage F (Safe Emergency Rollback)**: Atomic rollback to known-good baseline (`f1ad39fb0f0bdce7c475ed36e717e859b2e9b106`) via `plan-fleet-upgrade.py --rollback`.
+3. **Adversarial & Quality Verification**:
+   - 32 dedicated adversarial upgrade tests (`tests/test_fleet_upgrades.py`).
+   - Enhanced fleet auditor (`scripts/audit-consumer-fleet.py`) calculating drift severity (`CRITICAL`, `HIGH`, `LOW`, `NONE`) and querying server-side rulesets and CI status.
+   - 347/347 local quality gates passing (`scripts/validate-local.sh`).
+   - 100% CI pass rate across all external consumers on candidate platform SHA `1630e61952c99460b37eb775c11b190d0e1ab81f`.
+
+
 

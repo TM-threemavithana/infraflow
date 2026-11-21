@@ -116,6 +116,9 @@ def load_manifest(manifest_path: Path) -> Dict[str, Any]:
         if not repo or not cid:
             raise ManifestValidationError(f"Consumer #{idx} missing 'repository' or 'consumer_id'")
 
+        if not repo.startswith("TM-threemavithana/"):
+            raise ManifestValidationError(f"Consumer '{cid}' has unauthorized repository: '{repo}'")
+
         if repo in seen_repos:
             raise ManifestValidationError(f"Duplicate repository identity detected: '{repo}'")
         seen_repos.add(repo)

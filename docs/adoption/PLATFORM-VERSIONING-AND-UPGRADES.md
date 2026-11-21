@@ -82,3 +82,21 @@ To upgrade your repository to a new InfraFlow release:
 2. **Backward Compatibility**: Deprecated inputs remain functional with warnings during the deprecation period.
 3. **Removal in Major Release**: Deprecated features are removed only when the platform increments its MAJOR version.
 4. **Emergency Rollback**: If an upgraded platform SHA causes unexpected failures, the consumer team can immediately revert the commit SHA in their caller workflow and `infraflow.config.yaml` to the prior verified SHA.
+
+---
+
+## 5. Fleet-Wide Upgrade Orchestration & Automated Rollback (Milestone G08.4)
+
+For multi-repository fleets, platform upgrades can be coordinated centrally using the InfraFlow Fleet Upgrade Tooling:
+
+### Central Fleet Manifest (`config/fleet-manifest.yaml`)
+Authoritative registry of registered consumers, workload types, adapters, rollback reference SHAs, and candidate SHAs.
+
+### Staged Rollout Strategy
+1. **Compatibility Check**: `python3 scripts/plan-fleet-upgrade.py --compatibility`
+2. **Dry-Run Planning**: `python3 scripts/plan-fleet-upgrade.py --plan`
+3. **Canary Upgrade**: `python3 scripts/plan-fleet-upgrade.py --apply --stage canary` (Networking consumer first, with strict isolation of remaining fleet members)
+4. **Progressive Rollout**: `python3 scripts/plan-fleet-upgrade.py --apply --stage progressive` (Application and Data Platform consumers)
+5. **Drift Audit**: `python3 scripts/plan-fleet-upgrade.py --check-drift` and `python3 scripts/audit-consumer-fleet.py --check-remote`
+6. **Automated Rollback**: `python3 scripts/plan-fleet-upgrade.py --rollback --consumer <CONSUMER_ID>` atomically reverts `infraflow.config.yaml` and caller workflows to the registered `known_good_rollback_sha`.
+

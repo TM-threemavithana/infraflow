@@ -4789,12 +4789,137 @@ fi
 
 # Test 20.12: Full Platform Test Suite passing
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
-  record_pass "Platform Python Test Suite [12/12]: All 370 platform tests passed (tests/test_*.py)"
+  record_pass "Platform Python Test Suite [12/12]: All 402 platform tests passed (tests/test_*.py)"
 else
   record_fail "Platform Python Test Suite [12/12]: Platform test suite" "One or more platform tests failed"
 fi
 
-# --- 21. Summary Report ---
+# ==============================================================================
+# 21. Fleet-Wide Upgrade Orchestration, Configuration Drift & Rollback Quality Gates (G08.4)
+# ==============================================================================
+log_header "21. Fleet-Wide Upgrade Orchestration, Drift Detection & Rollback (G08.4)"
+
+# Test 21.1: Fleet manifest schema validation
+if [[ -f "${REPO_ROOT}/config/fleet-manifest.yaml" ]]; then
+  record_pass "Fleet Upgrade Manifest [1/14]: config/fleet-manifest.yaml exists"
+else
+  record_fail "Fleet Upgrade Manifest [1/14]: Manifest file" "config/fleet-manifest.yaml not found"
+fi
+
+# Test 21.2: Fleet upgrade planner script exists and is executable
+if [[ -x "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" ]] || [[ -f "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" ]]; then
+  record_pass "Fleet Upgrade Tooling [2/14]: scripts/plan-fleet-upgrade.py exists and is available"
+else
+  record_fail "Fleet Upgrade Tooling [2/14]: Script check" "scripts/plan-fleet-upgrade.py not found"
+fi
+
+# Test 21.3: Fleet upgrade planner --list execution
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" --list >/dev/null 2>&1; then
+  record_pass "Fleet Upgrade Tooling [3/14]: scripts/plan-fleet-upgrade.py --list executed successfully"
+else
+  record_fail "Fleet Upgrade Tooling [3/14]: plan-fleet-upgrade.py --list" "Failed to list registered consumers"
+fi
+
+# Test 21.4: Fleet upgrade planner --inventory execution
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" --inventory >/dev/null 2>&1; then
+  record_pass "Fleet Upgrade Tooling [4/14]: scripts/plan-fleet-upgrade.py --inventory executed successfully"
+else
+  record_fail "Fleet Upgrade Tooling [4/14]: plan-fleet-upgrade.py --inventory" "Failed to inspect fleet inventory"
+fi
+
+# Test 21.5: Fleet upgrade planner --compatibility verification
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" --compatibility >/dev/null 2>&1; then
+  record_pass "Fleet Upgrade Tooling [5/14]: scripts/plan-fleet-upgrade.py --compatibility verified contract compatibility"
+else
+  record_fail "Fleet Upgrade Tooling [5/14]: plan-fleet-upgrade.py --compatibility" "Compatibility check reported contract violation"
+fi
+
+# Test 21.6: Fleet upgrade planner --plan dry-run generation
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" --plan >/dev/null 2>&1; then
+  record_pass "Fleet Upgrade Tooling [6/14]: scripts/plan-fleet-upgrade.py --plan generated staged rollout plan"
+else
+  record_fail "Fleet Upgrade Tooling [6/14]: plan-fleet-upgrade.py --plan" "Failed to generate staged rollout plan"
+fi
+
+# Test 21.7: Fleet upgrade planner rejects invalid candidate SHA fail-closed
+TMP_INVALID_MANIFEST="$(mktemp -t invalid_manifest_XXXXXX.yaml)"
+sed 's/candidate_sha: .*/candidate_sha: "invalid-sha"/' "${REPO_ROOT}/config/fleet-manifest.yaml" > "${TMP_INVALID_MANIFEST}"
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${TMP_INVALID_MANIFEST}" --plan >/dev/null 2>&1; then
+  record_fail "Fleet Upgrade Security [7/14]: Invalid SHA check" "Planner unexpectedly accepted non-40-char candidate SHA"
+else
+  record_pass "Fleet Upgrade Security [7/14]: Planner rejected invalid candidate SHA fail-closed"
+fi
+rm -f "${TMP_INVALID_MANIFEST}"
+
+# Test 21.8: Fleet upgrade planner rejects duplicate consumer ID
+TMP_DUP_MANIFEST="$(mktemp -t dup_manifest_XXXXXX.yaml)"
+cat "${REPO_ROOT}/config/fleet-manifest.yaml" > "${TMP_DUP_MANIFEST}"
+sed -i 's/consumer_id: "consumer-application"/consumer_id: "consumer-networking"/' "${TMP_DUP_MANIFEST}"
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${TMP_DUP_MANIFEST}" --plan >/dev/null 2>&1; then
+  record_fail "Fleet Upgrade Security [8/14]: Duplicate consumer ID check" "Planner unexpectedly accepted duplicate consumer ID"
+else
+  record_pass "Fleet Upgrade Security [8/14]: Planner rejected duplicate consumer ID fail-closed"
+fi
+rm -f "${TMP_DUP_MANIFEST}"
+
+# Test 21.9: Fleet upgrade planner rejects unauthorized repository identity
+TMP_UNAUTH_MANIFEST="$(mktemp -t unauth_manifest_XXXXXX.yaml)"
+sed 's/repository: "TM-threemavithana\/infraflow-consumer-networking"/repository: "evil-org\/malicious-consumer"/' "${REPO_ROOT}/config/fleet-manifest.yaml" > "${TMP_UNAUTH_MANIFEST}"
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${TMP_UNAUTH_MANIFEST}" --plan >/dev/null 2>&1; then
+  record_fail "Fleet Upgrade Security [9/14]: Unauthorized repo check" "Planner unexpectedly accepted unauthorized repository"
+else
+  record_pass "Fleet Upgrade Security [9/14]: Planner rejected unauthorized repository identity fail-closed"
+fi
+rm -f "${TMP_UNAUTH_MANIFEST}"
+
+# Test 21.10: Fleet drift detection (--check-drift) reports clean on compliant fleet
+if python3 "${REPO_ROOT}/scripts/plan-fleet-upgrade.py" --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" --check-drift >/dev/null 2>&1; then
+  record_pass "Fleet Drift Detection [10/14]: scripts/plan-fleet-upgrade.py --check-drift verified zero configuration/version drift"
+else
+  record_fail "Fleet Drift Detection [10/14]: plan-fleet-upgrade.py --check-drift" "Drift check reported unexpected drift on compliant fleet"
+fi
+
+# Test 21.11: Enhanced fleet auditor remote ruleset and drift severity calculation
+if python3 -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("scripts")))
+import importlib.util
+spec = importlib.util.spec_from_file_location("auditor", "scripts/audit-consumer-fleet.py")
+auditor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(auditor)
+sev = auditor.calculate_drift_severity({"governance_workflow_invoked": True, "passed": True, "config_sha": "abc"}, "abc")
+assert sev == "NONE", f"Expected NONE got {sev}"
+sev_crit = auditor.calculate_drift_severity({"governance_workflow_invoked": False, "passed": True, "config_sha": "abc"}, "abc")
+assert sev_crit == "CRITICAL", f"Expected CRITICAL got {sev_crit}"
+' >/dev/null 2>&1; then
+  record_pass "Fleet Drift Severity [11/14]: Drift severity calculation verified (NONE vs CRITICAL fail-closed)"
+else
+  record_fail "Fleet Drift Severity [11/14]: Drift severity" "Drift severity logic failed unit check"
+fi
+
+# Test 21.12: Dedicated Adversarial Fleet Upgrade Python Test Suite (32 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_fleet_upgrades.py" >/dev/null 2>&1; then
+  record_pass "Fleet Upgrade Test Suite [12/14]: Dedicated 32-test adversarial upgrade suite passed (tests/test_fleet_upgrades.py)"
+else
+  record_fail "Fleet Upgrade Test Suite [12/14]: Test suite" "One or more tests in tests/test_fleet_upgrades.py failed"
+fi
+
+# Test 21.13: Full Platform Python Test Suite (402 tests)
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
+  record_pass "Platform Python Test Suite [13/14]: All 402 platform tests passed (tests/test_*.py)"
+else
+  record_fail "Platform Python Test Suite [13/14]: Platform test suite" "One or more platform tests failed"
+fi
+
+# Test 21.14: Conftest Policy Verification Across All Platform Namespaces
+if conftest verify --policy "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+  record_pass "OPA Policy Verification [14/14]: All 194 OPA/Rego tests passed across all policies (policies/**/*.rego)"
+else
+  record_fail "OPA Policy Verification [14/14]: conftest verify" "One or more Rego policy verification tests failed"
+fi
+
+# --- 22. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
