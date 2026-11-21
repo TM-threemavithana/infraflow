@@ -74,7 +74,7 @@ flowchart TD
 ## 3. Pillar 1: Fleet Observability & Telemetry Engine (G09.1)
 
 ### 3.1 Telemetry Schema v1.0
-InfraFlow defines a standardized JSON telemetry event schema implemented in [`scripts/emit-telemetry.py`](scripts/emit-telemetry.py):
+InfraFlow defines a standardized JSON telemetry event schema implemented in [`scripts/emit-telemetry.py`](../../scripts/emit-telemetry.py):
 
 | Schema Field | Type | Description | Invariant / Validation |
 | :--- | :--- | :--- | :--- |
@@ -113,7 +113,7 @@ To guarantee zero credential leakage into logs, step summaries, or telemetry str
 ## 4. Pillar 2: Central Fleet Compliance Dashboard (G09.1)
 
 ### 4.1 Deterministic 5-Pillar Compliance Scoring Algorithm
-Implemented in [`scripts/generate-compliance-dashboard.py`](scripts/generate-compliance-dashboard.py), each registered consumer workload is evaluated across five pillars (maximum 100 points):
+Implemented in [`scripts/generate-compliance-dashboard.py`](../../scripts/generate-compliance-dashboard.py), each registered consumer workload is evaluated across five pillars (maximum 100 points):
 
 $$\text{Compliance Score} = P_1 + P_2 + P_3 + P_4 + P_5$$
 

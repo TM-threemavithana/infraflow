@@ -12,11 +12,11 @@
 
 ## 1. Executive Summary
 
-Milestone **G09.3** implements Pillar 4 of the InfraFlow Operational Maturity Architecture, establishing a production-grade **Fleet Upgrade Campaign Orchestration & Lifecycle Tracking Engine** ([`scripts/orchestrate-campaign.py`](../../scripts/orchestrate-campaign.py)).
+Milestone **G09.3** implements Pillar 4 of the InfraFlow Operational Maturity Architecture, establishing a production-grade **Fleet Upgrade Campaign Orchestration & Lifecycle Tracking Engine** ([`scripts/orchestrate-campaign.py`](../../../scripts/orchestrate-campaign.py)).
 
 ### Key Deliverables Achieved:
-1. **Automated Campaign Orchestrator ([`scripts/orchestrate-campaign.py`](../../scripts/orchestrate-campaign.py))**:
-   - Manages cryptographically signed Schema v1.0 upgrade campaigns targeting consumer repositories registered in [`config/fleet-manifest.yaml`](../../config/fleet-manifest.yaml).
+1. **Automated Campaign Orchestrator ([`scripts/orchestrate-campaign.py`](../../../scripts/orchestrate-campaign.py))**:
+   - Manages cryptographically signed Schema v1.0 upgrade campaigns targeting consumer repositories registered in [`config/fleet-manifest.yaml`](../../../config/fleet-manifest.yaml).
    - Enforces a 7-stage deterministic lifecycle state machine (`PLANNED`, `CANARY_IN_PROGRESS`, `CANARY_VERIFIED`, `PROGRESSIVE_IN_PROGRESS`, `COMPLETED`, `ROLLED_BACK`, `ABORTED`).
 2. **Fail-Closed Canary Gate Enforcement**:
    - Prevents progressive fleet rollout until all designated canary workloads achieve verified status (`CanaryGateError` on pending, running, or failed canaries).
@@ -27,11 +27,11 @@ Milestone **G09.3** implements Pillar 4 of the InfraFlow Operational Maturity Ar
 5. **Transactional & Emergency Rollback Engine**:
    - Restores modified workloads to their verified `rollback_sha` baseline upon failure or manual operator abort, logging timestamped audit events.
 6. **Telemetry & Dashboard Integration**:
-   - Emits schema v1.0 lifecycle telemetry (`campaign_planned`, `campaign_canary_verified`, `campaign_rollback_executed`, etc.) via [`scripts/emit-telemetry.py`](../../scripts/emit-telemetry.py).
-   - Extends [`scripts/generate-compliance-dashboard.py`](../../scripts/generate-compliance-dashboard.py) with `--campaign-file` ingestion, rendering active campaign cards in JSON, Markdown step summaries, and offline HTML reports.
+   - Emits schema v1.0 lifecycle telemetry (`campaign_planned`, `campaign_canary_verified`, `campaign_rollback_executed`, etc.) via [`scripts/emit-telemetry.py`](../../../scripts/emit-telemetry.py).
+   - Extends [`scripts/generate-compliance-dashboard.py`](../../../scripts/generate-compliance-dashboard.py) with `--campaign-file` ingestion, rendering active campaign cards in JSON, Markdown step summaries, and offline HTML reports.
 7. **Comprehensive Automated Verification**:
-   - Added 32 dedicated unit and adversarial tests in [`tests/test_upgrade_campaigns.py`](../../tests/test_upgrade_campaigns.py) (503/503 Python tests passing).
-   - Added Section 24 (15 validation checks) to [`scripts/validate-local.sh`](../../scripts/validate-local.sh) (392/392 checks passing total).
+   - Added 32 dedicated unit and adversarial tests in [`tests/test_upgrade_campaigns.py`](../../../tests/test_upgrade_campaigns.py) (503/503 Python tests passing).
+   - Added Section 24 (15 validation checks) to [`scripts/validate-local.sh`](../../../scripts/validate-local.sh) (392/392 checks passing total).
 
 ---
 
@@ -39,14 +39,14 @@ Milestone **G09.3** implements Pillar 4 of the InfraFlow Operational Maturity Ar
 
 | AC ID | Acceptance Criteria Summary | Target Deliverable / Scope | Verification Method | Status |
 | :--- | :--- | :--- | :--- | :---: |
-| **AC-G09-17** | Upgrade Campaign Security & Lifecycle Specification | Document multi-stage rollout architecture, state machine, Canary Gate model, and STRIDE mitigations in [`docs/operations/G09-UPGRADE-CAMPAIGNS.md`](../operations/G09-UPGRADE-CAMPAIGNS.md). | Documentation audit & review | **PASS** |
+| **AC-G09-17** | Upgrade Campaign Security & Lifecycle Specification | Document multi-stage rollout architecture, state machine, Canary Gate model, and STRIDE mitigations in [`docs/operations/G09-UPGRADE-CAMPAIGNS.md`](../../operations/G09-UPGRADE-CAMPAIGNS.md). | Documentation audit & review | **PASS** |
 | **AC-G09-18** | Deterministic Campaign Initialization & Signatures | Implement `--create` generating Schema v1.0 JSON with deterministic SHA-256 signature calculated over canonical state. Anti-tampering rejection verified. | Unit tests & CLI execution | **PASS** |
 | **AC-G09-19** | Fail-Closed Canary Gate Enforcement | Enforce strict isolation blocking `--execute-stage progressive` whenever canary is `PENDING`, `RUNNING`, or `FAILED`. | Adversarial unit tests & CLI validation | **PASS** |
 | **AC-G09-20** | Pre-Flight Compliance & State Drift Gates | Enforce contract compatibility, minimum compliance score threshold, and rejection of workloads with `CRITICAL` state drift. | Unit tests & drift fixtures | **PASS** |
 | **AC-G09-21** | Zero-Cost Simulated PR & Branch Dispatch | Generate deterministic PR metadata (`infraflow/upgrade-<short>`), PR numbers, and review markdown with zero live external API calls. | Schema check & PR body audit | **PASS** |
 | **AC-G09-22** | Transactional & Emergency Rollback Orchestration | Implement `--rollback` and `--auto-rollback` restoring registered `rollback_sha` references and updating campaign state to `ROLLED_BACK`. | Dry-run & transactional tests | **PASS** |
 | **AC-G09-23** | Telemetry & Compliance Dashboard Integration | Extend telemetry schema with campaign lifecycle events and integrate `--campaign-file` into central compliance dashboard. | Telemetry validation & dashboard render | **PASS** |
-| **AC-G09-24** | Dedicated Adversarial Test Suite & Harness Expansion | Author 32-test suite [`tests/test_upgrade_campaigns.py`](../../tests/test_upgrade_campaigns.py) and add Section 24 to [`scripts/validate-local.sh`](../../scripts/validate-local.sh) (392 checks). | `validate-local.sh` (392/392 passed) | **PASS** |
+| **AC-G09-24** | Dedicated Adversarial Test Suite & Harness Expansion | Author 32-test suite [`tests/test_upgrade_campaigns.py`](../../../tests/test_upgrade_campaigns.py) and add Section 24 to [`scripts/validate-local.sh`](../../../scripts/validate-local.sh) (392 checks). | `validate-local.sh` (392/392 passed) | **PASS** |
 
 ---
 
