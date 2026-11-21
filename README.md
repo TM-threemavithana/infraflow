@@ -106,7 +106,10 @@ InfraFlow delivers architectural parity across all three major cloud providers i
 
 ## Consuming Repository Quick Start
 
-To call InfraFlow reusable workflows from an external repository, reference an immutable release tag (`@v0.5.0`) or commit SHA:
+To call InfraFlow reusable workflows from an external repository, reference an immutable 40-character commit SHA (recommended for production: `@2ce0ddd5de01530b6bf7aba749f0081620fb9b27`) or official release tag (`@v0.5.0`):
+
+> [!TIP]
+> **Immutability Best Practice**: While git release tags (`@v0.5.0`) provide convenient human-readable references, git tags are technically mutable references in git. For true cryptographically immutable dependency pinning and supply-chain security compliance (SLSA / CIS), consumers should pin the full 40-character commit SHA in caller workflows.
 
 ```yaml
 name: "Terraform Multi-Cloud CI"
@@ -123,7 +126,7 @@ permissions:
 jobs:
   validate:
     name: "Validate Terraform"
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@v0.5.0
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
       terraform-version: "1.10.4"
       working-directory: "terraform"
@@ -134,7 +137,7 @@ jobs:
   azure-plan:
     name: "Azure Speculative Plan (Cloud-Free)"
     needs: [validate]
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@v0.5.0
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
       working-directory: "terraform/azure"
       environment: "dev"

@@ -18,7 +18,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
-| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
+| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, validation toolkit. | In Progress (G08.1 Implemented; G08.2 Pending) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
 ---
@@ -307,14 +307,31 @@ Milestone G07.7 integrates and validates the completed Azure Cloud-Free Adapter 
 
 ---
 
-## 21. Quality Gate Definitions
+## 21. Milestone G08.1 — Acceptance Criteria (Multi-Repository Adoption Foundation & Consumer Onboarding Toolkit)
 
-To achieve status **PASS** for G01 through G07:
+Milestone G08.1 establishes an enterprise-grade onboarding model, consumer configuration contract, self-service repository template, automated validation tooling, and three isolated reference consumer fixtures (Networking, Application, Data Platform) with zero live cloud infrastructure provisioning ($0.00 spend).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-01** | Multi-Repository Adoption Architecture | Define comprehensive adoption architecture ([`docs/architecture/G08-MULTI-REPOSITORY-ADOPTION.md`](file:///home/tharuka/projects/infraflow/docs/architecture/G08-MULTI-REPOSITORY-ADOPTION.md)), 5-stage lifecycle model, platform vs consumer responsibility matrix, and centralized policy distribution model. | Documentation audit | **PASS (G08.1 Implemented)** |
+| **AC-G08-02** | Consumer Onboarding Guide & Versioning Policy | Author developer-friendly onboarding guide ([`docs/adoption/CONSUMER-ONBOARDING-GUIDE.md`](file:///home/tharuka/projects/infraflow/docs/adoption/CONSUMER-ONBOARDING-GUIDE.md)) and platform versioning policy ([`docs/adoption/PLATFORM-VERSIONING-AND-UPGRADES.md`](file:///home/tharuka/projects/infraflow/docs/adoption/PLATFORM-VERSIONING-AND-UPGRADES.md)) detailing immutable 40-character commit SHA pinning. | Documentation audit | **PASS (G08.1 Implemented)** |
+| **AC-G08-03** | Self-Service Consumer Repository Template | Implement `templates/consumer-repository/` containing standard caller workflow (`.github/workflows/infraflow.yml`), versioned contract (`infraflow.config.yaml`), cloud-free reference module (`terraform_data`), native unit tests, and template README. | Filesystem inspection & `actionlint` | **PASS (G08.1 Implemented)** |
+| **AC-G08-04** | Standardized Consumer Configuration Contract | Define strict versioned schema for `infraflow.config.yaml` specifying `consumer_id`, `workload_type`, `terraform_dir`, `platform_ref`, `platform_sha`, `adapter`, and mandatory security controls. Reject mutable refs, path traversal, unknown keys, and cloud auth requests. | `validate-consumer.py` schema validation | **PASS (G08.1 Implemented)** |
+| **AC-G08-05** | Automated Consumer Validation Tooling | Implement Python validation utility ([`scripts/validate-consumer.py`](file:///home/tharuka/projects/infraflow/scripts/validate-consumer.py)) checking config schema, workspace containment, symlink security, workflow permissions (`contents: read`), and commit SHA pinning. | CLI execution & test suite | **PASS (G08.1 Implemented)** |
+| **AC-G08-06** | Multi-Consumer Reference Fixtures (3 Archetypes) | Implement three independent reference fixtures: Networking ([`fixtures/consumers/networking/`](file:///home/tharuka/projects/infraflow/fixtures/consumers/networking/)), Application ([`fixtures/consumers/application/`](file:///home/tharuka/projects/infraflow/fixtures/consumers/application/)), and Data Platform ([`fixtures/consumers/data-platform/`](file:///home/tharuka/projects/infraflow/fixtures/consumers/data-platform/)) with distinct contracts and native tests. | `terraform test` & `validate-consumer.py` | **PASS (G08.1 Implemented)** |
+| **AC-G08-07** | Dedicated Consumer Onboarding Test Suite | Implement comprehensive 31-test unit and integration suite ([`tests/test_consumer_onboarding.py`](file:///home/tharuka/projects/infraflow/tests/test_consumer_onboarding.py)) covering valid configs, schema violations, path traversals, symlink escapes, excessive permissions, and CLI execution. | `python3 -m unittest tests/test_consumer_onboarding.py` (31/31 passed) | **PASS (G08.1 Implemented)** |
+| **AC-G08-08** | Local Validation Harness Expansion (Section 19) | Expand `scripts/validate-local.sh` with Section 19 quality gates (18 new checks, raising total platform checks from 303 to 321). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G07. | `scripts/validate-local.sh` execution | **PASS (G08.1 Implemented)** |
+
+---
+
+## 22. Quality Gate Definitions
+
+To achieve status **PASS** for G01 through G08:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (303/303 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (321/321 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

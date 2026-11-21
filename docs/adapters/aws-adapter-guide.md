@@ -327,7 +327,8 @@ Starting in **Terraform 1.10.0**, the S3 backend natively supports distributed s
 1. **Reduced Attack Surface**: Eliminates the need to grant `dynamodb:GetItem`, `dynamodb:PutItem`, and `dynamodb:DeleteItem` permissions in the IAM planning role.
 2. **Simplified Infrastructure**: Eliminates DynamoDB table provisioning, billing, and capacity management.
 3. **Atomic Consistency**: Leverages Amazon S3's strong read-after-write consistency and conditional `PutObject` operations (`If-None-Match: *`). When Terraform acquires a lock, it writes `<key>.tflock`. If another process holds the lock, S3 returns HTTP 412 (Precondition Failed), preventing concurrent state modification.
-4. **Legacy DynamoDB Compatibility**: DynamoDB table inputs (`backend-dynamodb-table`) remain supported for existing legacy projects, but native S3 locking is the recommended standard.
+4. **Legacy DynamoDB Compatibility & Deprecation**: DynamoDB table inputs (`backend-dynamodb-table`) remain supported for existing legacy projects, but DynamoDB locking is deprecated in modern Terraform (>= 1.10) in favor of native S3 locking.
+5. **Cloud-Free Simulation Invariant**: In InfraFlow's cloud-free model ($0.00 spend), speculative plans execute offline with `terraform init -backend=false`. No live S3 or DynamoDB state locks are acquired or exercised. Live state migration or changes to the baseline AWS backend design will not occur without an additional approved milestone.
 
 ---
 

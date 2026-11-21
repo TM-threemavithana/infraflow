@@ -1,0 +1,14 @@
+version: "1.0"
+consumer_id: "fixture-application"
+team: "app-services-team"
+workload_type: "application"
+terraform_dir: "terraform"
+environment: "dev"
+adapter: "azure"
+platform_ref: "TM-threemavithana/infraflow"
+platform_sha: "2ce0ddd5de01530b6bf7aba749f0081620fb9b27"
+terraform_version: "1.10.4"
+security_controls:
+  enforce_mandatory_scanners: true
+  fail_on_destructive: false
+  max_allowed_deletions: 15

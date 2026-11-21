@@ -4499,7 +4499,169 @@ else
   record_fail "Azure Adversarial Test Suite [26/26]: Adversarial test suite" "One or more tests in tests/test_azure_adversarial_integration.py failed"
 fi
 
-# --- 19. Summary Report ---
+# ==============================================================================
+# 19. Multi-Repository Adoption & Consumer Onboarding Toolkit (G08.1)
+# ==============================================================================
+log_header "19. Multi-Repository Adoption & Consumer Onboarding Toolkit (G08.1)"
+
+VALIDATE_CONSUMER_PY="${REPO_ROOT}/scripts/validate-consumer.py"
+TEMPLATE_DIR="${REPO_ROOT}/templates/consumer-repository"
+NET_FIXTURE_DIR="${REPO_ROOT}/fixtures/consumers/networking"
+APP_FIXTURE_DIR="${REPO_ROOT}/fixtures/consumers/application"
+DATA_FIXTURE_DIR="${REPO_ROOT}/fixtures/consumers/data-platform"
+
+# Test 19.1: Consumer Validation Tooling CLI syntax & help interface
+if python3 "${VALIDATE_CONSUMER_PY}" --help >/dev/null 2>&1; then
+  record_pass "Consumer Onboarding Tooling [1/18]: validate-consumer.py CLI syntax & help interface verified"
+else
+  record_fail "Consumer Onboarding Tooling [1/18]: CLI interface" "validate-consumer.py failed --help execution"
+fi
+
+# Test 19.2: Template Repository Validation
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${TEMPLATE_DIR}/infraflow.config.yaml" --repo-dir "${TEMPLATE_DIR}" >/dev/null 2>&1; then
+  record_pass "Consumer Onboarding Template [2/18]: templates/consumer-repository passes onboarding contract validation"
+else
+  record_fail "Consumer Onboarding Template [2/18]: Template validation" "Template repository failed contract validation"
+fi
+
+# Test 19.3: Reference Fixture Validation [1/3]: Networking
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${NET_FIXTURE_DIR}/infraflow.config.yaml" --repo-dir "${NET_FIXTURE_DIR}" >/dev/null 2>&1; then
+  record_pass "Reference Fixture Validation [3/18]: Networking fixture passes onboarding contract validation"
+else
+  record_fail "Reference Fixture Validation [3/18]: Networking" "Networking fixture failed contract validation"
+fi
+
+# Test 19.4: Reference Fixture Validation [2/3]: Application
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${APP_FIXTURE_DIR}/infraflow.config.yaml" --repo-dir "${APP_FIXTURE_DIR}" >/dev/null 2>&1; then
+  record_pass "Reference Fixture Validation [4/18]: Application fixture passes onboarding contract validation"
+else
+  record_fail "Reference Fixture Validation [4/18]: Application" "Application fixture failed contract validation"
+fi
+
+# Test 19.5: Reference Fixture Validation [3/3]: Data Platform
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${DATA_FIXTURE_DIR}/infraflow.config.yaml" --repo-dir "${DATA_FIXTURE_DIR}" >/dev/null 2>&1; then
+  record_pass "Reference Fixture Validation [5/18]: Data platform fixture passes onboarding contract validation"
+else
+  record_fail "Reference Fixture Validation [5/18]: Data Platform" "Data platform fixture failed contract validation"
+fi
+
+# Test 19.6: Negative Check: Mutable platform ref (@main) rejected
+TMP_BAD_CFG=$(mktemp --suffix=.yaml)
+sed 's/platform_sha:.*/platform_sha: "main"/' "${TEMPLATE_DIR}/infraflow.config.yaml" > "${TMP_BAD_CFG}"
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${TMP_BAD_CFG}" --repo-dir "${TEMPLATE_DIR}" >/dev/null 2>&1; then
+  record_fail "Negative Check: Mutable ref" "validate-consumer.py unexpectedly accepted mutable platform ref '@main'"
+else
+  record_pass "Consumer Security Guard [6/18]: Mutable platform reference (@main) rejected as expected (exit code != 0)"
+fi
+rm -f "${TMP_BAD_CFG}"
+
+# Test 19.7: Negative Check: Path traversal in terraform_dir rejected
+TMP_BAD_CFG=$(mktemp --suffix=.yaml)
+sed 's/terraform_dir:.*/terraform_dir: "..\/..\/etc"/' "${TEMPLATE_DIR}/infraflow.config.yaml" > "${TMP_BAD_CFG}"
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${TMP_BAD_CFG}" --repo-dir "${TEMPLATE_DIR}" >/dev/null 2>&1; then
+  record_fail "Negative Check: Path traversal" "validate-consumer.py unexpectedly accepted path traversal"
+else
+  record_pass "Consumer Security Guard [7/18]: Path traversal in terraform_dir rejected as expected (exit code != 0)"
+fi
+rm -f "${TMP_BAD_CFG}"
+
+# Test 19.8: Negative Check: Disabling mandatory security scanners rejected
+TMP_BAD_CFG=$(mktemp --suffix=.yaml)
+sed 's/enforce_mandatory_scanners:.*/enforce_mandatory_scanners: false/' "${TEMPLATE_DIR}/infraflow.config.yaml" > "${TMP_BAD_CFG}"
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${TMP_BAD_CFG}" --repo-dir "${TEMPLATE_DIR}" >/dev/null 2>&1; then
+  record_fail "Negative Check: Scanner bypass" "validate-consumer.py unexpectedly accepted disabling mandatory scanners"
+else
+  record_pass "Consumer Security Guard [8/18]: Disabling mandatory scanners rejected as expected (exit code != 0)"
+fi
+rm -f "${TMP_BAD_CFG}"
+
+# Test 19.9: Negative Check: Cloud auth request rejected
+TMP_BAD_CFG=$(mktemp --suffix=.yaml)
+echo "enable-aws-auth: true" >> "${TMP_BAD_CFG}"
+cat "${TEMPLATE_DIR}/infraflow.config.yaml" >> "${TMP_BAD_CFG}"
+if python3 "${VALIDATE_CONSUMER_PY}" --config "${TMP_BAD_CFG}" --repo-dir "${TEMPLATE_DIR}" >/dev/null 2>&1; then
+  record_fail "Negative Check: Cloud auth" "validate-consumer.py unexpectedly accepted cloud auth request"
+else
+  record_pass "Consumer Security Guard [9/18]: Cloud auth request rejected fail-closed as expected (exit code != 0)"
+fi
+rm -f "${TMP_BAD_CFG}"
+
+# Test 19.10: Template Module: Canonical formatting
+if terraform -chdir="${TEMPLATE_DIR}/terraform" fmt -check >/dev/null 2>&1; then
+  record_pass "Consumer Template Module [10/18]: Canonical formatting verified (terraform fmt -check)"
+else
+  record_fail "Consumer Template Module [10/18]: terraform fmt" "Template module formatting check failed"
+fi
+
+# Test 19.11: Template Module: Cloud-free initialization
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${TEMPLATE_DIR}/terraform" init -backend=false -input=false >/dev/null 2>&1; then
+  record_pass "Consumer Template Module [11/18]: Cloud-free initialization verified (terraform init -backend=false)"
+else
+  record_fail "Consumer Template Module [11/18]: terraform init" "Template module initialization failed"
+fi
+
+# Test 19.12: Template Module: Static validation
+if terraform -chdir="${TEMPLATE_DIR}/terraform" validate >/dev/null 2>&1; then
+  record_pass "Consumer Template Module [12/18]: Static validation verified (terraform validate)"
+else
+  record_fail "Consumer Template Module [12/18]: terraform validate" "Template module validation failed"
+fi
+
+# Test 19.13: Template Module: Native unit tests
+if terraform -chdir="${TEMPLATE_DIR}/terraform" test >/dev/null 2>&1; then
+  record_pass "Consumer Template Module [13/18]: Native unit tests passed offline (terraform test)"
+else
+  record_fail "Consumer Template Module [13/18]: terraform test" "Template module unit tests failed"
+fi
+rm -rf "${TEMPLATE_DIR}/terraform/.terraform" "${TEMPLATE_DIR}/terraform/.terraform.lock.hcl"
+
+# Test 19.14: Networking Fixture: Native unit tests
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${NET_FIXTURE_DIR}/terraform" init -backend=false -input=false >/dev/null 2>&1 && \
+   terraform -chdir="${NET_FIXTURE_DIR}/terraform" test >/dev/null 2>&1; then
+  record_pass "Networking Fixture [14/18]: Native unit tests passed offline (terraform test)"
+else
+  record_fail "Networking Fixture [14/18]: terraform test" "Networking fixture unit tests failed"
+fi
+rm -rf "${NET_FIXTURE_DIR}/terraform/.terraform" "${NET_FIXTURE_DIR}/terraform/.terraform.lock.hcl"
+
+# Test 19.15: Application Fixture: Native unit tests
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${APP_FIXTURE_DIR}/terraform" init -backend=false -input=false >/dev/null 2>&1 && \
+   terraform -chdir="${APP_FIXTURE_DIR}/terraform" test >/dev/null 2>&1; then
+  record_pass "Application Fixture [15/18]: Native unit tests passed offline (terraform test)"
+else
+  record_fail "Application Fixture [15/18]: terraform test" "Application fixture unit tests failed"
+fi
+rm -rf "${APP_FIXTURE_DIR}/terraform/.terraform" "${APP_FIXTURE_DIR}/terraform/.terraform.lock.hcl"
+
+# Test 19.16: Data Platform Fixture: Native unit tests
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${DATA_FIXTURE_DIR}/terraform" init -backend=false -input=false >/dev/null 2>&1 && \
+   terraform -chdir="${DATA_FIXTURE_DIR}/terraform" test >/dev/null 2>&1; then
+  record_pass "Data Platform Fixture [16/18]: Native unit tests passed offline (terraform test)"
+else
+  record_fail "Data Platform Fixture [16/18]: terraform test" "Data platform fixture unit tests failed"
+fi
+rm -rf "${DATA_FIXTURE_DIR}/terraform/.terraform" "${DATA_FIXTURE_DIR}/terraform/.terraform.lock.hcl"
+
+# Test 19.17: Consumer Template & Fixtures: Trivy IaC Misconfiguration scan
+if [[ -n "${TRIVY_BIN}" ]]; then
+  if "${TRIVY_BIN}" config --severity HIGH,CRITICAL --exit-code 1 "${TEMPLATE_DIR}" >/dev/null 2>&1 && \
+     "${TRIVY_BIN}" config --severity HIGH,CRITICAL --exit-code 1 "${REPO_ROOT}/fixtures/consumers" >/dev/null 2>&1; then
+    record_pass "Consumer Security Scans [17/18]: Trivy IaC scan clean across template & fixtures (0 HIGH/CRITICAL findings)"
+  else
+    record_fail "Consumer Security Scans [17/18]: Trivy scan" "Trivy detected misconfigurations in templates/fixtures"
+  fi
+else
+  record_fail "Consumer Security Scans [17/18]: Trivy scan" "Trivy binary not found"
+fi
+
+# Test 19.18: Dedicated Consumer Onboarding Python Test Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_consumer_onboarding.py" >/dev/null 2>&1; then
+  record_pass "Consumer Test Suite [18/18]: Dedicated 31-test consumer onboarding test suite passed (tests/test_consumer_onboarding.py)"
+else
+  record_fail "Consumer Test Suite [18/18]: Test suite" "One or more tests in tests/test_consumer_onboarding.py failed"
+fi
+
+# --- 20. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -4507,7 +4669,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

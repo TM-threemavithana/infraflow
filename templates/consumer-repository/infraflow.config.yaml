@@ -1,0 +1,34 @@
+version: "1.0"
+
+# Unique identifier for the consuming repository (lowercase alphanumeric with hyphens)
+consumer_id: "template-consumer"
+
+# Owning engineering team
+team: "platform-engineering"
+
+# Workload category: networking | application | data-platform | general
+workload_type: "general"
+
+# Relative path to Terraform configuration (must be within repository workspace)
+terraform_dir: "terraform"
+
+# Deployment target environment: dev | staging | prod
+environment: "dev"
+
+# Target cloud adapter: provider-neutral | aws | gcp | azure | apply-simulation
+adapter: "provider-neutral"
+
+# Platform repository reference
+platform_ref: "TM-threemavithana/infraflow"
+
+# Immutable 40-character commit SHA (must match target release on platform main)
+platform_sha: "2ce0ddd5de01530b6bf7aba749f0081620fb9b27"
+
+# Minimum supported Terraform CLI version (enforced >= 1.6.0)
+terraform_version: "1.10.4"
+
+# Mandatory security controls
+security_controls:
+  enforce_mandatory_scanners: true
+  fail_on_destructive: false
+  max_allowed_deletions: 25

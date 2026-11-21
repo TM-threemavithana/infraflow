@@ -1,0 +1,26 @@
+name: "Application Services CI"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "infraflow.config.yaml"
+      - ".github/workflows/infraflow-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  azure-speculative-plan:
+    name: "Azure Speculative Plan (Cloud-Free)"
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
+    with:
+      terraform-version: "1.10.4"
+      working-directory: "terraform"
+      environment: "dev"
+      storage-account-name: "stappinfraflowdev"
+      container-name: "tfstate"
+      state-key: "env/dev/terraform.tfstate"
+      enable-azure-auth: false
