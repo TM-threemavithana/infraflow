@@ -178,7 +178,7 @@ test_invalid_uuid_denied if {
 	res := entra_oidc.deny with input as mock_input
 	count(res) >= 1
 	some r in res
-	contains(r, "must be a valid UUID format")
+	contains(r, "must be a valid RFC 4122 GUID format")
 }
 
 # 14. Overprivileged Subscription-Level Role Assignment Denied
@@ -227,4 +227,97 @@ test_missing_subject_denied if {
 	count(res) >= 1
 	some r in res
 	contains(r, "missing mandatory string field 'subject'")
+}
+
+# 17. Repository Mismatch Against Expected Repository Denied
+test_repository_mismatch_denied if {
+	mock_input := {
+		"expected_repository": "TM-threemavithana/infraflow",
+		"credential": {
+			"issuer": "https://token.actions.githubusercontent.com",
+			"audiences": ["api://AzureADTokenExchange"],
+			"subject": "repo:malicious-org/attacker-repo:ref:refs/heads/main",
+		},
+	}
+	res := entra_oidc.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "does not match expected repository 'TM-threemavithana/infraflow'")
+}
+
+# 18. Repository ID Mismatch Against Expected Repository ID Denied
+test_repository_id_mismatch_denied if {
+	mock_input := {
+		"expected_repository_id": "12345678",
+		"credential": {
+			"issuer": "https://token.actions.githubusercontent.com",
+			"audiences": ["api://AzureADTokenExchange"],
+			"subject": "repo-id:99999999:ref-type:branch:ref:main",
+		},
+	}
+	res := entra_oidc.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "does not match expected repository ID '12345678'")
+}
+
+# 19. Missing Slash in repo format Denied
+test_missing_repo_slash_denied if {
+	mock_input := {"credential": {
+		"issuer": "https://token.actions.githubusercontent.com",
+		"audiences": ["api://AzureADTokenExchange"],
+		"subject": "repo:singletoken:ref:refs/heads/main",
+	}}
+	res := entra_oidc.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "missing repository in 'repo:<org>/<repo>' format")
+}
+
+# 20. Flexible Federated Identity Credentials with Custom Claims Denied
+test_flexible_fic_claims_denied if {
+	mock_input := {"credential": {
+		"issuer": "https://token.actions.githubusercontent.com",
+		"audiences": ["api://AzureADTokenExchange"],
+		"subject": "repo:TM-threemavithana/infraflow:ref:refs/heads/main",
+		"claims": ["actor", "sub"],
+	}}
+	res := entra_oidc.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "Flexible federated identity credentials with custom 'claims' blocks are prohibited")
+}
+
+# 21. Tenant ID Mismatch Denied
+test_tenant_id_mismatch_denied if {
+	mock_input := {
+		"expected_tenant_id": "00000000-0000-0000-0000-000000000001",
+		"credential": {
+			"tenant_id": "00000000-0000-0000-0000-000000000002",
+			"issuer": "https://token.actions.githubusercontent.com",
+			"audiences": ["api://AzureADTokenExchange"],
+			"subject": "repo:TM-threemavithana/infraflow:ref:refs/heads/main",
+		},
+	}
+	res := entra_oidc.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "does not match expected tenant")
+}
+
+# 22. Client ID Mismatch Denied
+test_client_id_mismatch_denied if {
+	mock_input := {
+		"expected_client_id": "11111111-1111-1111-1111-111111111111",
+		"credential": {
+			"client_id": "22222222-2222-2222-2222-222222222222",
+			"issuer": "https://token.actions.githubusercontent.com",
+			"audiences": ["api://AzureADTokenExchange"],
+			"subject": "repo:TM-threemavithana/infraflow:ref:refs/heads/main",
+		},
+	}
+	res := entra_oidc.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "does not match expected client")
 }

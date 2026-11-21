@@ -275,13 +275,29 @@ Milestone G07.5 implements the foundation of the Microsoft Azure adapter, establ
 
 ---
 
-## 19. Quality Gate Definitions
+## 19. Milestone G07.6 — Acceptance Criteria (Azure Adapter Security Hardening & Adversarial Validation)
+
+Milestone G07.6 executes comprehensive security hardening, adversarial integration testing, and offline regression verification of the Microsoft Azure adapter ($0.00 cloud spend, zero credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-23** | Microsoft Entra ID OIDC Policy Hardening | Harden Entra ID policy ([`policies/azure/entra_oidc.rego`](file:///home/tharuka/projects/infraflow/policies/azure/entra_oidc.rego)) with Rule 6 expected repository & repository ID matching, Rule 6.1 flexible FIC custom claims rejection, and RFC 4122 GUID format validation. | Automated conftest verification (`conftest verify`) — 24/24 tests passed | **PASS (G07.6 Implemented)** |
+| **AC-G07-24** | Azure Storage Backend Policy Hardening | Harden Azure storage backend policy ([`policies/azure/storage_backend.rego`](file:///home/tharuka/projects/infraflow/policies/azure/storage_backend.rego)) enforcing strict data-plane authentication (`use_azuread_auth = true`) and rejecting `use_oidc = true` alone to eliminate shared key fallback. | Automated conftest verification (`conftest verify`) — 19/19 tests passed | **PASS (G07.6 Implemented)** |
+| **AC-G07-25** | Reusable Azure Workflow Security Hardening | Harden `.github/workflows/reusable-tf-azure.yml` with unconditional repository boundary check (`WORKFLOW_REPO`), 40-character hexadecimal `WORKFLOW_SHA` validation, strict `HIGH,CRITICAL` severity enforcement, and `plan-metrics.json` cleanup trap. | `actionlint`, `zizmor` (0 findings), and adversarial vectors 37–39, 45 | **PASS (G07.6 Implemented)** |
+| **AC-G07-26** | Dedicated 45-Vector Adversarial Integration Suite | Author comprehensive 45-vector adversarial suite ([`tests/test_azure_adversarial_integration.py`](file:///home/tharuka/projects/infraflow/tests/test_azure_adversarial_integration.py)) covering identity substitution, audience wildcards, storage tampering, scanner bypasses, and fail-closed summary aggregation. | `python3 -m unittest tests/test_azure_adversarial_integration.py` (45/45 passed) | **PASS (G07.6 Implemented)** |
+| **AC-G07-27** | Offline Local Regression Harness Expansion (303 Checks) | Expand Section 18 of `scripts/validate-local.sh` to 26 dedicated Azure checks (increasing total platform checks from 302 to 303). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G07.5. | `scripts/validate-local.sh` execution (303/303 PASS) | **PASS (G07.6 Implemented)** |
+| **AC-G07-28** | Adversarial Evidence & Hardening Documentation | Produce comprehensive security audit and adversarial report ([`docs/evidence/G07/G07-AZURE-SECURITY-HARDENING-REPORT.md`](file:///home/tharuka/projects/infraflow/docs/evidence/G07/G07-AZURE-SECURITY-HARDENING-REPORT.md)) detailing threat model analysis, vulnerability remediation, and test matrices. | Documentation audit and link verification | **PASS (G07.6 Implemented)** |
+| **AC-G07-29** | Zero Cloud Spend & Regression Invariant | Guarantee exactly $0.00 cloud spend and zero live credentials. Maintain 100% pass rate across 299 Python tests and 171 OPA Rego unit tests. | Automated test suite execution | **PASS (G07.6 Implemented)** |
+
+---
+
+## 20. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G07:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (302/302 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (303/303 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.

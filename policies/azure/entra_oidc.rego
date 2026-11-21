@@ -203,7 +203,8 @@ is_valid_subject_format(subj) if {
 
 # ==============================================================================
 # RULE 6: REPOSITORY AND ORGANIZATION BOUNDARY ENFORCEMENT
-# Subject must specify non-empty repository and organization
+# Subject must specify non-empty repository and organization.
+# Rejects malformed boundary prefixes and enforces expected repository boundaries.
 # ==============================================================================
 deny contains msg if {
 	some c in get_credentials
@@ -217,6 +218,45 @@ deny contains msg if {
 	subj := object.get(c, "subject", "")
 	startswith(subj, "repo-id::")
 	msg := sprintf("Federated credential subject missing numeric repository ID: '%v'", [subj])
+}
+
+deny contains msg if {
+	some c in get_credentials
+	subj := object.get(c, "subject", "")
+	startswith(subj, "repo:")
+	parts := split(subj, ":")
+	repo_part := parts[1]
+	not contains(repo_part, "/")
+	msg := sprintf("Federated credential subject missing repository in 'repo:<org>/<repo>' format: '%v'", [subj])
+}
+
+deny contains msg if {
+	some c in get_credentials
+	expected_repo := object.get(input, "expected_repository", "")
+	expected_repo != ""
+	subj := object.get(c, "subject", "")
+	not startswith(subj, sprintf("repo:%v:", [expected_repo]))
+	msg := sprintf("Federated credential subject repository does not match expected repository '%v': '%v'", [expected_repo, subj])
+}
+
+deny contains msg if {
+	some c in get_credentials
+	expected_id := object.get(input, "expected_repository_id", "")
+	expected_id != ""
+	subj := object.get(c, "subject", "")
+	not startswith(subj, sprintf("repo-id:%v:", [expected_id]))
+	msg := sprintf("Federated credential subject repository_id does not match expected repository ID '%v': '%v'", [expected_id, subj])
+}
+
+# ==============================================================================
+# RULE 6.1: REJECT FLEXIBLE FEDERATED CREDENTIALS (PREVIEW CLAIMS-BASED FIC)
+# Standard InfraFlow baseline strictly mandates deterministic exact-match FIC.
+# Flexible credentials using custom 'claims' blocks are prohibited.
+# ==============================================================================
+deny contains msg if {
+	some c in get_credentials
+	object.get(c, "claims", null) != null
+	msg := "Flexible federated identity credentials with custom 'claims' blocks are prohibited. Standard exact-match FIC is required."
 }
 
 # ==============================================================================
@@ -242,8 +282,9 @@ deny contains msg if {
 }
 
 # ==============================================================================
-# RULE 8: AZURE IDENTITY UUID FORMAT CONSTRAINTS
-# Any tenant_id or client_id declared in credential or binding must be a valid UUID
+# RULE 8: AZURE IDENTITY RFC 4122 GUID FORMAT & BINDING CONSTRAINTS
+# Any tenant_id or client_id declared in credential or binding must be a valid RFC 4122 GUID
+# (supporting versions 1-5) and match expected tenant or client constraints if configured.
 # ==============================================================================
 deny contains msg if {
 	some c in get_credentials
@@ -252,7 +293,27 @@ deny contains msg if {
 	is_string(val)
 	val != ""
 	not regex.match(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`, val)
-	msg := sprintf("Azure '%v' must be a valid UUID format: '%v'", [field, val])
+	msg := sprintf("Azure '%v' must be a valid RFC 4122 GUID format: '%v'", [field, val])
+}
+
+deny contains msg if {
+	some c in get_credentials
+	expected_tenant := object.get(input, "expected_tenant_id", "")
+	expected_tenant != ""
+	actual_tenant := object.get(c, "tenant_id", "")
+	actual_tenant != ""
+	actual_tenant != expected_tenant
+	msg := sprintf("Federated credential tenant_id '%v' does not match expected tenant '%v'", [actual_tenant, expected_tenant])
+}
+
+deny contains msg if {
+	some c in get_credentials
+	expected_client := object.get(input, "expected_client_id", "")
+	expected_client != ""
+	actual_client := object.get(c, "client_id", "")
+	actual_client != ""
+	actual_client != expected_client
+	msg := sprintf("Federated credential client_id '%v' does not match expected client '%v'", [actual_client, expected_client])
 }
 
 # ==============================================================================

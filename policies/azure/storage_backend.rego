@@ -86,6 +86,11 @@ get_role_assignments contains r if {
 	some r in input.role_assignments
 }
 
+get_role_assignments contains r if {
+	is_object(input.role_assignment)
+	r := input.role_assignment
+}
+
 is_tf_interpolation(val) if {
 	startswith(val, "${")
 }
@@ -178,15 +183,16 @@ deny contains msg if {
 
 # ==============================================================================
 # RULE 5: MICROSOFT ENTRA ID DATA-PLANE AUTHENTICATION MANDATE (NO SHARED KEYS)
-# azurerm backend must authenticate via Entra ID (use_azuread_auth or use_oidc)
+# azurerm backend must authenticate blob data-plane operations via Entra ID
+# by explicitly setting 'use_azuread_auth = true'.
+# Note: 'use_oidc = true' authenticates ARM control plane, but without
+# 'use_azuread_auth = true' Terraform falls back to retrieving storage access keys!
 # ==============================================================================
 deny contains msg if {
 	some b in get_backends
 	use_ad := object.get(b, "use_azuread_auth", false)
-	use_oidc := object.get(b, "use_oidc", false)
 	use_ad != true
-	use_oidc != true
-	msg := "azurerm backend must enable Microsoft Entra ID authentication via 'use_azuread_auth = true' or 'use_oidc = true'"
+	msg := "azurerm backend must enable Microsoft Entra ID data-plane authentication via 'use_azuread_auth = true'"
 }
 
 deny contains msg if {

@@ -210,6 +210,7 @@ class TestAzureWorkflowGuardExecution(unittest.TestCase):
             "EVENT_NAME": "push",
             "TARGET_REF": "refs/heads/main",
             "WORKFLOW_REPO": "TM-threemavithana/infraflow",
+            "WORKFLOW_SHA": "7c4dff9d5ab9e917fab79f59fa359bb413dca720",
             "WORKFLOW_REF": "TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@7c4dff9d5ab9e917fab79f59fa359bb413dca720",
         }
         base_env.update(env_overrides)
@@ -411,7 +412,7 @@ class TestAzureEntraIdOidcPolicyWithConftest(unittest.TestCase):
             text=True,
         )
         self.assertEqual(res.returncode, 0, f"Entra ID Rego tests failed: {res.stdout}\n{res.stderr}")
-        self.assertIn("18 passed", res.stdout)
+        self.assertIn("0 failures, 0 exceptions, 0 skipped", res.stdout)
 
 
 class TestAzureStorageBackendPolicyWithConftest(unittest.TestCase):
@@ -429,7 +430,7 @@ class TestAzureStorageBackendPolicyWithConftest(unittest.TestCase):
             text=True,
         )
         self.assertEqual(res.returncode, 0, f"Storage backend Rego tests failed: {res.stdout}\n{res.stderr}")
-        self.assertIn("18 passed", res.stdout)
+        self.assertIn("0 failures, 0 exceptions, 0 skipped", res.stdout)
 
 
 class TestAzureReferenceModuleStructure(unittest.TestCase):

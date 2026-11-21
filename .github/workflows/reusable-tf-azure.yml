@@ -232,8 +232,13 @@ jobs:
 
           # 4. Reusable Workflow Reference Pinning & Trust Boundary
           EXPECTED_PLATFORM_REPO="TM-threemavithana/infraflow"
-          if [[ -n "${WORKFLOW_REPO:-}" && "${WORKFLOW_REPO}" != "${EXPECTED_PLATFORM_REPO}" ]]; then
-            echo "::error::Security Violation: Reusable Azure workflow must originate from trusted repository '${EXPECTED_PLATFORM_REPO}', got '${WORKFLOW_REPO}'."
+          if [[ "${WORKFLOW_REPO:-}" != "${EXPECTED_PLATFORM_REPO}" ]]; then
+            echo "::error::Security Violation: Reusable Azure workflow must originate from trusted repository '${EXPECTED_PLATFORM_REPO}', got '${WORKFLOW_REPO:-}'."
+            exit 1
+          fi
+
+          if [[ ! "${WORKFLOW_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Security Violation: Reusable Azure workflow must run at an immutable 40-character hexadecimal commit SHA, got '${WORKFLOW_SHA:-}'."
             exit 1
           fi
 
@@ -248,22 +253,22 @@ jobs:
             fi
           fi
 
-          # 5. Azure Subscription ID Validation (UUIDv4)
-          UUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-          if [[ ! "${INPUT_SUBSCRIPTION_ID}" =~ ${UUID_REGEX} ]]; then
-            echo "::error::Security Violation: azure-subscription-id '${INPUT_SUBSCRIPTION_ID}' is not a valid UUID format."
+          # 5. Azure Subscription ID Validation (RFC 4122 GUID)
+          GUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          if [[ ! "${INPUT_SUBSCRIPTION_ID}" =~ ${GUID_REGEX} ]]; then
+            echo "::error::Security Violation: azure-subscription-id '${INPUT_SUBSCRIPTION_ID}' is not a valid RFC 4122 GUID format."
             exit 1
           fi
 
-          # 6. Azure Tenant ID Validation (if provided)
-          if [[ -n "${INPUT_TENANT_ID}" && ! "${INPUT_TENANT_ID}" =~ ${UUID_REGEX} ]]; then
-            echo "::error::Security Violation: azure-tenant-id '${INPUT_TENANT_ID}' is not a valid UUID format."
+          # 6. Azure Tenant ID Validation (if provided, RFC 4122 GUID)
+          if [[ -n "${INPUT_TENANT_ID}" && ! "${INPUT_TENANT_ID}" =~ ${GUID_REGEX} ]]; then
+            echo "::error::Security Violation: azure-tenant-id '${INPUT_TENANT_ID}' is not a valid RFC 4122 GUID format."
             exit 1
           fi
 
-          # 7. Azure Client ID Validation (if provided)
-          if [[ -n "${INPUT_CLIENT_ID}" && ! "${INPUT_CLIENT_ID}" =~ ${UUID_REGEX} ]]; then
-            echo "::error::Security Violation: azure-client-id '${INPUT_CLIENT_ID}' is not a valid UUID format."
+          # 7. Azure Client ID Validation (if provided, RFC 4122 GUID)
+          if [[ -n "${INPUT_CLIENT_ID}" && ! "${INPUT_CLIENT_ID}" =~ ${GUID_REGEX} ]]; then
+            echo "::error::Security Violation: azure-client-id '${INPUT_CLIENT_ID}' is not a valid RFC 4122 GUID format."
             exit 1
           fi
 
@@ -368,8 +373,8 @@ jobs:
           fi
 
           # 18. Security Severity Threshold Validation
-          if [[ "${INPUT_SEVERITY}" != "HIGH,CRITICAL" && "${INPUT_SEVERITY}" != "CRITICAL" ]]; then
-            echo "::error::Security Violation: Severity threshold '${INPUT_SEVERITY}' is unauthorized. Must strictly enforce 'HIGH,CRITICAL' or 'CRITICAL'."
+          if [[ "${INPUT_SEVERITY}" != "HIGH,CRITICAL" ]]; then
+            echo "::error::Security Violation: Severity threshold '${INPUT_SEVERITY}' is unauthorized. Must strictly enforce 'HIGH,CRITICAL'."
             exit 1
           fi
 
@@ -545,7 +550,7 @@ jobs:
           FAIL_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
         run: |
           set -euo pipefail
-          trap 'rm -f tfplan tfplan.json' EXIT INT TERM
+          trap 'rm -f tfplan tfplan.json plan-metrics.json' EXIT INT TERM
           echo "=============================================================================="
           echo ">>> Executing Cloud-Free Speculative Plan for Azure Module"
           echo "=============================================================================="
@@ -678,7 +683,7 @@ jobs:
           fi
 
           # 8. Clean up sensitive plan artifact
-          rm -f tfplan tfplan.json
+          rm -f tfplan tfplan.json plan-metrics.json
 
       - name: "Record Cloud-Free Outputs"
         id: summary

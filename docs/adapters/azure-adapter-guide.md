@@ -1,7 +1,7 @@
 # InfraFlow — Microsoft Azure Adapter & Workload Identity Guide
-**Milestone:** G07.5 — Microsoft Azure Adapter & Workload Identity Foundation  
-**Classification:** Enterprise Security Architecture & Implementation Guide  
-**Status:** Hardened, Adversarially Tested & Verified (Cloud-Free Simulation Foundation)
+**Milestone:** G07.5/G07.6 — Microsoft Azure Adapter & Security Hardening
+**Classification:** Enterprise Security Architecture & Implementation Guide
+**Status:** Hardened, Adversarially Tested & Verified (G07.6 Offline Simulation Baseline)
 
 ---
 
@@ -68,7 +68,7 @@ Terraform remote state storage on Azure Blob Storage (`backend "azurerm"`) is gu
 
 | Security Requirement | Implementation | Standard / Baseline |
 | :--- | :--- | :--- |
-| **Data Plane Authentication** | `use_azuread_auth = true` or `use_oidc = true` | Zero Trust Architecture |
+| **Data Plane Authentication** | `use_azuread_auth = true` (Mandatory; `use_oidc` alone is rejected) | Zero Trust Architecture |
 | **Shared Key Disabled** | `shared_access_key_enabled = false` | CIS Azure Benchmark v3.0 §5.1 |
 | **Container Access Type** | `container_access_type = "private"` | CIS Azure Benchmark v3.0 §5.2 |
 | **Public Network Access** | `public_network_access_enabled = false` / `network_rules default_action = "Deny"` | CIS Azure Benchmark v3.0 §5.3 |
@@ -79,6 +79,13 @@ Terraform remote state storage on Azure Blob Storage (`backend "azurerm"`) is gu
 
 ### 3.1 State Locking: Azure Blob Leases vs AWS DynamoDB
 Unlike AWS S3 which requires a secondary service (Amazon DynamoDB) for distributed state locking, Azure Blob Storage provides **native blob lease locking** through the Azure Storage service. When Terraform initializes an `azurerm` backend, it acquires a 60-second renewable exclusive lease on the state blob. If another execution attempts to acquire a lock, the Azure Storage REST API returns HTTP 412 (Precondition Failed) / `LeaseAlreadyPresent`, safely preventing concurrent state corruption without secondary infrastructure.
+
+### 3.2 Authentication Nuance: Control Plane vs Data Plane (`use_oidc` vs `use_azuread_auth`)
+A critical security finding remediated in Milestone G07.6 concerns the exact distinction between `use_oidc` and `use_azuread_auth` in Terraform's `azurerm` backend:
+- **`use_oidc = true`**: Authenticates the Terraform runner against Azure Resource Manager (ARM) via OIDC.
+- **`use_azuread_auth = true`**: Enforces Microsoft Entra ID token authentication on Azure Blob Storage data-plane operations (blob read, write, lease acquisition).
+- **The Vulnerability**: If a backend sets `use_oidc = true` but omits `use_azuread_auth = true`, Terraform uses ARM to fetch the storage account shared access key and executes all blob operations using shared keys!
+- **Policy Enforcement**: InfraFlow Policy Rule 5 strictly mandates `use_azuread_auth = true`. Backends specifying `use_oidc = true` without `use_azuread_auth = true` are denied.
 
 ---
 
@@ -158,7 +165,7 @@ The reference module located at `examples/azure-reference-module/` demonstrates 
 
 ## 7. Verification and Local Testing
 
-Execute the complete Azure validation and regression testing suite locally:
+Execute the complete Azure validation, adversarial, and regression testing suite locally:
 
 ```bash
 # 1. Actionlint workflow syntax validation
@@ -167,7 +174,7 @@ actionlint .github/workflows/reusable-tf-azure.yml
 # 2. Zizmor supply chain security audit
 zizmor -c .zizmor.yml --min-severity medium .github/workflows/reusable-tf-azure.yml
 
-# 3. OPA / Conftest Rego unit tests (164 tests)
+# 3. OPA / Conftest Rego unit tests (171 tests, including 43 Azure tests)
 conftest verify --policy policies policies
 
 # 4. Reference module testing (mock provider azurerm)
@@ -178,13 +185,16 @@ terraform validate
 terraform test
 cd ../..
 
-# 5. Dedicated Azure Python test suite (39 unit and adversarial tests)
+# 5. Dedicated Azure Python test suite (39 tests)
 python3 -m unittest tests/test_azure_adapter.py
 
-# 6. Complete Python unit test discovery (254 tests)
+# 6. Dedicated 45-Vector Azure Adversarial Integration Suite
+python3 -m unittest tests/test_azure_adversarial_integration.py
+
+# 7. Complete Python unit test discovery (299 tests)
 python3 -m unittest discover tests
 
-# 7. Full local validation harness (Section 18)
+# 8. Full local validation harness (303 checks, Section 18: 26 dedicated Azure checks)
 ./scripts/validate-local.sh
 ```
 
@@ -194,5 +204,5 @@ python3 -m unittest discover tests
 
 > [!IMPORTANT]
 > **Cloud-Free Simulation Notice**:
-> In accordance with Milestone G07.5 constraints, real Azure authentication (`enable-azure-auth: true`), live Microsoft Entra ID token exchange, Azure CLI integration (`azure/login`), and Azure ARM/Storage REST interactions remain **unverified against live Azure subscriptions**.
-> Any workflow invocation enabling `enable-azure-auth: true` is intercepted by the workflow guard and fails closed with an informative error. Live cloud authentication and external consumer validation are slated for subsequent milestones (G07.6 / G07.7) following identical security verification protocols established in G05 (AWS) and G07.4 (GCP).
+> In accordance with Milestone G07.5 and G07.6 constraints, real Azure authentication (`enable-azure-auth: true`), live Microsoft Entra ID token exchange, Azure CLI integration (`azure/login`), and Azure ARM/Storage REST interactions remain **unverified against live Azure subscriptions**.
+> Any workflow invocation enabling `enable-azure-auth: true` is intercepted by the workflow guard and fails closed with an informative error. Live cloud authentication and external consumer validation are slated for subsequent milestones (G07.7) following identical security verification protocols established in G05 (AWS) and G07.4 (GCP).

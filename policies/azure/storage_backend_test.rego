@@ -119,7 +119,23 @@ test_missing_entra_id_auth_denied if {
 	res := storage_backend.deny with input as mock_input
 	count(res) >= 1
 	some r in res
-	contains(r, "must enable Microsoft Entra ID authentication")
+	contains(r, "must enable Microsoft Entra ID data-plane authentication")
+}
+
+# 8b. use_oidc alone without use_azuread_auth Denied (falls back to shared key)
+test_use_oidc_alone_without_azuread_auth_denied if {
+	mock_input := {"backend": {"azurerm": {
+		"storage_account_name": "stinfraflowprod01",
+		"resource_group_name": "rg-prod",
+		"container_name": "tfstate",
+		"key": "prod/terraform.tfstate",
+		"use_oidc": true,
+		"use_azuread_auth": false,
+	}}}
+	res := storage_backend.deny with input as mock_input
+	count(res) >= 1
+	some r in res
+	contains(r, "must enable Microsoft Entra ID data-plane authentication via 'use_azuread_auth = true'")
 }
 
 # 9. Static Storage Access Key Denied
