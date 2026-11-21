@@ -17,9 +17,10 @@ jobs:
     name: "AWS Speculative Plan (Cloud-Free)"
     uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
+      aws-region: "us-east-1"
       terraform-version: "1.10.4"
       working-directory: "terraform"
       environment: "dev"
-      s3-bucket: "net-infraflow-tfstate"
-      s3-key: "env/dev/terraform.tfstate"
+      backend-bucket: "net-infraflow-tfstate"
+      backend-key: "env/dev/terraform.tfstate"
       enable-aws-auth: false

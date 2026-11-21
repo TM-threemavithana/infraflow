@@ -17,10 +17,13 @@ jobs:
     name: "Azure Speculative Plan (Cloud-Free)"
     uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
+      azure-subscription-id: "00000000-0000-0000-0000-000000000001"
+      azure-resource-group-name: "rg-infraflow-dev"
+      azure-storage-account-name: "stappinfraflowdev"
+      azure-storage-container-name: "tfstate"
+      azure-backend-key: "env/dev/terraform.tfstate"
+      azure-region: "eastus"
       terraform-version: "1.10.4"
       working-directory: "terraform"
       environment: "dev"
-      storage-account-name: "stappinfraflowdev"
-      container-name: "tfstate"
-      state-key: "env/dev/terraform.tfstate"
       enable-azure-auth: false

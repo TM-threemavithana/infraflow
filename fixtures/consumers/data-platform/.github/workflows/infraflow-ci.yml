@@ -17,9 +17,11 @@ jobs:
     name: "GCP Speculative Plan (Cloud-Free)"
     uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
+      gcp-project-id: "infraflow-data-dev-01"
+      gcp-region: "us-central1"
+      backend-bucket: "gcs-data-infraflow-tfstate"
+      backend-prefix: "env/dev"
       terraform-version: "1.10.4"
       working-directory: "terraform"
       environment: "dev"
-      gcs-bucket: "gcs-data-infraflow-tfstate"
-      gcs-prefix: "env/dev"
       enable-gcp-auth: false

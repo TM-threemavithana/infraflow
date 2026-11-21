@@ -77,9 +77,9 @@ InfraFlow provides standardized reusable workflows callable via GitHub Actions `
 | [`.github/workflows/reusable-tf-security.yml`](.github/workflows/reusable-tf-security.yml) | DevSecOps security scanning | `scan-severity`, `policy-directory` | TFLint, Trivy, Zizmor, Conftest/OPA |
 | [`.github/workflows/reusable-tf-plan.yml`](.github/workflows/reusable-tf-plan.yml) | Speculative plan & governance | `environment`, `var-file` | Dual scanners, Sigstore attestation, redaction |
 | [`.github/workflows/reusable-tf-apply.yml`](.github/workflows/reusable-tf-apply.yml) | Protected apply simulation | `plan-file`, `plan-integrity-digest` | KMS envelope encryption, state lineage, atomic consumption |
-| [`.github/workflows/reusable-tf-aws.yml`](.github/workflows/reusable-tf-aws.yml) | AWS cloud adapter | `aws-region`, `role-to-assume`, `s3-bucket` | IAM OIDC validation, S3 encryption & locking |
-| [`.github/workflows/reusable-tf-gcp.yml`](.github/workflows/reusable-tf-gcp.yml) | GCP cloud adapter | `workload-identity-provider`, `service-account`, `gcs-bucket` | WIF OIDC validation, GCS UBLA & versioning |
-| [`.github/workflows/reusable-tf-azure.yml`](.github/workflows/reusable-tf-azure.yml) | Azure cloud adapter | `client-id`, `tenant-id`, `storage-account` | Entra ID OIDC validation, Azure AD auth, TLS 1.2+ |
+| [`.github/workflows/reusable-tf-aws.yml`](.github/workflows/reusable-tf-aws.yml) | AWS cloud adapter | `aws-region`, `role-to-assume`, `backend-bucket` | IAM OIDC validation, S3 encryption & locking |
+| [`.github/workflows/reusable-tf-gcp.yml`](.github/workflows/reusable-tf-gcp.yml) | GCP cloud adapter | `gcp-project-id`, `service-account`, `backend-bucket` | WIF OIDC validation, GCS UBLA & versioning |
+| [`.github/workflows/reusable-tf-azure.yml`](.github/workflows/reusable-tf-azure.yml) | Azure cloud adapter | `azure-subscription-id`, `azure-client-id`, `azure-storage-account-name` | Entra ID OIDC validation, Azure AD auth, TLS 1.2+ |
 
 ---
 

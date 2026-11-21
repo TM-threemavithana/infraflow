@@ -178,11 +178,12 @@ Executes AWS speculative planning and S3 backend policy validation:
 ```yaml
 uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-aws.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27
 with:
+  aws-region: "us-east-1"
   terraform-version: "1.10.4"
   working-directory: "terraform/aws"
   environment: "dev"
-  s3-bucket: "my-infra-tfstate"
-  s3-key: "env/dev/terraform.tfstate"
+  backend-bucket: "my-infra-tfstate"
+  backend-key: "env/dev/terraform.tfstate"
   enable-aws-auth: false
 ```
 
@@ -191,11 +192,13 @@ Executes GCP speculative planning and GCS backend policy validation:
 ```yaml
 uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-gcp.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27
 with:
+  gcp-project-id: "my-gcp-project-01"
+  gcp-region: "us-central1"
   terraform-version: "1.10.4"
   working-directory: "terraform/gcp"
   environment: "dev"
-  gcs-bucket: "my-infra-tfstate"
-  gcs-prefix: "env/dev"
+  backend-bucket: "my-infra-tfstate"
+  backend-prefix: "env/dev"
   enable-gcp-auth: false
 ```
 
@@ -204,12 +207,15 @@ Executes Azure speculative planning and Azure Blob backend policy validation:
 ```yaml
 uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27
 with:
+  azure-subscription-id: "00000000-0000-0000-0000-000000000001"
+  azure-resource-group-name: "rg-infra-dev"
+  azure-storage-account-name: "mystorageacct"
+  azure-storage-container-name: "tfstate"
+  azure-backend-key: "env/dev/terraform.tfstate"
+  azure-region: "eastus"
   terraform-version: "1.10.4"
   working-directory: "terraform/azure"
   environment: "dev"
-  storage-account-name: "mystorageacct"
-  container-name: "tfstate"
-  state-key: "env/dev/terraform.tfstate"
   enable-azure-auth: false
 ```
 
