@@ -4147,7 +4147,359 @@ else
   record_fail "GCP Plan Metrics Suite [27/27]: Plan metrics regression suite" "One or more tests in tests/test_gcp_plan_metrics.py failed"
 fi
 
-# --- 18. Summary Report ---
+# --- 18. Microsoft Azure Adapter & Workload Identity Architecture (G07.5/G07.6) ---
+log_header "18. Microsoft Azure Adapter & Workload Identity Architecture (G07.5/G07.6)"
+
+AZURE_REUSABLE_WF="${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml"
+AZURE_REF_MODULE="${REPO_ROOT}/examples/azure-reference-module"
+
+# Test 18.1: Actionlint verification of Azure reusable workflow
+if [[ -n "${ACTIONLINT_BIN}" ]]; then
+  if "${ACTIONLINT_BIN}" "${AZURE_REUSABLE_WF}" >/dev/null 2>&1; then
+    record_pass "Azure Workflows [1/26]: Actionlint syntax & schema validation passed"
+  else
+    record_fail "Azure Workflows [1/26]: Actionlint validation" "Actionlint failed on Azure reusable workflow"
+  fi
+else
+  record_fail "Azure Workflows [1/26]: Actionlint validation" "Actionlint binary not found"
+fi
+
+# Test 18.2: Zizmor supply chain security audit on reusable Azure workflow
+if [[ -n "${ZIZMOR_BIN}" ]]; then
+  if "${ZIZMOR_BIN}" -c "${REPO_ROOT}/.zizmor.yml" --min-severity medium "${AZURE_REUSABLE_WF}" >/dev/null 2>&1; then
+    record_pass "Azure Adapter [2/26]: Zizmor supply chain security audit passed (0 medium/high findings)"
+  else
+    record_fail "Azure Adapter [2/26]: Zizmor audit" "Zizmor detected supply chain vulnerabilities in reusable-tf-azure.yml"
+  fi
+else
+  record_fail "Azure Adapter [2/26]: Zizmor audit" "Zizmor binary not found"
+fi
+
+# Test 18.3: Conftest OPA unit tests verification (includes Azure Entra ID and storage backend tests)
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies" "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+    record_pass "Azure OPA Policies [3/26]: All Rego unit tests passed (conftest verify)"
+  else
+    record_fail "Azure OPA Policies [3/26]: Rego unit tests" "conftest verify reported failures"
+  fi
+else
+  record_fail "Azure OPA Policies [3/26]: Rego unit tests" "Conftest binary not found"
+fi
+
+# Extract guard script from reusable-tf-azure.yml
+AZURE_GUARD_SCRIPT="$(python3 -c "
+import yaml
+with open('${AZURE_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+steps = {s['id']: s['run'] for s in data['jobs']['validate-inputs']['steps'] if 'id' in s and 'run' in s}
+print(steps['guard'])
+")"
+
+run_azure_guard_test() {
+  local version="${1:-1.10.4}"
+  local dir="${2:-.}"
+  local var_file="${3:-}"
+  local env_name="${4:-dev}"
+  local subscription_id="${5:-00000000-0000-0000-0000-000000000001}"
+  local tenant_id="${6:-00000000-0000-0000-0000-000000000002}"
+  local client_id="${7:-00000000-0000-0000-0000-000000000003}"
+  local rg_name="${8:-rg-infraflow-dev}"
+  local storage_account="${9:-stinfraflowdev01}"
+  local container="${10:-tfstate}"
+  local backend_key="${11:-terraform.tfstate}"
+  local severity="${12:-HIGH,CRITICAL}"
+  local enable_azure_auth="${13:-false}"
+  local event_name="${14:-push}"
+  local target_ref="${15:-refs/heads/main}"
+  local workflow_repo="${16:-TM-threemavithana/infraflow}"
+  local workflow_sha="${17:-3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47}"
+  local workflow_ref="${18:-TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47}"
+  local enable_policy_eval="${19:-true}"
+  local enable_trivy="${20:-true}"
+  local policy_dir="${21:-policies}"
+
+  local code=0
+  INPUT_VERSION="${version}" \
+  INPUT_DIR="${dir}" \
+  INPUT_VAR_FILE="${var_file}" \
+  INPUT_ENV="${env_name}" \
+  INPUT_SUBSCRIPTION_ID="${subscription_id}" \
+  INPUT_TENANT_ID="${tenant_id}" \
+  INPUT_CLIENT_ID="${client_id}" \
+  INPUT_RESOURCE_GROUP_NAME="${rg_name}" \
+  INPUT_STORAGE_ACCOUNT_NAME="${storage_account}" \
+  INPUT_STORAGE_CONTAINER_NAME="${container}" \
+  INPUT_BACKEND_KEY="${backend_key}" \
+  INPUT_SEVERITY="${severity}" \
+  ENABLE_AZURE_AUTH="${enable_azure_auth}" \
+  ENABLE_POLICY_EVAL="${enable_policy_eval}" \
+  ENABLE_TRIVY="${enable_trivy}" \
+  INPUT_POLICY_DIR="${policy_dir}" \
+  EVENT_NAME="${event_name}" \
+  TARGET_REF="${target_ref}" \
+  GITHUB_REPOSITORY="TM-threemavithana/infraflow" \
+  WORKFLOW_REPO="${workflow_repo}" \
+  WORKFLOW_SHA="${workflow_sha}" \
+  WORKFLOW_REF="${workflow_ref}" \
+    bash -c "${AZURE_GUARD_SCRIPT}" >/dev/null 2>&1 || code=$?
+  return ${code}
+}
+
+# Test 18.4: Input Guard: Valid Azure inputs accepted
+if run_azure_guard_test; then
+  record_pass "Azure Input Guard [4/26]: Valid Azure inputs accepted"
+else
+  record_fail "Azure Input Guard [4/26]: Valid inputs" "Legitimate Azure inputs unexpectedly failed guard validation"
+fi
+
+# Test 18.5: Security Invariant: Live Azure authentication strictly rejected (G07.5 fail-closed)
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-infraflow-dev" "stinfraflowdev01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "true"; then
+  record_pass "Azure Security Invariant [5/26]: Live Azure authentication strictly rejected in G07.5 (fail-closed)"
+else
+  record_fail "Azure Security Invariant [5/26]: Live Azure auth" "enable-azure-auth: true was unexpectedly permitted"
+fi
+
+# Test 18.6: Input Guard: Malformed Azure Subscription ID rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "invalid-uuid" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "12345" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-00000000000G" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001; rm -rf /"; then
+  record_pass "Azure Input Guard [6/26]: Malformed Subscription ID and injection attempts rejected as expected"
+else
+  record_fail "Azure Input Guard [6/26]: Subscription ID rejection" "Malformed Subscription ID was unexpectedly accepted"
+fi
+
+# Test 18.7: Input Guard: Malformed Azure Tenant ID and Client ID rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "not-a-tenant-uuid" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "not-a-client-uuid"; then
+  record_pass "Azure Input Guard [7/26]: Malformed Tenant ID and Client ID rejected as expected"
+else
+  record_fail "Azure Input Guard [7/26]: Tenant/Client ID rejection" "Malformed Tenant or Client ID was unexpectedly accepted"
+fi
+
+# Test 18.8: Input Guard: Malformed Resource Group name rejected (>90 chars, trailing period, invalid chars)
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "invalid_rg." && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg_with_disallowed*chars" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "$(printf 'a%.0s' {1..95})"; then
+  record_pass "Azure Input Guard [8/26]: Malformed Resource Group names rejected as expected"
+else
+  record_fail "Azure Input Guard [8/26]: Resource Group rejection" "Malformed Resource Group name was unexpectedly accepted"
+fi
+
+# Test 18.9: Input Guard: Malformed Storage Account name rejected (<3 chars, >24 chars, uppercase, hyphen)
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "sa" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "st-with-hyphens" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "StorageAccountUpper" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "toolongstorageaccountname12345"; then
+  record_pass "Azure Input Guard [9/26]: Malformed Storage Account names rejected as expected"
+else
+  record_fail "Azure Input Guard [9/26]: Storage Account rejection" "Malformed Storage Account name was unexpectedly accepted"
+fi
+
+# Test 18.10: Input Guard: Malformed Storage Container name rejected (<3 chars, >63 chars, uppercase, double hyphen)
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "ab" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "-leading-hyphen" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "con--doublehyphen" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "ContainerUpper"; then
+  record_pass "Azure Input Guard [10/26]: Malformed Storage Container names rejected as expected"
+else
+  record_fail "Azure Input Guard [10/26]: Container name rejection" "Malformed Container name was unexpectedly accepted"
+fi
+
+# Test 18.11: Input Guard: State key leading slash and path traversal rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "/leading/slash" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "escape/../../root"; then
+  record_pass "Azure Input Guard [11/26]: Azure state key leading slashes and path traversal rejected"
+else
+  record_fail "Azure Input Guard [11/26]: Key path traversal" "State key traversal or leading slash was unexpectedly accepted"
+fi
+
+# Test 18.12: Input Guard: Policy directory path traversal and absolute paths rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "true" "true" "/etc/policies" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "true" "true" "policies/../../escaped"; then
+  record_pass "Azure Input Guard [12/26]: Policy directory path traversal and absolute paths rejected"
+else
+  record_fail "Azure Input Guard [12/26]: Policy directory validation" "Policy directory traversal or absolute path was unexpectedly accepted"
+fi
+
+# Test 18.13: Security Invariant: Mandatory gate bypass attempts (policy eval / trivy disabled) rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "false" "true" && \
+   ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@3c2c79d7ae5a881bf1a66dc00af36bdc0d733e47" "true" "false"; then
+  record_pass "Azure Security Invariant [13/26]: Mandatory security gate bypass attempts (policy eval / trivy disabled) rejected"
+else
+  record_fail "Azure Security Invariant [13/26]: Gate bypass" "Bypass of mandatory policy evaluation or Trivy scan was unexpectedly permitted"
+fi
+
+# Test 18.14: Trust Boundary: Rogue workflow repository rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "untrusted-attacker/infraflow"; then
+  record_pass "Azure Trust Boundary [14/26]: Rogue workflow repository strictly rejected"
+else
+  record_fail "Azure Trust Boundary [14/26]: Repository trust" "Untrusted caller repository was unexpectedly accepted"
+fi
+
+# Test 18.15: Trust Boundary: Mutable workflow ref rejected (immutable SHA pinning required)
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "false" "push" "refs/heads/main" "TM-threemavithana/infraflow" "main" "TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@main"; then
+  record_pass "Azure Trust Boundary [15/26]: Mutable workflow ref (@main) strictly rejected (immutable SHA required)"
+else
+  record_fail "Azure Trust Boundary [15/26]: SHA pinning" "Mutable workflow reference was unexpectedly accepted"
+fi
+
+# Test 18.16: Security Invariant (SEC-02): Untrusted pull requests requesting cloud credentials rejected
+if ! run_azure_guard_test "1.10.4" "." "" "dev" "00000000-0000-0000-0000-000000000001" "00000000-0000-0000-0000-000000000002" "00000000-0000-0000-0000-000000000003" "rg-dev" "stvalid01" "tfstate" "terraform.tfstate" "HIGH,CRITICAL" "true" "pull_request"; then
+  record_pass "Azure Security Guard [16/26]: Untrusted pull requests requesting cloud auth rejected (SEC-02 fail-closed)"
+else
+  record_fail "Azure Security Guard [16/26]: PR auth rejection" "Untrusted pull request was allowed to request Azure credentials"
+fi
+
+# Test 18.17: Azure Output Aggregation & Failure Propagation
+AZURE_FAILURE_PROP_VERIFIED=false
+if python3 -c "
+import yaml, subprocess, tempfile
+
+with open('${AZURE_REUSABLE_WF}', 'r') as f:
+    data = yaml.safe_load(f)
+
+summary_step = [s for s in data['jobs']['summary']['steps'] if s.get('id') == 'aggregate'][0]['run']
+
+def test_summary(val_res, cf_res, cf_plan_st, cf_sec_st, enable_auth):
+    with tempfile.NamedTemporaryFile('w', delete=False) as out_f:
+        out_path = out_f.name
+    env = {
+        'GITHUB_OUTPUT': out_path,
+        'VALIDATE_RESULT': val_res,
+        'AZURE_PLAN_RESULT': 'skipped',
+        'AZURE_PLAN_STATUS': 'skipped',
+        'AZURE_AUTH_STATUS': 'disabled',
+        'AZURE_SEC_STATUS': 'skipped',
+        'CF_PLAN_RESULT': cf_res,
+        'CF_PLAN_STATUS': cf_plan_st,
+        'CF_SEC_STATUS': cf_sec_st,
+        'CF_HAS_CHANGES': 'false',
+        'CF_HAS_DESTRUCTIVE': 'false',
+        'CF_TOTAL_CHANGES': '0',
+        'ENABLE_AZURE_AUTH': enable_auth,
+    }
+    p = subprocess.run(['bash', '-c', summary_step], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with open(out_path) as f:
+        lines = dict(line.strip().split('=', 1) for line in f if '=' in line)
+    return p.returncode, lines
+
+# 1. Validation failure -> rejected
+rc1, l1 = test_summary('failure', 'skipped', 'skipped', 'skipped', 'false')
+assert l1['authorization-status'] == 'rejected' and l1['plan-status'] == 'failure' and rc1 != 0
+
+# 2. Cloud-free success -> not-applicable
+rc2, l2 = test_summary('success', 'success', 'success', 'success', 'false')
+assert l2['authorization-status'] == 'not-applicable' and l2['plan-status'] == 'success' and rc2 == 0
+assert l2['authorization-status'] != 'authorized'
+
+# 3. Cloud-free validation failure -> rejected
+rc3, l3 = test_summary('success', 'failure', 'failure', 'failure', 'false')
+assert l3['authorization-status'] == 'rejected' and rc3 != 0
+" >/dev/null 2>&1; then
+  AZURE_FAILURE_PROP_VERIFIED=true
+fi
+
+if [[ "${AZURE_FAILURE_PROP_VERIFIED}" == "true" ]]; then
+  record_pass "Azure Security Gates [17/26]: Output aggregation and failure propagation verified"
+else
+  record_fail "Azure Security Gates [17/26]: Failure propagation" "Summary output aggregation or failure propagation failed test matrix"
+fi
+
+# Test 18.18: Azure Storage Backend Policy: Empty backend key rejected
+AZURE_EMPTY_KEY_VERIFIED=false
+if python3 -c "
+import tempfile, json, subprocess, os
+conftest = '${CONFTEST_BIN}'
+policy = '${REPO_ROOT}/policies/azure/storage_backend.rego'
+payload = {'terraform': [{'backend': [{'azurerm': [{'storage_account_name': 'sttfstate', 'container_name': 'tfstate', 'key': ''}]}]}]}
+with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+    json.dump(payload, f)
+    tmp_path = f.name
+try:
+    p = subprocess.run([conftest, 'test', '--namespace', 'azure.storage_backend', '--policy', policy, tmp_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert p.returncode != 0 and 'must not be empty' in (p.stdout + p.stderr)
+finally:
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+" >/dev/null 2>&1; then
+  AZURE_EMPTY_KEY_VERIFIED=true
+fi
+if [[ "${AZURE_EMPTY_KEY_VERIFIED}" == "true" ]]; then
+  record_pass "Azure State Backend [18/26]: Empty backend key rejected by Conftest storage policy"
+else
+  record_fail "Azure State Backend [18/26]: Empty backend key" "Empty backend key was unexpectedly accepted by storage policy"
+fi
+
+# Test 18.19: Azure Reference Module: Canonical formatting
+if terraform -chdir="${AZURE_REF_MODULE}" fmt -check >/dev/null 2>&1; then
+  record_pass "Azure Reference Module [19/26]: Canonical formatting verified (terraform fmt -check)"
+else
+  record_fail "Azure Reference Module [19/26]: terraform fmt" "Azure reference module contains unformatted files"
+fi
+
+# Test 18.20: Azure Reference Module: Cloud-free initialization
+AZURE_INIT_ARGS=("-backend=false" "-input=false")
+if TF_CLI_CONFIG_FILE=/dev/null terraform -chdir="${AZURE_REF_MODULE}" init "${AZURE_INIT_ARGS[@]}" >/dev/null 2>&1; then
+  record_pass "Azure Reference Module [20/26]: Cloud-free initialization verified (terraform init -backend=false)"
+else
+  record_fail "Azure Reference Module [20/26]: terraform init" "Azure reference module initialization failed"
+fi
+
+# Test 18.21: Azure Reference Module: Static validation
+if terraform -chdir="${AZURE_REF_MODULE}" validate >/dev/null 2>&1; then
+  record_pass "Azure Reference Module [21/26]: Static validation verified (terraform validate)"
+else
+  record_fail "Azure Reference Module [21/26]: terraform validate" "Azure reference module failed static validation"
+fi
+
+# Test 18.22: Azure Reference Module: Native unit tests with mock provider
+if terraform -chdir="${AZURE_REF_MODULE}" test >/dev/null 2>&1; then
+  record_pass "Azure Reference Module [22/26]: Native unit tests passed offline with mock provider (terraform test)"
+else
+  record_fail "Azure Reference Module [22/26]: terraform test" "Azure reference module native unit tests failed"
+fi
+
+# Clean up temporary terraform state in reference module
+rm -rf "${AZURE_REF_MODULE}/.terraform" "${AZURE_REF_MODULE}/.terraform.lock.hcl"
+
+# Test 18.23: Azure Reference Module: Trivy IaC Misconfiguration scan
+if [[ -n "${TRIVY_BIN}" ]]; then
+  if "${TRIVY_BIN}" config --severity HIGH,CRITICAL --exit-code 1 "${AZURE_REF_MODULE}" >/dev/null 2>&1; then
+    record_pass "Azure Reference Module [23/26]: Trivy IaC security scan clean (0 HIGH/CRITICAL findings)"
+  else
+    record_fail "Azure Reference Module [23/26]: Trivy scan" "Trivy detected misconfigurations in Azure reference module"
+  fi
+else
+  record_fail "Azure Reference Module [23/26]: Trivy scan" "Trivy binary not found"
+fi
+
+# Test 18.24: Azure Reference Module: Conftest policy compliance
+if [[ -n "${CONFTEST_BIN}" ]]; then
+  if "${CONFTEST_BIN}" test --all-namespaces --policy "${REPO_ROOT}/policies" "${AZURE_REF_MODULE}/main.tf" >/dev/null 2>&1; then
+    record_pass "Azure Reference Module [24/26]: Conftest enterprise policy compliance verified"
+  else
+    record_fail "Azure Reference Module [24/26]: Conftest policy compliance" "Conftest policies failed on Azure reference module"
+  fi
+else
+  record_fail "Azure Reference Module [24/26]: Conftest policy compliance" "Conftest binary not found"
+fi
+
+# Test 18.25: Dedicated Azure Python Test Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_azure_adapter.py" >/dev/null 2>&1; then
+  record_pass "Azure Adapter Test Suite [25/26]: Dedicated Azure adapter test suite passed (tests/test_azure_adapter.py)"
+else
+  record_fail "Azure Adapter Test Suite [25/26]: Azure adapter test suite" "One or more tests in tests/test_azure_adapter.py failed"
+fi
+
+# Test 18.26: Dedicated Azure Adversarial Integration Suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_azure_adversarial_integration.py" >/dev/null 2>&1; then
+  record_pass "Azure Adversarial Test Suite [26/26]: Dedicated 45-vector Azure adversarial suite passed (tests/test_azure_adversarial_integration.py)"
+else
+  record_fail "Azure Adversarial Test Suite [26/26]: Adversarial test suite" "One or more tests in tests/test_azure_adversarial_integration.py failed"
+fi
+
+# --- 19. Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"

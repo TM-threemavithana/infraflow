@@ -17,7 +17,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G04.1.4** | **InfraFlow Architecture Finalization** | Governance rulesets, GitHub Artifact Attestations (Sigstore OIDC), automated verified policy gate, dual scanner enforcement, permission boundary isolation, 176/176 checks. | **PASS** |
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
-| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | Backlog (Future) |
+| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | In Progress (GCP Integrated; Azure Pending) |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
@@ -259,13 +259,62 @@ Milestone G07.3 executes comprehensive security hardening, OPA discrepancy recon
 
 ---
 
-## 18. Quality Gate Definitions
+## 18. Milestone G07.5 — Acceptance Criteria (Microsoft Azure Adapter & Workload Identity Foundation)
+
+Milestone G07.5 implements the foundation of the Microsoft Azure adapter, establishing passwordless Microsoft Entra ID Workload Identity Federation (WIF) OIDC security policies, secure Azure Blob Storage remote backend contracts, an offline speculative plan reusable workflow, and native mock-provider testing without requiring an Azure account, subscription, credentials, or paid cloud infrastructure ($0.00 spend).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-16** | Microsoft Entra ID OIDC Federation Policies as Code | Implement OPA Rego policies ([`policies/azure/entra_oidc.rego`](file:///home/tharuka/projects/infraflow/policies/azure/entra_oidc.rego)) enforcing GitHub Actions issuer URI, explicit audience (`api://AzureADTokenExchange`), exact subject claim formats (standard branch, standard environment, and immutable repository ID post-July 15, 2026), complete rejection of wildcard subjects (`*`), SEC-02 pull request rejection, UUID format constraints, parent identity binding, and least-privilege RBAC. | Unit test execution (`conftest verify`) — 18/18 tests passed | **PASS (G07.5 Implemented)** |
+| **AC-G07-17** | Azure Blob Storage Backend Security Contract as Code | Implement OPA Rego policies ([`policies/azure/storage_backend.rego`](file:///home/tharuka/projects/infraflow/policies/azure/storage_backend.rego)) enforcing resource group, storage account, and container naming rules, state key path traversal defense, mandatory Microsoft Entra ID data-plane authentication (`use_azuread_auth` or `use_oidc`), prohibition of static access keys, private container access, minimum TLS 1.2, network restrictions, encryption, blob versioning, and environment namespace isolation. | Unit test execution (`conftest verify`) — 18/18 tests passed | **PASS (G07.5 Implemented)** |
+| **AC-G07-18** | Reusable Azure Workflow Contract (`reusable-tf-azure.yml`) | Implement `.github/workflows/reusable-tf-azure.yml` with strict regex and UUIDv4 input guards, aliased input support (`backend-resource-group`, `backend-storage-account`, etc.), immutable SHA caller verification, fail-closed live authentication rejection (`enable-azure-auth: true` blocked in G07.5 simulation), speculative cloud-free planning (`terraform init -backend=false`), dual security scanning (Trivy + Conftest), and standardized 7-output contract with plan metrics extraction and summary aggregator. | `actionlint`, `zizmor` (0 findings), and workflow unit tests | **PASS (G07.5 Implemented)** |
+| **AC-G07-19** | Azure Reference Module & Mock Provider Testing | Implement `examples/azure-reference-module/` with Terraform `>= 1.7.0` provider mocking (`mock_provider "azurerm" {}` in `tests/azure_test.tftest.hcl`), full policy compliance (private container, network rules, TLS 1.2, versioning, infrastructure encryption, mandatory tags), and zero credential requirement. | `terraform fmt`, `init -backend=false`, `validate`, `test` | **PASS (G07.5 Implemented)** |
+| **AC-G07-20** | Dedicated Azure Python Test Suite | Implement comprehensive unit test suite ([`tests/test_azure_adapter.py`](file:///home/tharuka/projects/infraflow/tests/test_azure_adapter.py)) with 39 unit and adversarial tests covering UUIDv4, resource group, storage account, container, and region regexes, extracted bash guard execution, summary failure propagation, and reference module configuration. | `python3 -m unittest tests/test_azure_adapter.py` — 39/39 tests passed | **PASS (G07.5 Implemented)** |
+| **AC-G07-21** | Local Validation Harness Expansion (302 Checks) | Expand `scripts/validate-local.sh` with Section 18 Azure quality gates (25 new checks, including Actionlint, Zizmor, Conftest verify, 13 negative input and security tests, reference module tests, Trivy, and test suite). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G07.4. | `scripts/validate-local.sh` execution (302/302 PASS) | **PASS (G07.5 Implemented)** |
+| **AC-G07-22** | Azure Implementation & Architecture Documentation | Author comprehensive implementation and security guide ([`docs/adapters/azure-adapter-guide.md`](file:///home/tharuka/projects/infraflow/docs/adapters/azure-adapter-guide.md)) and update architectural specifications ([`docs/architecture/ADAPTERS.md`](file:///home/tharuka/projects/infraflow/docs/architecture/ADAPTERS.md) and [`docs/architecture/MILESTONES.md`](file:///home/tharuka/projects/infraflow/docs/architecture/MILESTONES.md)). | Documentation audit and link verification | **PASS (G07.5 Implemented)** |
+
+---
+
+## 19. Milestone G07.6 — Acceptance Criteria (Azure Adapter Security Hardening & Adversarial Validation)
+
+Milestone G07.6 executes comprehensive security hardening, adversarial integration testing, and offline regression verification of the Microsoft Azure adapter ($0.00 cloud spend, zero credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-23** | Microsoft Entra ID OIDC Policy Hardening | Harden Entra ID policy ([`policies/azure/entra_oidc.rego`](file:///home/tharuka/projects/infraflow/policies/azure/entra_oidc.rego)) with Rule 6 expected repository & repository ID matching, Rule 6.1 flexible FIC custom claims rejection, and RFC 4122 GUID format validation. | Automated conftest verification (`conftest verify`) — 24/24 tests passed | **PASS (G07.6 Implemented)** |
+| **AC-G07-24** | Azure Storage Backend Policy Hardening | Harden Azure storage backend policy ([`policies/azure/storage_backend.rego`](file:///home/tharuka/projects/infraflow/policies/azure/storage_backend.rego)) enforcing strict data-plane authentication (`use_azuread_auth = true`) and rejecting `use_oidc = true` alone to eliminate shared key fallback. | Automated conftest verification (`conftest verify`) — 19/19 tests passed | **PASS (G07.6 Implemented)** |
+| **AC-G07-25** | Reusable Azure Workflow Security Hardening | Harden `.github/workflows/reusable-tf-azure.yml` with unconditional repository boundary check (`WORKFLOW_REPO`), 40-character hexadecimal `WORKFLOW_SHA` validation, strict `HIGH,CRITICAL` severity enforcement, and `plan-metrics.json` cleanup trap. | `actionlint`, `zizmor` (0 findings), and adversarial vectors 37–39, 45 | **PASS (G07.6 Implemented)** |
+| **AC-G07-26** | Dedicated 45-Vector Adversarial Integration Suite | Author comprehensive 45-vector adversarial suite ([`tests/test_azure_adversarial_integration.py`](file:///home/tharuka/projects/infraflow/tests/test_azure_adversarial_integration.py)) covering identity substitution, audience wildcards, storage tampering, scanner bypasses, and fail-closed summary aggregation. | `python3 -m unittest tests/test_azure_adversarial_integration.py` (45/45 passed) | **PASS (G07.6 Implemented)** |
+| **AC-G07-27** | Offline Local Regression Harness Expansion (303 Checks) | Expand Section 18 of `scripts/validate-local.sh` to 26 dedicated Azure checks (increasing total platform checks from 302 to 303). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G07.5. | `scripts/validate-local.sh` execution (303/303 PASS) | **PASS (G07.6 Implemented)** |
+| **AC-G07-28** | Adversarial Evidence & Hardening Documentation | Produce comprehensive security audit and adversarial report ([`docs/evidence/G07/G07-AZURE-SECURITY-HARDENING-REPORT.md`](file:///home/tharuka/projects/infraflow/docs/evidence/G07/G07-AZURE-SECURITY-HARDENING-REPORT.md)) detailing threat model analysis, vulnerability remediation, and test matrices. | Documentation audit and link verification | **PASS (G07.6 Implemented)** |
+| **AC-G07-29** | Zero Cloud Spend & Regression Invariant | Guarantee exactly $0.00 cloud spend and zero live credentials. Maintain 100% pass rate across 299 Python tests and 171 OPA Rego unit tests. | Automated test suite execution | **PASS (G07.6 Implemented)** |
+
+---
+
+## 20. Milestone G07.7 — Acceptance Criteria (External Azure Consumer Integration & Multi-Cloud Release Readiness)
+
+Milestone G07.7 integrates and validates the completed Azure Cloud-Free Adapter against an independent external consumer repository (`TM-threemavithana/infraflow-consumer-test`) on actual GitHub Actions runners ($0.00 cloud spend, zero credentials, no PR merges, no release tags).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-30** | External Consumer Integration & Immutable Pinning | Integrate `.github/workflows/reusable-tf-azure.yml` into consumer workflow (`infraflow-azure-plan.yml`) pinned to immutable 40-character commit SHA (`de8ff47dc513ea88892ef29b363e419d396b4290`). Ensure zero live credentials and no `id-token: write` permission. | GitHub Actions CI Execution ([Run 44864588624](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44864588624)) | **PASS (G07.7 Implemented)** |
+| **AC-G07-31** | Pure Offline Speculative Planning Fixture | Implement consumer smoke test fixture (`test/g07-azure-adapter-smoke/`) using native `terraform_data` resource, avoiding any provider authentication requirement while generating valid speculative plan metrics (`total-changes: 1`, `has-changes: true`). | `terraform init -backend=false` & `terraform plan` execution on GHA | **PASS (G07.7 Implemented)** |
+| **AC-G07-32** | 7-Output Contract Verification on GHA | Assert all 7 contract outputs in consumer CI (`verify-cloud-free-outputs`): `authorization-status: not-applicable` (never `authorized`), `plan-status: success`, `azure-auth-status: disabled`, `security-status: success`, `has-changes: true`, `has-destructive-changes: false`, `total-changes: 1`. | Automated assertion step in `infraflow-azure-plan.yml` | **PASS (G07.7 Implemented)** |
+| **AC-G07-33** | 36-Vector External Negative Security Test Harness | Author and execute independent negative security harness ([`scripts/run_azure_negative_tests.py`](file:///home/tharuka/projects/infraflow/scripts/run_azure_negative_tests.py)) on GitHub Actions runners, asserting 100% rejection across 36 bypass, path traversal, naming, and OPA policy attack scenarios. | GHA runner execution — 36/36 vectors passed | **PASS (G07.7 Implemented)** |
+| **AC-G07-34** | SEC-02 Fail-Closed PR Event Security Assertion | Validate that untrusted pull requests requesting live Azure credentials (`enable-azure-auth: true` on `pull_request` event) fail closed immediately before any toolchain execution. | GHA step assertion (`verify-pr-event-security`) | **PASS (G07.7 Implemented)** |
+| **AC-G07-35** | Historical Milestone Regression Parity (G04–G07 GCP) | Confirm zero regression across existing consumer workflows: G04 speculative plan, G05 AWS adapter, G06 protected apply simulation, and G07 GCP adapter all pass with 100% success on PR event. | GitHub Actions PR #5 checks (37/37 checks PASS) | **PASS (G07.7 Implemented)** |
+| **AC-G07-36** | Multi-Cloud External Integration Evidence Report | Produce comprehensive integration evidence report ([`docs/evidence/G07/G07-AZURE-EXTERNAL-INTEGRATION-REPORT.md`](file:///home/tharuka/projects/infraflow/docs/evidence/G07/G07-AZURE-EXTERNAL-INTEGRATION-REPORT.md)) documenting workflow runs, contract outputs, adversarial matrices, multi-cloud comparison, and release readiness. | Documentation audit and link verification | **PASS (G07.7 Implemented)** |
+
+---
+
+## 21. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G07:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (276/276 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (303/303 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
+8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).
