@@ -18,7 +18,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
-| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, validation toolkit. | In Progress (G08.1 & G08.2 Implemented; G08.3 Pending) |
+| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, centralized governance, fleet upgrade orchestration, and release v0.6.0. | **PASS (Completed)** |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
 ---
@@ -376,7 +376,24 @@ Milestone G08.4 establishes an automated, auditable, and fail-safe fleet-wide up
 
 ---
 
-## 25. Quality Gate Definitions
+## 25. Milestone G08.5 — Acceptance Criteria (Final Multi-Repository Integration, Security Review & v0.6.0 Release)
+
+Milestone G08.5 finalizes G08 by merging upstream platform PR #6, repinning all three consumer repositories to the platform merge commit, verifying pre-merge CI, merging consumer PRs into their respective `main` branches, proving post-merge CI on `main`, validating fleet-wide drift-free compliance, and publishing official release v0.6.0 ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-33** | Upstream Platform PR #6 Merge & Post-Merge CI Verification | Squash-and-merge platform PR [#6](https://github.com/TM-threemavithana/infraflow/pull/6) into `main` (commit `be51718f06a2662099500a710e93e6e8201b4f1c`). Verify platform post-merge CI passes with 100% success on GitHub Actions. | GitHub Actions CI Execution ([Run 44879938738](https://github.com/TM-threemavithana/infraflow/actions/runs/44879938738)) | **PASS (G08.5 Implemented)** |
+| **AC-G08-34** | Fleet Manifest Lifecycle Reconciliation & SHA Invariants | Reconcile [`config/fleet-manifest.yaml`](config/fleet-manifest.yaml) to distinguish historical release SHA (`2ce0ddd5...`), historical baseline SHA (`f1ad39fb...`), candidate SHA (`be51718f...`), and approved deployment target SHA (`be51718f...`). | Manifest validation & YAML parsing | **PASS (G08.5 Implemented)** |
+| **AC-G08-35** | Transactional Upgrade Engine & Filesystem Atomicity | Enhance `apply_consumer_upgrade()` in `plan-fleet-upgrade.py` with strict pre-validation, in-memory staging, full file backup, atomic replacement (`tempfile` + `os.replace`), and automated compensating rollback. Add 4 dedicated regression tests (Tests 33–36). | `python3 -m unittest tests/test_fleet_upgrades.py` (36/36 passed) | **PASS (G08.5 Implemented)** |
+| **AC-G08-36** | Pre-Merge Consumer Re-Verification Against Platform Merge Commit | Repin all three external consumer PRs to platform merge commit `be51718f06a2662099500a710e93e6e8201b4f1c`. Verify pre-merge CI passes on GitHub Actions: Networking (Run 44880081215), Application (Run 44880086808), Data Platform (Run 44880094359). | GitHub Actions CI Runs | **PASS (G08.5 Implemented)** |
+| **AC-G08-37** | Consumer Fleet PR Merges & Post-Merge CI Verification on Main | Squash-and-merge all three consumer PRs into `main`: Networking (`f27c9eb`), Application (`0c2bca2`), Data Platform (`e9de14a`). Trigger and verify post-merge CI runs on `main` pass 100%: Networking (Run 44880340776), Application (Run 44880350636), Data Platform (Run 44880355737). | Live GitHub Actions execution on `main` across all 3 consumer repos | **PASS (G08.5 Implemented)** |
+| **AC-G08-38** | Fleet-Wide Configuration & Version Drift Audit | Execute `scripts/plan-fleet-upgrade.py --check-drift --fleet-root ~/projects` across all consumer clones. Confirm zero configuration drift, zero workflow drift, and zero version drift across all repositories. | CLI execution — Verdict: CLEAN (NO DRIFT) | **PASS (G08.5 Implemented)** |
+| **AC-G08-39** | Out-of-Band Central Fleet Governance Audit | Execute `scripts/audit-consumer-fleet.py --check-remote --fleet-root ~/projects`. Audit all three external repositories via GitHub API. Confirm 100% compliance across all registered workloads. | CLI execution — Fleet Status: COMPLIANT | **PASS (G08.5 Implemented)** |
+| **AC-G08-40** | Final Multi-Repository Release Evidence Report & v0.6.0 Publishing | Produce comprehensive release evidence report ([`docs/evidence/G08/G08-FINAL-RELEASE-REPORT.md`](docs/evidence/G08/G08-FINAL-RELEASE-REPORT.md)), update root `README.md`, tag git release `v0.6.0`, and publish GitHub Release with full supply-chain attestations. | Documentation audit & GitHub release publication | **PASS (G08.5 Implemented)** |
+
+---
+
+## 26. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G08:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.

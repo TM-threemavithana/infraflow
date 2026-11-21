@@ -19,8 +19,8 @@ platform:
   current_release_sha: "2ce0ddd5de01530b6bf7aba749f0081620fb9b27"
   historical_baseline_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
   known_good_rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-  candidate_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
-  approved_deployment_target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
+  candidate_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
+  approved_deployment_target_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
   upgrade_stage: "fleet-verified" # inventory | compatibility | canary | progressive | fleet-verified | rollback
 
 governance_defaults:
@@ -89,8 +89,8 @@ consumers:
     terraform_dir: "terraform"
     environment: "dev"
     historical_baseline_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-    current_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
-    target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
+    current_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
+    target_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
     rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
     upgrade_role: "canary" # canary | progressive
     status: "fleet-verified"
@@ -105,8 +105,8 @@ consumers:
     terraform_dir: "terraform"
     environment: "dev"
     historical_baseline_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-    current_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
-    target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
+    current_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
+    target_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
     rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
     upgrade_role: "progressive"
     status: "fleet-verified"
@@ -121,8 +121,8 @@ consumers:
     terraform_dir: "terraform"
     environment: "dev"
     historical_baseline_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-    current_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
-    target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
+    current_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
+    target_sha: "be51718f06a2662099500a710e93e6e8201b4f1c"
     rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
     upgrade_role: "progressive"
     status: "fleet-verified"

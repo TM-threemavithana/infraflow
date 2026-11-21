@@ -4,7 +4,7 @@
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#local-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
 [![DevSecOps](https://img.shields.io/badge/Security-TFLint%20%7C%20Trivy%20%7C%20Zizmor%20%7C%20OPA-blue.svg)](docs/security/security-architecture.md)
-[![Release](https://img.shields.io/badge/Release-v0.5.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
+[![Release](https://img.shields.io/badge/Release-v0.6.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
 **InfraFlow** is an enterprise-oriented, secure, and maintainable multi-cloud Terraform delivery platform engineered to be reused across independent GitHub repositories.
 
@@ -17,9 +17,14 @@ InfraFlow separates infrastructure delivery into distinct layers:
    - **AWS Adapter (`reusable-tf-aws.yml`)**: IAM OIDC role assumption, S3 state backend with SSE-KMS and DynamoDB locking.
    - **GCP Adapter (`reusable-tf-gcp.yml`)**: Workload Identity Federation (WIF) OIDC token exchange, GCS state backend with UBLA, versioning, and precondition locking.
    - **Azure Adapter (`reusable-tf-azure.yml`)**: Microsoft Entra ID Workload Identity Federation, Azure Blob Storage state backend with `use_azuread_auth`, private containers, TLS 1.2+, and blob lease locking.
+6. **Tier 3 — Centralized Governance & Multi-Repository Adoption Engine**:
+   - **Reusable Governance Gate (`reusable-tf-governance.yml`)**: First-line gate verifying consumer contracts, directory containment, and OPA policy compliance before cloud adapter execution.
+   - **Consumer Validation Toolkit (`validate-consumer.py`)**: Standalone schema v1.0 and permission boundary validator.
+   - **Fleet Upgrade Orchestrator (`plan-fleet-upgrade.py`)**: Transactional fleet upgrades, compatibility checking, 15-vector drift detection, and atomic rollback.
+   - **Central Fleet Auditor (`audit-consumer-fleet.py`)**: Out-of-band monitoring and remote branch protection auditing.
 
 > [!IMPORTANT]
-> **Cloud-Free Release Scope**: InfraFlow v0.5.0 provides multi-cloud cloud-free speculative planning, static security validation, Workload Identity Federation policy enforcement, and simulated execution. It does **NOT** perform real cloud infrastructure deployment, live OIDC token exchanges, or authenticated remote Terraform state operations. Cloud expenditure is strictly **$0.00** with **zero live credentials**.
+> **Cloud-Free Release Scope**: InfraFlow v0.6.0 provides multi-cloud cloud-free speculative planning, static security validation, Workload Identity Federation policy enforcement, centralized consumer governance, and fleet upgrade orchestration. It does **NOT** perform real cloud infrastructure deployment, live OIDC token exchanges, or authenticated remote Terraform state operations. Cloud expenditure is strictly **$0.00** with **zero live credentials**.
 
 ---
 
@@ -77,6 +82,7 @@ InfraFlow provides standardized reusable workflows callable via GitHub Actions `
 | [`.github/workflows/reusable-tf-security.yml`](.github/workflows/reusable-tf-security.yml) | DevSecOps security scanning | `scan-severity`, `policy-directory` | TFLint, Trivy, Zizmor, Conftest/OPA |
 | [`.github/workflows/reusable-tf-plan.yml`](.github/workflows/reusable-tf-plan.yml) | Speculative plan & governance | `environment`, `var-file` | Dual scanners, Sigstore attestation, redaction |
 | [`.github/workflows/reusable-tf-apply.yml`](.github/workflows/reusable-tf-apply.yml) | Protected apply simulation | `plan-file`, `plan-integrity-digest` | KMS envelope encryption, state lineage, atomic consumption |
+| [`.github/workflows/reusable-tf-governance.yml`](.github/workflows/reusable-tf-governance.yml) | Consumer governance gate | `working-directory`, `config-file` | Schema v1.0 validation, directory containment, OPA consumer policies |
 | [`.github/workflows/reusable-tf-aws.yml`](.github/workflows/reusable-tf-aws.yml) | AWS cloud adapter | `aws-region`, `role-to-assume`, `backend-bucket` | IAM OIDC validation, S3 encryption & locking |
 | [`.github/workflows/reusable-tf-gcp.yml`](.github/workflows/reusable-tf-gcp.yml) | GCP cloud adapter | `gcp-project-id`, `service-account`, `backend-bucket` | WIF OIDC validation, GCS UBLA & versioning |
 | [`.github/workflows/reusable-tf-azure.yml`](.github/workflows/reusable-tf-azure.yml) | Azure cloud adapter | `azure-subscription-id`, `azure-client-id`, `azure-storage-account-name` | Entra ID OIDC validation, Azure AD auth, TLS 1.2+ |
@@ -106,10 +112,10 @@ InfraFlow delivers architectural parity across all three major cloud providers i
 
 ## Consuming Repository Quick Start
 
-To call InfraFlow reusable workflows from an external repository, reference an immutable 40-character commit SHA (recommended for production: `@2ce0ddd5de01530b6bf7aba749f0081620fb9b27`) or official release tag (`@v0.5.0`):
+To call InfraFlow reusable workflows from an external repository, reference an immutable 40-character commit SHA (recommended for production: `@be51718f06a2662099500a710e93e6e8201b4f1c`) or official release tag (`@v0.6.0`):
 
 > [!TIP]
-> **Immutability Best Practice**: While git release tags (`@v0.5.0`) provide convenient human-readable references, git tags are technically mutable references in git. For true cryptographically immutable dependency pinning and supply-chain security compliance (SLSA / CIS), consumers should pin the full 40-character commit SHA in caller workflows.
+> **Immutability Best Practice**: While git release tags (`@v0.6.0`) provide convenient human-readable references, git tags are technically mutable references in git. For true cryptographically immutable dependency pinning and supply-chain security compliance (SLSA / CIS), consumers should pin the full 40-character commit SHA in caller workflows.
 
 ```yaml
 name: "Terraform Multi-Cloud CI"
@@ -119,27 +125,26 @@ on:
     branches: [main]
     paths:
       - "terraform/**"
+      - "infraflow.config.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: "Validate Terraform"
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
+  governance-gate:
+    name: "InfraFlow Governance Gate"
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-governance.yml@be51718f06a2662099500a710e93e6e8201b4f1c # v0.6.0
     with:
-      terraform-version: "1.10.4"
-      working-directory: "terraform"
-      enable-fmt-check: true
-      enable-validate: true
-      enable-test: true
+      working-directory: "."
+      config-file: "infraflow.config.yaml"
 
   azure-plan:
     name: "Azure Speculative Plan (Cloud-Free)"
-    needs: [validate]
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
+    needs: [governance-gate]
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@be51718f06a2662099500a710e93e6e8201b4f1c # v0.6.0
     with:
-      working-directory: "terraform/azure"
+      working-directory: "terraform"
       environment: "dev"
       storage-account-name: "stinfraflowdev"
       container-name: "tfstate"
@@ -167,11 +172,15 @@ jobs:
 
 InfraFlow enforces rigorous quality and security standards across offline test harnesses and authoritative CI runners:
 
-- **Local Automated Quality Harness (`scripts/validate-local.sh`)**: **303/303** passing checks (100% pass rate) across 18 distinct test sections covering G01 through G07.
-- **Python Unit & Adversarial Test Suites**: **299/299** passing tests (`tests/`), including dedicated 30-vector GCP and 45-vector Azure adversarial integration suites.
-- **OPA / Conftest Rego Policy Suites**: **171/171** passing unit tests (`policies/`) covering naming, tags, S3, GCS, Azure Blob, AWS OIDC, GCP WIF, and Azure Entra ID federation policies.
-- **Reference Module Testing**: 4 complete reference modules (`cloud-free-module`, `aws-reference-module`, `gcp-reference-module`, `azure-reference-module`) verified with Terraform `>= 1.7.0` provider mocking, formatting, validation, and zero cloud spend ($0.00).
-- **External Consumer Integration**: Independently verified on GitHub Actions runners in `TM-threemavithana/infraflow-consumer-test` across PR #3 (G06), PR #4 (G07 GCP), and PR #5 (G07 Azure) with 100% green workflows.
+- **Local Automated Quality Harness (`scripts/validate-local.sh`)**: **347/347** passing checks (100% pass rate) across 21 distinct test sections covering G01 through G08.
+- **Python Unit & Adversarial Test Suites**: **406/406** passing tests (`tests/`), including dedicated consumer onboarding (31), consumer governance (40), and fleet upgrade orchestration (36) suites.
+- **OPA / Conftest Rego Policy Suites**: **194/194** passing unit tests (`policies/`) covering naming, tags, S3, GCS, Azure Blob, AWS OIDC, GCP WIF, Azure Entra ID, and consumer governance deny policies.
+- **Reference Module & Fixture Testing**: 4 complete reference modules (`cloud-free-module`, `aws-reference-module`, `gcp-reference-module`, `azure-reference-module`) and 3 reference consumer fixtures (`fixtures/consumers/`) verified with zero cloud spend ($0.00).
+- **External Consumer Integration**: Independently verified on live GitHub Actions runners across 3 independent repositories:
+  - `TM-threemavithana/infraflow-consumer-networking` (AWS)
+  - `TM-threemavithana/infraflow-consumer-application` (Azure)
+  - `TM-threemavithana/infraflow-consumer-data-platform` (GCP)
+  All running clean with 100% green post-merge CI executions on `main`.
 
 To execute the offline local validation harness:
 
@@ -196,26 +205,36 @@ infraflow/
 │       ├── reusable-tf-security.yml   # DevSecOps security scanning (G03)
 │       ├── reusable-tf-plan.yml       # Speculative planning & attestation (G04)
 │       ├── reusable-tf-apply.yml      # Protected apply simulation (G06)
+│       ├── reusable-tf-governance.yml # Consumer governance gate (G08.3)
 │       ├── reusable-tf-aws.yml        # AWS cloud adapter (G05)
 │       ├── reusable-tf-gcp.yml        # GCP cloud adapter (G07.2–G07.4)
 │       └── reusable-tf-azure.yml      # Azure cloud adapter (G07.5–G07.7)
+├── config/
+│   └── fleet-manifest.yaml            # Authoritative consumer fleet registry (G08.4)
 ├── docs/
 │   ├── adapters/                      # Cloud adapter architecture & guides
 │   │   ├── aws-adapter-guide.md       # AWS OIDC & S3 architecture guide
 │   │   ├── gcp-adapter-guide.md       # GCP WIF & GCS architecture guide
 │   │   └── azure-adapter-guide.md     # Azure Entra ID & Blob architecture guide
+│   ├── adoption/                      # Consumer onboarding & versioning guides
+│   │   ├── CONSUMER-ONBOARDING-GUIDE.md
+│   │   └── PLATFORM-VERSIONING-AND-UPGRADES.md
 │   ├── architecture/                  # Architectural foundations & specifications
 │   │   ├── ARCHITECTURE.md            # System design & two-tier model
 │   │   ├── REQUIREMENTS.md            # Functional & security requirements
 │   │   ├── THREAT_MODEL.md            # STRIDE threat model & trust boundaries
 │   │   ├── ADAPTERS.md                # Multi-cloud adapter specifications
-│   │   └── MILESTONES.md              # Delivery milestones & quality gates
+│   │   ├── MILESTONES.md              # Delivery milestones & quality gates
+│   │   ├── G08-MULTI-REPOSITORY-ADOPTION.md
+│   │   └── G08-FLEET-UPGRADE-ARCHITECTURE.md
 │   ├── evidence/                      # Milestone verification & integration evidence
 │   │   ├── G05/                       # AWS integration evidence
 │   │   ├── G06/                       # Protected apply simulation evidence
-│   │   └── G07/                       # Multi-cloud assessment, GCP, Azure & release evidence
+│   │   ├── G07/                       # Multi-cloud assessment, GCP, Azure & release evidence
+│   │   └── G08/                       # Multi-repo adoption, governance & release evidence
 │   ├── planning/                      # Planning & approval specifications (G04)
-│   └── security/                      # DevSecOps security specifications (G03)
+│   └── security/                      # DevSecOps security specifications (G03/G08)
+│       └── G08-CONSUMER-GOVERNANCE-MODEL.md
 ├── examples/
 │   ├── cloud-free-module/             # Cloud-neutral reference module (terraform_data)
 │   ├── aws-reference-module/          # AWS mock-provider reference module
@@ -223,19 +242,26 @@ infraflow/
 │   ├── azure-reference-module/        # Azure mock-provider reference module
 │   └── consumer-workflow/             # Calling workflow integration patterns
 ├── fixtures/                          # Verification, security & planning test fixtures
+│   └── consumers/                     # Reference consumer fixtures (Networking, App, Data)
 ├── policies/                          # Declarative Rego Policy-as-Code suites
 │   ├── common/                        # Mandatory tags, naming, plan policies
 │   ├── aws/                           # AWS S3, security groups & OIDC policies
 │   ├── gcp/                           # GCP GCS backend & WIF OIDC policies
 │   ├── azure/                         # Azure Blob backend & Entra OIDC policies
+│   ├── governance/                    # Consumer adoption & governance deny rules (G08.3)
 │   └── trust/                         # Trust anchors & public key allowlists
 ├── scripts/
 │   ├── analyze-plan.py                # Plan analysis & structural change classifier
 │   ├── verify-plan-integrity.py       # Plan provenance, Sigstore & attestation engine
 │   ├── kms-envelope.py                # Symmetric envelope encryption tooling
 │   ├── verify-plan-lifecycle.py       # State lineage & replay verification tooling
-│   └── validate-local.sh              # Local automated verification harness (303 checks)
-├── tests/                             # Python unit & adversarial test suites (299 tests)
+│   ├── validate-consumer.py           # Consumer repository validator (G08.1/G08.3)
+│   ├── plan-fleet-upgrade.py          # Transactional fleet upgrade engine (G08.4)
+│   ├── audit-consumer-fleet.py        # Out-of-band fleet governance auditor (G08.3)
+│   └── validate-local.sh              # Local automated verification harness (347 checks)
+├── templates/
+│   └── consumer-repository/           # Self-service consumer starter template (G08.1)
+├── tests/                             # Python unit & adversarial test suites (406 tests)
 ├── .tflint.hcl                        # Standardized TFLint configuration
 ├── .zizmor.yml                        # Zizmor workflow audit configuration
 ├── LICENSE                            # Apache License 2.0
@@ -252,6 +278,13 @@ infraflow/
 - [Foundational Threat Model](docs/architecture/THREAT_MODEL.md)
 - [Multi-Cloud Adapters Specification](docs/architecture/ADAPTERS.md)
 - [Milestones & Acceptance Criteria](docs/architecture/MILESTONES.md)
+- [Multi-Repository Adoption Architecture](docs/architecture/G08-MULTI-REPOSITORY-ADOPTION.md)
+- [Fleet Upgrade Architecture](docs/architecture/G08-FLEET-UPGRADE-ARCHITECTURE.md)
+
+### Consumer Onboarding & Governance
+- [Consumer Onboarding Guide](docs/adoption/CONSUMER-ONBOARDING-GUIDE.md)
+- [Platform Versioning & Upgrades](docs/adoption/PLATFORM-VERSIONING-AND-UPGRADES.md)
+- [Consumer Governance Model](docs/security/G08-CONSUMER-GOVERNANCE-MODEL.md)
 
 ### Cloud Adapter Guides
 - [AWS Adapter Guide](docs/adapters/aws-adapter-guide.md)
@@ -265,3 +298,8 @@ infraflow/
 - [G07 GCP Integration Report](docs/evidence/G07/G07-FINAL-GCP-INTEGRATION-REPORT.md)
 - [G07 Azure Integration Report](docs/evidence/G07/G07-AZURE-EXTERNAL-INTEGRATION-REPORT.md)
 - [G07 Final Multi-Cloud Release Report](docs/evidence/G07/G07-FINAL-MULTICLOUD-RELEASE-REPORT.md)
+- [G08 Multi-Repository Foundation Report](docs/evidence/G08/G08-1-FOUNDATION-REPORT.md)
+- [G08 Multi-Repository Fleet Integration Report](docs/evidence/G08/G08-2-MULTI-REPOSITORY-INTEGRATION-REPORT.md)
+- [G08 Governance & Security Report](docs/evidence/G08/G08-3-GOVERNANCE-SECURITY-REPORT.md)
+- [G08 Fleet Upgrade & Rollback Report](docs/evidence/G08/G08-4-FLEET-UPGRADE-AND-ROLLBACK-REPORT.md)
+- [G08 Final Multi-Repository Release Report](docs/evidence/G08/G08-FINAL-RELEASE-REPORT.md)
