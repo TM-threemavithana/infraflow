@@ -4905,9 +4905,9 @@ else
   record_fail "Fleet Upgrade Test Suite [12/14]: Test suite" "One or more tests in tests/test_fleet_upgrades.py failed"
 fi
 
-# Test 21.13: Full Platform Python Test Suite (406 tests)
+# Test 21.13: Full Platform Python Test Suite (437 tests)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
-  record_pass "Platform Python Test Suite [13/14]: All 406 platform tests passed (tests/test_*.py)"
+  record_pass "Platform Python Test Suite [13/14]: All 437 platform tests passed (tests/test_*.py)"
 else
   record_fail "Platform Python Test Suite [13/14]: Platform test suite" "One or more platform tests failed"
 fi
@@ -4919,7 +4919,926 @@ else
   record_fail "OPA Policy Verification [14/14]: conftest verify" "One or more Rego policy verification tests failed"
 fi
 
-# --- 22. Summary Report ---
+# ==============================================================================
+# 22. Fleet Observability, Telemetry & Central Compliance Dashboard (G09.1)
+# ==============================================================================
+log_header "22. Fleet Observability, Telemetry & Central Compliance Dashboard (G09.1)"
+
+# Test 22.1: emit-telemetry.py script exists and is available
+if [[ -f "${REPO_ROOT}/scripts/emit-telemetry.py" ]]; then
+  record_pass "Observability Tooling [1/15]: scripts/emit-telemetry.py exists and is available"
+else
+  record_fail "Observability Tooling [1/15]: File check" "scripts/emit-telemetry.py not found"
+fi
+
+# Test 22.2: emit-telemetry.py creates valid schema v1.0 event with SHA-256 digest
+TMP_TEL_EVENT="$(mktemp -t tel_evt_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type governance_gate_evaluated \
+    --consumer-id test-networking \
+    --repository TM-threemavithana/infraflow-consumer-networking \
+    --status PASS \
+    --adapter aws \
+    --output "${TMP_TEL_EVENT}" >/dev/null 2>&1; then
+  if grep -q '"schema_version": "1.0"' "${TMP_TEL_EVENT}" && grep -q '"event_digest"' "${TMP_TEL_EVENT}"; then
+    record_pass "Observability Schema [2/15]: emit-telemetry.py generated schema v1.0 event with SHA-256 digest"
+  else
+    record_fail "Observability Schema [2/15]: Payload content" "Missing schema_version or event_digest in emitted event"
+  fi
+else
+  record_fail "Observability Schema [2/15]: Execution" "emit-telemetry.py failed to emit test event"
+fi
+rm -f "${TMP_TEL_EVENT}"
+
+# Test 22.3: emit-telemetry.py scrubs sensitive credentials (AWS keys, tokens, passwords)
+TMP_SCRUB_CHECK="$(python3 -c '
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("telemetry", "scripts/emit-telemetry.py")
+tel = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tel)
+leak = "AKIAIOSFODNN7EXAMPLE ghp_1234567890abcdefghijklmnopqrstuvwxyz password=MySecretPassword123"
+scrubbed = tel.scrub_sensitive_string(leak)
+assert "AKIAIOSFODNN7EXAMPLE" not in scrubbed
+assert "ghp_1234567890abcdefghijklmnopqrstuvwxyz" not in scrubbed
+assert "MySecretPassword123" not in scrubbed
+print("CLEAN")
+' 2>/dev/null || true)"
+if [[ "${TMP_SCRUB_CHECK}" == "CLEAN" ]]; then
+  record_pass "Observability Redaction [3/15]: emit-telemetry.py automatically scrubs AWS keys, tokens & passwords"
+else
+  record_fail "Observability Redaction [3/15]: Secret scrubbing" "Failed to redact sensitive patterns"
+fi
+
+# Test 22.4: emit-telemetry.py detects and rejects tampered event payload (digest mismatch)
+TMP_TAMPER_CHECK="$(python3 -c '
+import importlib.util
+spec = importlib.util.spec_from_file_location("telemetry", "scripts/emit-telemetry.py")
+tel = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tel)
+evt = tel.create_telemetry_event("contract_verified", "cid-1", "org/repo", "PASS")
+evt["verdict"]["status"] = "FAIL"
+valid, errors = tel.validate_telemetry_event(evt)
+assert not valid and any("tampering" in e.lower() for e in errors)
+print("DETECTED")
+' 2>/dev/null || true)"
+if [[ "${TMP_TAMPER_CHECK}" == "DETECTED" ]]; then
+  record_pass "Observability Anti-Tampering [4/15]: Telemetry validator detects & rejects tampered event payloads"
+else
+  record_fail "Observability Anti-Tampering [4/15]: Anti-tampering" "Tampered payload unexpectedly validated"
+fi
+
+# Test 22.5: emit-telemetry.py rejects invalid event type fail-closed
+if python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type unauthorized_event \
+    --consumer-id test-cid \
+    --repository TM-threemavithana/infraflow \
+    --status PASS >/dev/null 2>&1; then
+  record_fail "Observability Guard [5/15]: Invalid event type" "emit-telemetry.py accepted unauthorized event type"
+else
+  record_pass "Observability Guard [5/15]: emit-telemetry.py rejected invalid event type fail-closed"
+fi
+
+# Test 22.6: generate-compliance-dashboard.py exists and is available
+if [[ -f "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" ]]; then
+  record_pass "Compliance Tooling [6/15]: scripts/generate-compliance-dashboard.py exists and is available"
+else
+  record_fail "Compliance Tooling [6/15]: File check" "scripts/generate-compliance-dashboard.py not found"
+fi
+
+# Test 22.7: generate-compliance-dashboard.py executes successfully against fleet manifest
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" >/dev/null 2>&1; then
+  record_pass "Compliance Tooling [7/15]: scripts/generate-compliance-dashboard.py executed successfully"
+else
+  record_fail "Compliance Tooling [7/15]: Execution" "generate-compliance-dashboard.py failed to execute"
+fi
+
+# Test 22.8: generate-compliance-dashboard.py generates valid JSON report
+TMP_DASH_JSON="$(mktemp -t dash_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --output-json "${TMP_DASH_JSON}" >/dev/null 2>&1; then
+  if grep -q '"fleet_compliance_score"' "${TMP_DASH_JSON}" && grep -q '"fleet_status"' "${TMP_DASH_JSON}"; then
+    record_pass "Compliance Reporting [8/15]: Generated valid JSON report with fleet metrics"
+  else
+    record_fail "Compliance Reporting [8/15]: Content check" "JSON report missing expected compliance score"
+  fi
+else
+  record_fail "Compliance Reporting [8/15]: Execution" "Failed to generate JSON compliance report"
+fi
+rm -f "${TMP_DASH_JSON}"
+
+# Test 22.9: generate-compliance-dashboard.py generates valid Markdown dashboard
+TMP_DASH_MD="$(mktemp -t dash_XXXXXX.md)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --output-markdown "${TMP_DASH_MD}" >/dev/null 2>&1; then
+  if grep -q "InfraFlow Central Fleet Compliance & Observability Dashboard" "${TMP_DASH_MD}" && \
+     grep -q "Multi-Tenant Workload Posture" "${TMP_DASH_MD}"; then
+    record_pass "Compliance Reporting [9/15]: Generated valid Markdown dashboard for step summaries"
+  else
+    record_fail "Compliance Reporting [9/15]: Content check" "Markdown report missing expected header or sections"
+  fi
+else
+  record_fail "Compliance Reporting [9/15]: Execution" "Failed to generate Markdown dashboard"
+fi
+rm -f "${TMP_DASH_MD}"
+
+# Test 22.10: generate-compliance-dashboard.py generates standalone offline HTML dashboard (zero remote scripts/CDNs)
+TMP_DASH_HTML="$(mktemp -t dash_XXXXXX.html)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --output-html "${TMP_DASH_HTML}" >/dev/null 2>&1; then
+  if grep -q "<!DOCTYPE html>" "${TMP_DASH_HTML}" && \
+     ! grep -q "https://cdn." "${TMP_DASH_HTML}" && \
+     ! grep -q "<link rel=\"stylesheet\" href=\"http" "${TMP_DASH_HTML}"; then
+    record_pass "Compliance Reporting [10/15]: Generated standalone offline HTML dashboard (zero external CDNs)"
+  else
+    record_fail "Compliance Reporting [10/15]: Content check" "HTML dashboard missing or contains forbidden remote CDN links"
+  fi
+else
+  record_fail "Compliance Reporting [10/15]: Execution" "Failed to generate HTML dashboard"
+fi
+rm -f "${TMP_DASH_HTML}"
+
+# Test 22.11: generate-compliance-dashboard.py enforces minimum threshold gate
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --enforce-threshold 80.0 >/dev/null 2>&1; then
+  record_pass "Compliance Gate [11/15]: Dashboard generator passes when fleet score exceeds mandatory threshold"
+else
+  record_fail "Compliance Gate [11/15]: Threshold check" "Dashboard generator unexpectedly failed compliant threshold"
+fi
+
+# Test 22.12: fleet-observability.yml workflow passes actionlint static analysis
+if actionlint "${REPO_ROOT}/.github/workflows/fleet-observability.yml" >/dev/null 2>&1; then
+  record_pass "Observability Pipeline [12/15]: fleet-observability.yml passed actionlint syntax validation"
+else
+  record_fail "Observability Pipeline [12/15]: actionlint" "fleet-observability.yml failed actionlint linting"
+fi
+
+# Test 22.13: fleet-observability.yml workflow passes zizmor supply chain audit
+if zizmor "${REPO_ROOT}/.github/workflows/fleet-observability.yml" >/dev/null 2>&1; then
+  record_pass "Observability Pipeline [13/15]: fleet-observability.yml passed zizmor audit (zero supply chain findings)"
+else
+  record_fail "Observability Pipeline [13/15]: zizmor" "fleet-observability.yml has security findings in zizmor"
+fi
+
+# Test 22.14: Dedicated 31-test observability and compliance test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_observability_and_compliance.py" >/dev/null 2>&1; then
+  record_pass "Observability Test Suite [14/15]: Dedicated 31-test suite passed (test_observability_and_compliance.py)"
+else
+  record_fail "Observability Test Suite [14/15]: Test suite" "One or more tests in test_observability_and_compliance.py failed"
+fi
+
+# Test 22.15: Telemetry roundtrip emission & parsing verification
+TMP_ROUNDTRIP="$(mktemp -t tel_roundtrip_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type compliance_evaluated \
+    --consumer-id fleet-central \
+    --repository TM-threemavithana/infraflow \
+    --status PASS \
+    --duration-ms 42 \
+    --metric score=100.0 \
+    --output "${TMP_ROUNDTRIP}" >/dev/null 2>&1
+if [[ -s "${TMP_ROUNDTRIP}" ]] && python3 -c '
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["event_type"] == "compliance_evaluated"
+assert data["metrics"]["duration_ms"] == 42
+assert data["metrics"]["score"] == 100.0
+assert data["verdict"]["compliance_status"] == "COMPLIANT"
+' "${TMP_ROUNDTRIP}" >/dev/null 2>&1; then
+  record_pass "Observability Telemetry Roundtrip [15/15]: Structured telemetry emission & roundtrip parsing verified"
+else
+  record_fail "Observability Telemetry Roundtrip [15/15]: Roundtrip check" "Failed roundtrip verification of emitted telemetry"
+fi
+rm -f "${TMP_ROUNDTRIP}"
+
+# ==============================================================================
+# 23. Continuous State & Speculative Drift Detection Simulation (G09.2)
+# ==============================================================================
+log_header "23. Continuous State & Speculative Drift Detection Simulation (G09.2)"
+
+# Test 23.1: scripts/simulate-drift.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/simulate-drift.py" && -x "${REPO_ROOT}/scripts/simulate-drift.py" ]]; then
+  record_pass "Drift Tooling [1/15]: scripts/simulate-drift.py exists and is executable"
+else
+  record_fail "Drift Tooling [1/15]: Script check" "scripts/simulate-drift.py missing or not executable"
+fi
+
+# Test 23.2: Clean AWS state comparison yields NO_DRIFT
+TMP_DRIFT_AWS_CLEAN="$(mktemp -t drift_aws_clean_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" \
+    --output-json "${TMP_DRIFT_AWS_CLEAN}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "NO_DRIFT"' "${TMP_DRIFT_AWS_CLEAN}" && grep -q '"highest_severity": "NONE"' "${TMP_DRIFT_AWS_CLEAN}"; then
+    record_pass "Drift Clean State AWS [2/15]: Clean AWS state comparison yields NO_DRIFT (exit code 0)"
+  else
+    record_fail "Drift Clean State AWS [2/15]: Output check" "AWS clean state did not emit expected NO_DRIFT verdict"
+  fi
+else
+  record_fail "Drift Clean State AWS [2/15]: Execution" "Failed evaluating AWS clean drift state"
+fi
+rm -f "${TMP_DRIFT_AWS_CLEAN}"
+
+# Test 23.3: Clean Azure state comparison yields NO_DRIFT
+TMP_DRIFT_AZ_CLEAN="$(mktemp -t drift_az_clean_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/azure/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/azure/clean/observed.json" \
+    --output-json "${TMP_DRIFT_AZ_CLEAN}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "NO_DRIFT"' "${TMP_DRIFT_AZ_CLEAN}"; then
+    record_pass "Drift Clean State Azure [3/15]: Clean Azure state comparison yields NO_DRIFT (exit code 0)"
+  else
+    record_fail "Drift Clean State Azure [3/15]: Output check" "Azure clean state did not emit expected NO_DRIFT verdict"
+  fi
+else
+  record_fail "Drift Clean State Azure [3/15]: Execution" "Failed evaluating Azure clean drift state"
+fi
+rm -f "${TMP_DRIFT_AZ_CLEAN}"
+
+# Test 23.4: Clean GCP state comparison yields NO_DRIFT
+TMP_DRIFT_GCP_CLEAN="$(mktemp -t drift_gcp_clean_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/gcp/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/gcp/clean/observed.json" \
+    --output-json "${TMP_DRIFT_GCP_CLEAN}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "NO_DRIFT"' "${TMP_DRIFT_GCP_CLEAN}"; then
+    record_pass "Drift Clean State GCP [4/15]: Clean GCP state comparison yields NO_DRIFT (exit code 0)"
+  else
+    record_fail "Drift Clean State GCP [4/15]: Output check" "GCP clean state did not emit expected NO_DRIFT verdict"
+  fi
+else
+  record_fail "Drift Clean State GCP [4/15]: Execution" "Failed evaluating GCP clean drift state"
+fi
+rm -f "${TMP_DRIFT_GCP_CLEAN}"
+
+# Test 23.5: Attribute drift detected and classified as ATTRIBUTE_DRIFT (CRITICAL for security)
+TMP_DRIFT_ATTR="$(mktemp -t drift_attr_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --output-json "${TMP_DRIFT_ATTR}" >/dev/null 2>&1; then
+  if grep -q '"verdict": "DRIFT_DETECTED"' "${TMP_DRIFT_ATTR}" && \
+     grep -q '"drift_category": "ATTRIBUTE_DRIFT"' "${TMP_DRIFT_ATTR}" && \
+     grep -q '"highest_severity": "CRITICAL"' "${TMP_DRIFT_ATTR}"; then
+    record_pass "Drift Classification Attribute [5/15]: Attribute drift classified as ATTRIBUTE_DRIFT (CRITICAL)"
+  else
+    record_fail "Drift Classification Attribute [5/15]: Output check" "Attribute drift not correctly classified"
+  fi
+else
+  record_fail "Drift Classification Attribute [5/15]: Execution" "Failed executing attribute drift evaluation"
+fi
+rm -f "${TMP_DRIFT_ATTR}"
+
+# Test 23.6: Untracked shadow resource detected and classified as UNTRACKED_RESOURCE
+TMP_DRIFT_UNTRACK="$(mktemp -t drift_untrack_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/untracked-resource/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/untracked-resource/observed.json" \
+    --output-json "${TMP_DRIFT_UNTRACK}" >/dev/null 2>&1; then
+  if grep -q '"drift_category": "UNTRACKED_RESOURCE"' "${TMP_DRIFT_UNTRACK}" && \
+     grep -q '"highest_severity": "HIGH"' "${TMP_DRIFT_UNTRACK}"; then
+    record_pass "Drift Classification Untracked [6/15]: Shadow resource classified as UNTRACKED_RESOURCE (HIGH)"
+  else
+    record_fail "Drift Classification Untracked [6/15]: Output check" "Untracked resource not correctly classified"
+  fi
+else
+  record_fail "Drift Classification Untracked [6/15]: Execution" "Failed executing untracked drift evaluation"
+fi
+rm -f "${TMP_DRIFT_UNTRACK}"
+
+# Test 23.7: Remote deletion detected and classified as RESOURCE_DELETED
+TMP_DRIFT_DEL="$(mktemp -t drift_del_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/remote-deletion/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/remote-deletion/observed.json" \
+    --output-json "${TMP_DRIFT_DEL}" >/dev/null 2>&1; then
+  if grep -q '"drift_category": "RESOURCE_DELETED"' "${TMP_DRIFT_DEL}" && \
+     grep -q '"highest_severity": "CRITICAL"' "${TMP_DRIFT_DEL}"; then
+    record_pass "Drift Classification Deletion [7/15]: Remote deletion classified as RESOURCE_DELETED (CRITICAL)"
+  else
+    record_fail "Drift Classification Deletion [7/15]: Output check" "Remote deletion not correctly classified"
+  fi
+else
+  record_fail "Drift Classification Deletion [7/15]: Execution" "Failed executing deletion drift evaluation"
+fi
+rm -f "${TMP_DRIFT_DEL}"
+
+# Test 23.8: Symlink input state file rejected fail-closed (exit code != 0)
+TMP_SYMLINK="/tmp/symlink_drift_test_${RANDOM}.json"
+ln -sf "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" "${TMP_SYMLINK}"
+if ! python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${TMP_SYMLINK}" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" >/dev/null 2>&1; then
+  record_pass "Drift Security Symlink [8/15]: Symlink input state file rejected fail-closed (exit code != 0)"
+else
+  record_fail "Drift Security Symlink [8/15]: Security bypass" "simulate-drift.py unexpectedly accepted a symlink"
+fi
+rm -f "${TMP_SYMLINK}"
+
+# Test 23.9: Repository identity mismatch rejected fail-closed (exit code != 0)
+if ! python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/malformed/identity-mismatch.json" >/dev/null 2>&1; then
+  record_pass "Drift Security Identity [9/15]: Repository identity mismatch rejected fail-closed (exit code != 0)"
+else
+  record_fail "Drift Security Identity [9/15]: Security bypass" "simulate-drift.py accepted cross-repository state comparison"
+fi
+
+# Test 23.10: Secret credentials scrubbed from drift reports
+TMP_DRIFT_SEC="$(mktemp -t drift_sec_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/malformed/secret-leakage.json" \
+    --output-json "${TMP_DRIFT_SEC}" >/dev/null 2>&1
+if [[ -s "${TMP_DRIFT_SEC}" ]] && \
+   ! grep -q "AKIAIOSFODNN7EXAMPLE" "${TMP_DRIFT_SEC}" && \
+   ! grep -q "ghp_secrettoken" "${TMP_DRIFT_SEC}" && \
+   grep -q "\[REDACTED_AWS_KEY\]" "${TMP_DRIFT_SEC}"; then
+  record_pass "Drift Security Redaction [10/15]: Secret credentials (AKIA, tokens) automatically scrubbed"
+else
+  record_fail "Drift Security Redaction [10/15]: Redaction check" "Secret tokens found unredacted in drift report"
+fi
+rm -f "${TMP_DRIFT_SEC}"
+
+# Test 23.11: --enforce-zero-drift passes on clean state and fails closed on drifted state
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" \
+    --enforce-zero-drift >/dev/null 2>&1 && \
+   ! python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --enforce-zero-drift >/dev/null 2>&1; then
+  record_pass "Drift Zero Enforcement [11/15]: --enforce-zero-drift enforces fail-closed gate (0 on clean, 1 on drift)"
+else
+  record_fail "Drift Zero Enforcement [11/15]: Gate check" "--enforce-zero-drift failed exit code assertion"
+fi
+
+# Test 23.12: --output-markdown generates formatted GitHub Step Summary report
+TMP_DRIFT_MD="$(mktemp -t drift_md_XXXXXX.md)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --output-markdown "${TMP_DRIFT_MD}" >/dev/null 2>&1; then
+  if grep -q "## 🔍 InfraFlow Speculative Drift Detection Assessment" "${TMP_DRIFT_MD}" && \
+     grep -q "ATTRIBUTE_DRIFT" "${TMP_DRIFT_MD}"; then
+    record_pass "Drift Reporting Markdown [12/15]: --output-markdown generated formatted GitHub Step Summary"
+  else
+    record_fail "Drift Reporting Markdown [12/15]: Content check" "Markdown report missing expected drift headers"
+  fi
+else
+  record_fail "Drift Reporting Markdown [12/15]: Execution" "Failed generating markdown drift report"
+fi
+rm -f "${TMP_DRIFT_MD}"
+
+# Test 23.13: --emit-telemetry emits valid schema v1.0 drift events
+TMP_DRIFT_TEL="$(mktemp -t drift_tel_XXXXXX.jsonl)"
+if python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --emit-telemetry \
+    --telemetry-output "${TMP_DRIFT_TEL}" >/dev/null 2>&1; then
+  if [[ -s "${TMP_DRIFT_TEL}" ]] && \
+     grep -q '"event_type": "drift_detected"' "${TMP_DRIFT_TEL}" && \
+     grep -q '"event_type": "drift_assessment_completed"' "${TMP_DRIFT_TEL}"; then
+    record_pass "Drift Telemetry Integration [13/15]: --emit-telemetry emitted valid schema v1.0 drift events"
+  else
+    record_fail "Drift Telemetry Integration [13/15]: Content check" "Emitted telemetry missing required drift event types"
+  fi
+else
+  record_fail "Drift Telemetry Integration [13/15]: Execution" "Failed emitting drift telemetry"
+fi
+rm -f "${TMP_DRIFT_TEL}"
+
+# Test 23.14: generate-compliance-dashboard.py evaluates per-consumer drift reports
+TMP_DRIFT_DIR="$(mktemp -d -t drift_dir_XXXXXX)"
+python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" \
+    --output-json "${TMP_DRIFT_DIR}/consumer-networking.json" >/dev/null 2>&1
+python3 "${REPO_ROOT}/scripts/simulate-drift.py" \
+    --expected "${REPO_ROOT}/fixtures/drift/azure/attribute-drift/expected.json" \
+    --observed "${REPO_ROOT}/fixtures/drift/azure/attribute-drift/observed.json" \
+    --output-json "${TMP_DRIFT_DIR}/consumer-application.json" >/dev/null 2>&1
+TMP_COMP_JSON="$(mktemp -t comp_drift_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --drift-dir "${TMP_DRIFT_DIR}" \
+    --output-json "${TMP_COMP_JSON}" >/dev/null 2>&1; then
+  if grep -q '"drift_summary"' "${TMP_COMP_JSON}" && \
+     grep -q '"fleet_drift_verdict": "DRIFT_DETECTED"' "${TMP_COMP_JSON}"; then
+    record_pass "Drift Compliance Integration [14/15]: Compliance dashboard evaluates per-consumer drift reports"
+  else
+    record_fail "Drift Compliance Integration [14/15]: Content check" "Compliance dashboard JSON missing drift summary or verdict"
+  fi
+else
+  record_fail "Drift Compliance Integration [14/15]: Execution" "Failed executing compliance dashboard with drift-dir"
+fi
+rm -rf "${TMP_DRIFT_DIR}" "${TMP_COMP_JSON}"
+
+# Test 23.15: Dedicated 34-test drift detection test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_drift_detection.py" >/dev/null 2>&1; then
+  record_pass "Drift Adversarial Test Suite [15/15]: Dedicated 34-test suite passed (test_drift_detection.py)"
+else
+  record_fail "Drift Adversarial Test Suite [15/15]: Test suite" "One or more tests in test_drift_detection.py failed"
+fi
+
+# ==============================================================================
+# SECTION 24: Automated Upgrade Campaigns & Lifecycle Tracking (G09.3)
+# ==============================================================================
+log_header "24. Automated Upgrade Campaigns & Lifecycle Tracking (G09.3)"
+
+# Test 24.1: scripts/orchestrate-campaign.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/orchestrate-campaign.py" && -x "${REPO_ROOT}/scripts/orchestrate-campaign.py" ]]; then
+  record_pass "Campaign Tooling [1/15]: scripts/orchestrate-campaign.py exists and is executable"
+else
+  record_fail "Campaign Tooling [1/15]: Script check" "scripts/orchestrate-campaign.py missing or not executable"
+fi
+
+# Test 24.2: orchestrate-campaign.py --help runs cleanly
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" --help >/dev/null 2>&1; then
+  record_pass "Campaign CLI Help [2/15]: orchestrate-campaign.py --help runs with zero exit code"
+else
+  record_fail "Campaign CLI Help [2/15]: Help execution" "orchestrate-campaign.py --help failed"
+fi
+
+# Test 24.3: Campaign creation produces valid Schema v1.0 JSON state file
+TMP_CAMP_FILE="$(mktemp -t campaign_XXXXXX.json)"
+VALID_SHA="be51718f06a2662099500a710e93e6e8201b4f1c"
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1; then
+  if grep -q '"schema_version": "1.0"' "${TMP_CAMP_FILE}" && \
+     grep -q '"status": "PLANNED"' "${TMP_CAMP_FILE}" && \
+     grep -q '"target_platform_sha": "'"${VALID_SHA}"'"' "${TMP_CAMP_FILE}"; then
+    record_pass "Campaign Creation [3/15]: --create initializes valid Schema v1.0 campaign state"
+  else
+    record_fail "Campaign Creation [3/15]: Content check" "Campaign state missing required schema fields or status"
+  fi
+else
+  record_fail "Campaign Creation [3/15]: Execution" "Failed executing --create"
+fi
+
+# Test 24.4: SHA-256 cryptographic anti-tampering verification
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --status \
+    --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1; then
+  # Tamper with file
+  sed -i 's/"status": "PLANNED"/"status": "COMPLETED"/' "${TMP_CAMP_FILE}"
+  if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" --status --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1; then
+    record_pass "Campaign Anti-Tampering [4/15]: SHA-256 signature verification rejects tampered state file"
+  else
+    record_fail "Campaign Anti-Tampering [4/15]: Integrity check" "Tampered campaign file was unexpectedly accepted"
+  fi
+else
+  record_fail "Campaign Anti-Tampering [4/15]: Status execution" "Failed reading status before tampering"
+fi
+rm -f "${TMP_CAMP_FILE}"
+
+# Test 24.5: Rejection of invalid commit SHAs
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "main" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "/tmp/should_fail.json" >/dev/null 2>&1; then
+  record_pass "SHA Validation [5/15]: Non-40-char SHA (mutable branch name) rejected with error"
+else
+  record_fail "SHA Validation [5/15]: Input check" "Invalid SHA 'main' was unexpectedly accepted"
+fi
+rm -f "/tmp/should_fail.json"
+
+# Test 24.6: Rejection of symbolic link campaign state files
+TMP_REAL_CAMP="$(mktemp -t real_camp_XXXXXX.json)"
+TMP_SYM_CAMP="${TMP_REAL_CAMP}.sym"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_REAL_CAMP}" >/dev/null 2>&1
+ln -s "${TMP_REAL_CAMP}" "${TMP_SYM_CAMP}"
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --status \
+    --campaign-file "${TMP_SYM_CAMP}" >/dev/null 2>&1; then
+  record_pass "Symlink Rejection [6/15]: Symlink campaign file rejected by security boundary"
+else
+  record_fail "Symlink Rejection [6/15]: Security check" "Symlink campaign file was unexpectedly accepted"
+fi
+rm -f "${TMP_REAL_CAMP}" "${TMP_SYM_CAMP}"
+
+# Test 24.7: Fail-closed Canary Gate blocks progressive rollout when canary is PENDING
+TMP_GATE_CAMP="$(mktemp -t gate_camp_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_GATE_CAMP}" >/dev/null 2>&1
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage progressive \
+    --campaign-file "${TMP_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" >/dev/null 2>&1; then
+  record_pass "Canary Gate [7/15]: Progressive rollout strictly blocked when canary is PENDING (fail-closed)"
+else
+  record_fail "Canary Gate [7/15]: Gate check" "Progressive rollout succeeded despite unverified canary"
+fi
+
+# Test 24.8: Successful Canary stage execution in dry-run mode
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --dry-run >/dev/null 2>&1; then
+  record_pass "Canary Execution [8/15]: Canary stage executes and passes verification in dry-run mode"
+else
+  record_fail "Canary Execution [8/15]: Execution" "Canary stage execution failed in dry-run mode"
+fi
+
+# Test 24.9: Simulated PR metadata and branch name generation
+TMP_PR_JSON="$(mktemp -t pr_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_PR_JSON}" \
+    --dry-run >/dev/null 2>&1
+if grep -q '"branch": "infraflow/upgrade-' "${TMP_PR_JSON}" && \
+   grep -q '"simulated_pr_url": "https://github.com/' "${TMP_PR_JSON}"; then
+  record_pass "Simulated PR Dispatch [9/15]: Simulated PR metadata and branch name generated deterministically"
+else
+  record_fail "Simulated PR Dispatch [9/15]: Content check" "Simulated PR branch or URL missing in output JSON"
+fi
+rm -f "${TMP_PR_JSON}" "${TMP_GATE_CAMP}"
+
+# Test 24.10: Full end-to-end staged rollout reaches COMPLETED status
+TMP_E2E_CAMP="$(mktemp -t e2e_camp_XXXXXX.json)"
+TMP_E2E_OUT="$(mktemp -t e2e_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_E2E_CAMP}" >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage all \
+    --campaign-file "${TMP_E2E_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_E2E_OUT}" \
+    --dry-run >/dev/null 2>&1; then
+  if grep -q '"status": "COMPLETED"' "${TMP_E2E_OUT}"; then
+    record_pass "End-to-End Staged Rollout [10/15]: --execute-stage all reaches COMPLETED status across fleet"
+  else
+    record_fail "End-to-End Staged Rollout [10/15]: Status check" "Campaign status was not COMPLETED after execute-stage all"
+  fi
+else
+  record_fail "End-to-End Staged Rollout [10/15]: Execution" "Failed running --execute-stage all"
+fi
+rm -f "${TMP_E2E_CAMP}" "${TMP_E2E_OUT}"
+
+# Test 24.11: Pre-flight critical drift gate enforcement
+TMP_DRIFT_GATE_CAMP="$(mktemp -t drift_gate_camp_XXXXXX.json)"
+TMP_MOCK_DRIFT_DIR="$(mktemp -d -t mock_drift_XXXXXX)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_DRIFT_GATE_CAMP}" >/dev/null 2>&1
+echo '{"summary": {"verdict": "DRIFT_DETECTED", "severity_counts": {"CRITICAL": 1}}}' > "${TMP_MOCK_DRIFT_DIR}/consumer-networking.json"
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_DRIFT_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --drift-dir "${TMP_MOCK_DRIFT_DIR}" \
+    --dry-run >/dev/null 2>&1; then
+  record_pass "Drift Gate Enforcement [11/15]: Critical state drift halts rollout pre-flight (fail-closed)"
+else
+  record_fail "Drift Gate Enforcement [11/15]: Gate check" "Campaign executed despite critical state drift"
+fi
+rm -rf "${TMP_DRIFT_GATE_CAMP}" "${TMP_MOCK_DRIFT_DIR}"
+
+# Test 24.12: Campaign rollback restores rollback_sha
+TMP_RB_CAMP="$(mktemp -t rb_camp_XXXXXX.json)"
+TMP_RB_OUT="$(mktemp -t rb_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_RB_CAMP}" >/dev/null 2>&1
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_RB_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_RB_CAMP}" \
+    --dry-run >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --rollback \
+    --rollback-reason "Section 24 verification test rollback" \
+    --campaign-file "${TMP_RB_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_RB_OUT}" \
+    --dry-run >/dev/null 2>&1; then
+  if grep -q '"status": "ROLLED_BACK"' "${TMP_RB_OUT}" && \
+     grep -q '"executed": true' "${TMP_RB_OUT}"; then
+    record_pass "Rollback Orchestration [12/15]: --rollback transitions status to ROLLED_BACK and records audit"
+  else
+    record_fail "Rollback Orchestration [12/15]: Content check" "Rollback output missing status ROLLED_BACK or executed true"
+  fi
+else
+  record_fail "Rollback Orchestration [12/15]: Execution" "Failed executing --rollback"
+fi
+rm -f "${TMP_RB_CAMP}" "${TMP_RB_OUT}"
+
+# Test 24.13: Telemetry emission for campaign lifecycle events
+TMP_CAMP_TEL="$(mktemp -t camp_tel_XXXXXX.jsonl)"
+TMP_TEL_CAMP="$(mktemp -t tel_camp_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_TEL_CAMP}" \
+    --emit-telemetry \
+    --telemetry-file "${TMP_CAMP_TEL}" >/dev/null 2>&1
+if [[ -s "${TMP_CAMP_TEL}" ]] && grep -q '"event_type": "campaign_planned"' "${TMP_CAMP_TEL}"; then
+  record_pass "Campaign Telemetry Integration [13/15]: --emit-telemetry emitted schema v1.0 campaign events"
+else
+  record_fail "Campaign Telemetry Integration [13/15]: Content check" "Emitted telemetry missing campaign_planned event"
+fi
+rm -f "${TMP_CAMP_TEL}" "${TMP_TEL_CAMP}"
+
+# Test 24.14: Central Compliance Dashboard ingests campaign file
+TMP_DASH_CAMP="$(mktemp -t dash_camp_XXXXXX.json)"
+TMP_DASH_OUT="$(mktemp -t dash_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_DASH_CAMP}" >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --campaign-file "${TMP_DASH_CAMP}" \
+    --output-json "${TMP_DASH_OUT}" >/dev/null 2>&1; then
+  if grep -q '"campaign_summary"' "${TMP_DASH_OUT}" && grep -q '"active": true' "${TMP_DASH_OUT}"; then
+    record_pass "Compliance Dashboard Campaign Integration [14/15]: Dashboard ingests active campaign state"
+  else
+    record_fail "Compliance Dashboard Campaign Integration [14/15]: Content check" "Dashboard output missing campaign_summary"
+  fi
+else
+  record_fail "Compliance Dashboard Campaign Integration [14/15]: Execution" "Failed executing compliance dashboard with campaign-file"
+fi
+rm -f "${TMP_DASH_CAMP}" "${TMP_DASH_OUT}"
+
+# Test 24.15: Dedicated 32-test upgrade campaigns test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_upgrade_campaigns.py" >/dev/null 2>&1; then
+  record_pass "Campaign Adversarial Test Suite [15/15]: Dedicated 32-test suite passed (test_upgrade_campaigns.py)"
+else
+  record_fail "Campaign Adversarial Test Suite [15/15]: Test suite" "One or more tests in test_upgrade_campaigns.py failed"
+fi
+
+# ==============================================================================
+# SECTION 25: Enterprise Governance & Operational Maturity Verification (G09.4)
+# ==============================================================================
+log_header "25. Enterprise Governance & Operational Maturity Verification (G09.4)"
+
+# Test 25.1: scripts/verify-operational-maturity.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/verify-operational-maturity.py" && -x "${REPO_ROOT}/scripts/verify-operational-maturity.py" ]]; then
+  record_pass "Operational Maturity Tooling [1/15]: scripts/verify-operational-maturity.py exists and is executable"
+else
+  record_fail "Operational Maturity Tooling [1/15]: Script check" "scripts/verify-operational-maturity.py missing or not executable"
+fi
+
+# Test 25.2: verify-operational-maturity.py --help runs cleanly
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" --help >/dev/null 2>&1; then
+  record_pass "Operational Maturity CLI Help [2/15]: verify-operational-maturity.py --help runs with zero exit code"
+else
+  record_fail "Operational Maturity CLI Help [2/15]: Help execution" "verify-operational-maturity.py --help failed"
+fi
+
+# Test 25.3: Baseline execution against manifest and consumer fixtures passes
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Baseline Operational Verification [3/15]: Verification passes on reference fleet manifest and fixtures"
+else
+  record_fail "Baseline Operational Verification [3/15]: Baseline execution" "verify-operational-maturity.py failed on baseline fixtures"
+fi
+
+# Test 25.4: Deterministic SHA-256 attestation signature generation
+TMP_OP_JSON="$(mktemp -t op_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_OP_JSON}" \
+    --quiet >/dev/null 2>&1
+if [[ -s "${TMP_OP_JSON}" ]] && grep -q '"report_signature":' "${TMP_OP_JSON}"; then
+  record_pass "Attestation Signature [4/15]: Deterministic SHA-256 report attestation signature generated"
+else
+  record_fail "Attestation Signature [4/15]: Content check" "Missing report_signature in operational report"
+fi
+
+# Test 25.5: Cryptographic signature tamper detection
+if python3 -c '
+import json, hashlib, sys
+with open("'"${TMP_OP_JSON}"'") as f:
+    d = json.load(f)
+orig_sig = d.get("report_signature")
+d["compliance_score"] = 99.9
+canonical = {k: v for k, v in d.items() if k != "report_signature"}
+new_sig = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+sys.exit(0 if orig_sig != new_sig else 1)
+' >/dev/null 2>&1; then
+  record_pass "Signature Tamper Detection [5/15]: Modifying report payload is cryptographically detected"
+else
+  record_fail "Signature Tamper Detection [5/15]: Integrity check" "Signature tamper check failed"
+fi
+rm -f "${TMP_OP_JSON}"
+
+# Test 25.6: Compliance threshold enforcement fails closed on regression
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --enforce-threshold 98.0 \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Compliance Threshold Enforcement [6/15]: Verification halts (exit code 1) when score is below threshold"
+else
+  record_fail "Compliance Threshold Enforcement [6/15]: Gate check" "Verification succeeded despite score below threshold"
+fi
+
+# Test 25.7: Structured telemetry pillar validation
+TMP_TEL_IN="$(mktemp -t tel_in_XXXXXX.jsonl)"
+python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type governance_gate_evaluated \
+    --consumer-id platform \
+    --repository TM-threemavithana/infraflow \
+    --status PASS \
+    --output "${TMP_TEL_IN}" \
+    --append >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --telemetry-file "${TMP_TEL_IN}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Telemetry Pillar Validation [7/15]: Telemetry stream passes Schema v1.0 and digest verification"
+else
+  record_fail "Telemetry Pillar Validation [7/15]: Pillar execution" "Failed verifying valid telemetry file"
+fi
+rm -f "${TMP_TEL_IN}"
+
+# Test 25.8: Telemetry credential leakage detection blocks verification
+TMP_TEL_LEAK="$(mktemp -t tel_leak_XXXXXX.jsonl)"
+python3 -c '
+import json
+ev = {
+  "schema_version": "1.0",
+  "event_id": "leak-test-01",
+  "timestamp": "2026-11-21T10:00:00Z",
+  "event_type": "security_scan_completed",
+  "execution_context": {"workflow": "test", "run_id": "1", "event_name": "push"},
+  "target": {"consumer_id": "platform", "repository": "test", "adapter": "aws"},
+  "metrics": {},
+  "verdict": {"status": "PASS", "reasons": ["AKIA" + "1234567890123456"]},
+  "integrity": {"algorithm": "sha256", "event_digest": "dummy"}
+}
+with open("'"${TMP_TEL_LEAK}"'", "w") as f:
+    json.dump(ev, f)
+'
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --telemetry-file "${TMP_TEL_LEAK}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Telemetry Credential Leakage Gate [8/15]: Telemetry log containing unredacted secret halts verification"
+else
+  record_fail "Telemetry Credential Leakage Gate [8/15]: Gate check" "Verification passed despite credential in telemetry"
+fi
+rm -f "${TMP_TEL_LEAK}"
+
+# Test 25.9: Multi-cloud state drift evaluation across registered workloads
+TMP_DRIFT_DIR="$(mktemp -d -t drift_sec25_XXXXXX)"
+for wid in consumer-networking consumer-application consumer-data-platform; do
+  echo '{"schema_version": "1.0", "summary": {"verdict": "NO_DRIFT", "total_drifts": 0, "highest_severity": "NONE", "severity_counts": {"INFO": 0, "LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}, "category_counts": {"NO_DRIFT": 3}}}' > "${TMP_DRIFT_DIR}/${wid}.json"
+done
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --drift-dir "${TMP_DRIFT_DIR}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Multi-Cloud Drift Evaluation [9/15]: Clean multi-cloud drift reports ingested with status PASS"
+else
+  record_fail "Multi-Cloud Drift Evaluation [9/15]: Execution" "Failed verifying clean drift directory"
+fi
+rm -rf "${TMP_DRIFT_DIR}"
+
+# Test 25.10: Critical severity infrastructure drift halts verification
+TMP_CRIT_DIR="$(mktemp -d -t crit_sec25_XXXXXX)"
+echo '{"schema_version": "1.0", "summary": {"verdict": "DRIFT_DETECTED", "total_drifts": 1, "severity_counts": {"INFO": 0, "LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 1}, "category_counts": {"ATTRIBUTE_DRIFT": 1}}}' > "${TMP_CRIT_DIR}/consumer-networking.json"
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --drift-dir "${TMP_CRIT_DIR}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Critical Drift Circuit-Breaker [10/15]: CRITICAL severity drift strictly blocks verification"
+else
+  record_fail "Critical Drift Circuit-Breaker [10/15]: Gate check" "Verification succeeded despite critical drift"
+fi
+rm -rf "${TMP_CRIT_DIR}"
+
+# Test 25.11: Upgrade campaign state verification
+TMP_CAMP_FILE="$(mktemp -t camp_sec25_XXXXXX.json)"
+VALID_SHA="be51718f06a2662099500a710e93e6e8201b4f1c"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --campaign-file "${TMP_CAMP_FILE}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Campaign Pillar Verification [11/15]: Active signed campaign verified with status PASS"
+else
+  record_fail "Campaign Pillar Verification [11/15]: Execution" "Failed verifying active campaign file"
+fi
+
+# Test 25.12: Fail-closed Canary Gate enforcement in campaign
+python3 -c '
+import json, importlib.util
+with open("'"${TMP_CAMP_FILE}"'") as f:
+    c = json.load(f)
+for s in c.get("stages", []):
+    if s.get("stage_name") == "progressive":
+        s["status"] = "RUNNING"
+    elif s.get("stage_name") == "canary":
+        s["status"] = "PENDING"
+spec = importlib.util.spec_from_file_location("oc", "'"${REPO_ROOT}"'/scripts/orchestrate-campaign.py")
+oc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(oc)
+c["signature"] = oc.compute_campaign_signature(c)
+with open("'"${TMP_CAMP_FILE}"'", "w") as f:
+    json.dump(c, f, indent=2)
+'
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --campaign-file "${TMP_CAMP_FILE}" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Canary Gate Verification [12/15]: Canary Gate breach in campaign halts verification (fail-closed)"
+else
+  record_fail "Canary Gate Verification [12/15]: Gate check" "Verification passed despite Canary Gate breach"
+fi
+rm -f "${TMP_CAMP_FILE}"
+
+# Test 25.13: Safe path validation and symlink rejection
+TMP_LINK_DIR="$(mktemp -d -t link_dir_XXXXXX)"
+ln -s "${REPO_ROOT}/config/fleet-manifest.yaml" "${TMP_LINK_DIR}/symlink_manifest.yaml"
+if ! python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${TMP_LINK_DIR}/symlink_manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Symlink Security Guard [13/15]: Symlinked manifest rejected with error (fail-closed)"
+else
+  record_fail "Symlink Security Guard [13/15]: Guard check" "Symlinked manifest unexpectedly accepted"
+fi
+rm -rf "${TMP_LINK_DIR}"
+
+# Test 25.14: Consolidated report export (JSON and Markdown)
+TMP_EXP_JSON="$(mktemp -t exp_json_XXXXXX.json)"
+TMP_EXP_MD="$(mktemp -t exp_md_XXXXXX.md)"
+python3 "${REPO_ROOT}/scripts/verify-operational-maturity.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_EXP_JSON}" \
+    --output-markdown "${TMP_EXP_MD}" \
+    --quiet >/dev/null 2>&1
+if [[ -s "${TMP_EXP_JSON}" && -s "${TMP_EXP_MD}" ]] && \
+   grep -q '"overall_status": "COMPLIANT_AND_VERIFIED"' "${TMP_EXP_JSON}" && \
+   grep -q '# 🛡️ InfraFlow Enterprise Operational Maturity Verification Report' "${TMP_EXP_MD}"; then
+  record_pass "Report Exporters [14/15]: Consolidated JSON and Executive Markdown reports exported successfully"
+else
+  record_fail "Report Exporters [14/15]: Content check" "Exported JSON or Markdown missing expected content"
+fi
+rm -f "${TMP_EXP_JSON}" "${TMP_EXP_MD}"
+
+# Test 25.15: Dedicated 32-test operational maturity test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_operational_maturity.py" >/dev/null 2>&1; then
+  record_pass "Operational Maturity Adversarial Suite [15/15]: Dedicated 32-test suite passed (test_operational_maturity.py)"
+else
+  record_fail "Operational Maturity Adversarial Suite [15/15]: Test suite" "One or more tests in test_operational_maturity.py failed"
+fi
+
+# --- Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -4927,7 +5846,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08/G09 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

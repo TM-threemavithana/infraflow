@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "state_source": "observed",
+  "provider": "gcp",
+  "repository": "TM-threemavithana/infraflow-consumer-data-platform",
+  "workspace": "prod",
+  "timestamp": "2026-11-21T08:05:00Z",
+  "resources": [
+    {
+      "resource_id": "google_storage_bucket.tfstate",
+      "provider": "gcp",
+      "resource_type": "google_storage_bucket",
+      "attributes": {
+        "name": "bkt-infraflow-data-tfstate",
+        "location": "US",
+        "uniform_bucket_level_access": true,
+        "versioning_enabled": true,
+        "labels": {
+          "environment": "prod",
+          "managed_by": "infraflow"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "state_source": "observed",
+  "provider": "gcp",
+  "repository": "TM-threemavithana/infraflow-consumer-data-platform",
+  "workspace": "prod",
+  "timestamp": "2026-11-21T08:15:00Z",
+  "resources": [
+    {
+      "resource_id": "google_storage_bucket.tfstate",
+      "provider": "gcp",
+      "resource_type": "google_storage_bucket",
+      "attributes": {
+        "name": "bkt-infraflow-data-tfstate",
+        "location": "US",
+        "uniform_bucket_level_access": true,
+        "versioning_enabled": true,
+        "labels": {
+          "environment": "prod",
+          "managed_by": "infraflow"
+        }
+      }
+    },
+    {
+      "resource_id": "google_compute_disk.shadow_disk",
+      "provider": "gcp",
+      "resource_type": "google_compute_disk",
+      "attributes": {
+        "name": "untracked-backup-disk",
+        "size": 100,
+        "zone": "us-central1-a"
+      }
+    }
+  ]
+}

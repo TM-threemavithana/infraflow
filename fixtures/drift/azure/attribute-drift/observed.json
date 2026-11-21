@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "state_source": "observed",
+  "provider": "azure",
+  "repository": "TM-threemavithana/infraflow-consumer-application",
+  "workspace": "prod",
+  "timestamp": "2026-11-21T08:10:00Z",
+  "resources": [
+    {
+      "resource_id": "azurerm_storage_account.tfstate",
+      "provider": "azure",
+      "resource_type": "azurerm_storage_account",
+      "attributes": {
+        "name": "stinfraflowappprod",
+        "account_tier": "Standard",
+        "account_replication_type": "GRS",
+        "min_tls_version": "TLS1_0",
+        "allow_nested_items_to_be_public": true,
+        "tags": {
+          "Environment": "prod",
+          "ManagedBy": "infraflow"
+        }
+      }
+    },
+    {
+      "resource_id": "azurerm_storage_container.tfstate",
+      "provider": "azure",
+      "resource_type": "azurerm_storage_container",
+      "attributes": {
+        "name": "tfstate",
+        "container_access_type": "private"
+      }
+    }
+  ]
+}
