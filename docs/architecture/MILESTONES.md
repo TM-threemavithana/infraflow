@@ -18,7 +18,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
-| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, validation toolkit. | In Progress (G08.1 Implemented; G08.2 Pending) |
+| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, validation toolkit. | In Progress (G08.1 & G08.2 Implemented; G08.3 Pending) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
 ---
@@ -324,7 +324,24 @@ Milestone G08.1 establishes an enterprise-grade onboarding model, consumer confi
 
 ---
 
-## 22. Quality Gate Definitions
+## 22. Milestone G08.2 — Acceptance Criteria (Independent Multi-Repository Adoption & External Fleet Integration)
+
+Milestone G08.2 deploys, configures, and validates three independent external consumer repositories on live GitHub Actions runners across AWS, Azure, and GCP adapters ($0.00 cloud spend, zero live credentials, fail-closed policy enforcement).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-09** | Platform G08 Feature Branch Publication & CI Gate | Publish `feature/g08-consumer-onboarding` to `TM-threemavithana/infraflow` and open PR [#6](https://github.com/TM-threemavithana/infraflow/pull/6). Verify all mandatory CI checks pass cleanly. | GitHub Actions CI Execution ([PR #6](https://github.com/TM-threemavithana/infraflow/pull/6)) | **PASS (G08.2 Implemented)** |
+| **AC-G08-10** | Three Independent External Consumer Repositories Created | Provision three dedicated public GitHub repositories under `TM-threemavithana`: [`infraflow-consumer-networking`](https://github.com/TM-threemavithana/infraflow-consumer-networking), [`infraflow-consumer-application`](https://github.com/TM-threemavithana/infraflow-consumer-application), and [`infraflow-consumer-data-platform`](https://github.com/TM-threemavithana/infraflow-consumer-data-platform). | GitHub API & Repository Verification | **PASS (G08.2 Implemented)** |
+| **AC-G08-11** | Independent Consumer Onboarding & Local Contract Validation | Onboard each consumer with schema v1.0 contract (`infraflow.config.yaml`), caller workflow, and cloud-free `terraform_data` modules. Verify 15/15 checks pass per repo (45/45 total). | `scripts/validate-consumer.py` execution (45/45 passed) | **PASS (G08.2 Implemented)** |
+| **AC-G08-12** | External Multi-Cloud GitHub Actions Execution Verification | Trigger and verify live pull request workflows across all three external repositories. All runs succeed cleanly calling AWS, Azure, and GCP reusable workflows. | GHA Runs [44870873397](https://github.com/TM-threemavithana/infraflow-consumer-networking/actions/runs/44870873397), [44870894843](https://github.com/TM-threemavithana/infraflow-consumer-application/actions/runs/44870894843), [44870921177](https://github.com/TM-threemavithana/infraflow-consumer-data-platform/actions/runs/44870921177) | **PASS (G08.2 Implemented)** |
+| **AC-G08-13** | Output Contract Enforcement on Live Runners | Verify all seven reusable workflow outputs (`plan-status`, `<cloud>-auth-status`, `security-status`, `authorization-status`, `has-changes`, `has-destructive-changes`, `total-changes`) aggregated cleanly on live runners. | GHA Run Step Summaries & Job Logs | **PASS (G08.2 Implemented)** |
+| **AC-G08-14** | Platform Centralization & Zero Redundant Policy Invariant | Verify 0 policies, 0 scanners, and 0 workflow logic duplicated in consumer repositories. Centralized governance ensures 100% policy inheritance. | Filesystem audit across consumer fleet | **PASS (G08.2 Implemented)** |
+| **AC-G08-15** | Multi-Repository Adversarial & Security Testing | Execute 8-scenario adversarial test suite verifying fail-closed rejection of mutable references (`@main`), path traversals, disabled scanners, `write-all` permissions, and `pull_request_target` escalations. | Automated adversarial suite execution | **PASS (G08.2 Implemented)** |
+| **AC-G08-16** | Historical Regression & Cloud Spend Invariant | Guarantee exactly $0.00 cloud infrastructure spend across all four repositories. Verify 100% pass across 321/321 platform quality checks and historical consumer integrity. | `scripts/validate-local.sh` (321/321 PASS) | **PASS (G08.2 Implemented)** |
+
+---
+
+## 23. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G08:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.

@@ -127,3 +127,22 @@ A primary goal of G08 is eliminating the copy-pasting of security policies into 
 - **Immutable SHA Recommendation**: While git tags (`@v0.5.0`) provide human-readable milestones, git tags are technically mutable references in git. For strict enterprise immutability and supply-chain hardening, consumers **must pin the full 40-character commit SHA** (`@2ce0ddd5de01530b6bf7aba749f0081620fb9b27`).
 - **Deprecation Windows**: Platform features deprecated in minor releases remain supported for at least one subsequent minor version before removal in a major release.
 - **Automated Validation**: The `validate-consumer.py` utility verifies whether a consumer repository is using a supported platform SHA and conforms to contract requirements.
+
+---
+
+## 6. External Fleet Adoption & Multi-Cloud Verification (G08.2)
+
+In Milestone G08.2, InfraFlow's multi-repository architecture was verified against three independent, production-grade external consumer repositories on live GitHub Actions runners:
+
+| Consumer Repository | Target Cloud Adapter | Managed Workload | Live PR | GHA CI Run | Result |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| [`infraflow-consumer-networking`](https://github.com/TM-threemavithana/infraflow-consumer-networking) | AWS (`reusable-tf-aws.yml`) | VPC, subnets, route tables | [PR #1](https://github.com/TM-threemavithana/infraflow-consumer-networking/pull/1) | [Run 44870873397](https://github.com/TM-threemavithana/infraflow-consumer-networking/actions/runs/44870873397) | **PASS** (19s) |
+| [`infraflow-consumer-application`](https://github.com/TM-threemavithana/infraflow-consumer-application) | Azure (`reusable-tf-azure.yml`) | App Service, Key Vault | [PR #1](https://github.com/TM-threemavithana/infraflow-consumer-application/pull/1) | [Run 44870894843](https://github.com/TM-threemavithana/infraflow-consumer-application/actions/runs/44870894843) | **PASS** (26s) |
+| [`infraflow-consumer-data-platform`](https://github.com/TM-threemavithana/infraflow-consumer-data-platform) | GCP (`reusable-tf-gcp.yml`) | Lakehouse GCS, BigQuery Dataset | [PR #1](https://github.com/TM-threemavithana/infraflow-consumer-data-platform/pull/1) | [Run 44870921177](https://github.com/TM-threemavithana/infraflow-consumer-data-platform/actions/runs/44870921177) | **PASS** (25s) |
+
+### Key Architectural Validations:
+1. **Zero Redundant Policies**: All OPA Rego policies, TFLint configs, and Trivy scans executed directly from the central platform workflows without duplicating files in consumer repositories.
+2. **Immutable Contract Enforcement**: All repositories pin `platform_sha: 8fd761bb42165435e1162f37ee39df15d5532b09`. Mutable references (`@main`) fail closed.
+3. **Least Privilege Invariant**: All caller workflows enforce `permissions: contents: read` with zero elevated permissions.
+4. **Output Contract Parity**: Aggregated all 7 standard outputs (`plan-status`, `<cloud>-auth-status`, `security-status`, `authorization-status`, `has-changes`, `has-destructive-changes`, `total-changes`) consistently across AWS, Azure, and GCP adapters.
+
