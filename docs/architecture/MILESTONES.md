@@ -291,7 +291,23 @@ Milestone G07.6 executes comprehensive security hardening, adversarial integrati
 
 ---
 
-## 20. Quality Gate Definitions
+## 20. Milestone G07.7 — Acceptance Criteria (External Azure Consumer Integration & Multi-Cloud Release Readiness)
+
+Milestone G07.7 integrates and validates the completed Azure Cloud-Free Adapter against an independent external consumer repository (`TM-threemavithana/infraflow-consumer-test`) on actual GitHub Actions runners ($0.00 cloud spend, zero credentials, no PR merges, no release tags).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-30** | External Consumer Integration & Immutable Pinning | Integrate `.github/workflows/reusable-tf-azure.yml` into consumer workflow (`infraflow-azure-plan.yml`) pinned to immutable 40-character commit SHA (`de8ff47dc513ea88892ef29b363e419d396b4290`). Ensure zero live credentials and no `id-token: write` permission. | GitHub Actions CI Execution ([Run 44864588624](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44864588624)) | **PASS (G07.7 Implemented)** |
+| **AC-G07-31** | Pure Offline Speculative Planning Fixture | Implement consumer smoke test fixture (`test/g07-azure-adapter-smoke/`) using native `terraform_data` resource, avoiding any provider authentication requirement while generating valid speculative plan metrics (`total-changes: 1`, `has-changes: true`). | `terraform init -backend=false` & `terraform plan` execution on GHA | **PASS (G07.7 Implemented)** |
+| **AC-G07-32** | 7-Output Contract Verification on GHA | Assert all 7 contract outputs in consumer CI (`verify-cloud-free-outputs`): `authorization-status: not-applicable` (never `authorized`), `plan-status: success`, `azure-auth-status: disabled`, `security-status: success`, `has-changes: true`, `has-destructive-changes: false`, `total-changes: 1`. | Automated assertion step in `infraflow-azure-plan.yml` | **PASS (G07.7 Implemented)** |
+| **AC-G07-33** | 36-Vector External Negative Security Test Harness | Author and execute independent negative security harness ([`scripts/run_azure_negative_tests.py`](file:///home/tharuka/projects/infraflow/scripts/run_azure_negative_tests.py)) on GitHub Actions runners, asserting 100% rejection across 36 bypass, path traversal, naming, and OPA policy attack scenarios. | GHA runner execution — 36/36 vectors passed | **PASS (G07.7 Implemented)** |
+| **AC-G07-34** | SEC-02 Fail-Closed PR Event Security Assertion | Validate that untrusted pull requests requesting live Azure credentials (`enable-azure-auth: true` on `pull_request` event) fail closed immediately before any toolchain execution. | GHA step assertion (`verify-pr-event-security`) | **PASS (G07.7 Implemented)** |
+| **AC-G07-35** | Historical Milestone Regression Parity (G04–G07 GCP) | Confirm zero regression across existing consumer workflows: G04 speculative plan, G05 AWS adapter, G06 protected apply simulation, and G07 GCP adapter all pass with 100% success on PR event. | GitHub Actions PR #5 checks (37/37 checks PASS) | **PASS (G07.7 Implemented)** |
+| **AC-G07-36** | Multi-Cloud External Integration Evidence Report | Produce comprehensive integration evidence report ([`docs/evidence/G07/G07-AZURE-EXTERNAL-INTEGRATION-REPORT.md`](file:///home/tharuka/projects/infraflow/docs/evidence/G07/G07-AZURE-EXTERNAL-INTEGRATION-REPORT.md)) documenting workflow runs, contract outputs, adversarial matrices, multi-cloud comparison, and release readiness. | Documentation audit and link verification | **PASS (G07.7 Implemented)** |
+
+---
+
+## 21. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G07:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
@@ -301,3 +317,4 @@ To achieve status **PASS** for G01 through G07:
 5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (303/303 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
+8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).
