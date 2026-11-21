@@ -173,21 +173,36 @@ Milestone G09.2 implements speculative infrastructure drift detection ([`scripts
 
 ---
 
-## 6. Security & Threat Modeling for Observability & Drift
+## 6. Pillar 4: Automated Upgrade Campaigns & Lifecycle Tracking (G09.3)
+
+### 6.1 Architecture & Objectives
+Milestone G09.3 implements the automated fleet upgrade orchestration engine ([`scripts/orchestrate-campaign.py`](../../scripts/orchestrate-campaign.py)), enabling platform engineering teams to orchestrate, track, and rollback multi-tenant infrastructure upgrades across registered consumers in [`config/fleet-manifest.yaml`](../../config/fleet-manifest.yaml).
+
+### 6.2 Staged Rollout Model & Fail-Closed Canary Gate
+- **Staged Phasing**: Workloads are partitioned into Canary consumers (`upgrade_role: canary`) and Progressive consumers (`upgrade_role: progressive`).
+- **Canary Gate Invariant**: Progressive rollout execution is strictly blocked unless all canary workloads are in the `VERIFIED` state. Any attempt to advance progressive rollout while canary is pending, running, or failed raises `CanaryGateError` (fail-closed).
+- **Quality Gates**: Pre-flight checks evaluate contract compatibility, compliance threshold ($\ge 90.0\%$), and zero critical state drift before applying updates.
+- **Rollback Assurance**: Automated and emergency rollback operations restore consumers to their registered `rollback_sha` baseline transactionally.
+- **Zero-Cost Simulation**: Generates simulated PR metadata, branch references (`infraflow/upgrade-<sha[:7]>`), and markdown review summaries with $0.00 cloud spending and zero live credentials.
+
+---
+
+## 7. Security & Threat Modeling for Operational Maturity
 
 | Threat (STRIDE) | Attack Vector | InfraFlow Mitigation |
 | :--- | :--- | :--- |
 | **Spoofing** | Cross-tenant state comparison to inspect unauthorized infrastructure | Repository & workspace identity binding enforced; mismatches raise `DriftSecurityError`. |
-| **Information Disclosure** | Telemetry logs or drift diffs leaking cloud secrets, PATs, or JWTs | Automatic recursive regex scrubbing in `emit-telemetry.py` and `simulate-drift.py`. |
-| **Tampering** | Rogue actor altering telemetry logs, drift reports, or using symlinks | Explicit symlink rejection (`os.path.islink`) and deterministic SHA-256 event digest over canonical payload. |
-| **Elevation of Privilege** | Observability or drift pipeline attempting automated destructive actions | Zero automatic remediation invariant: strictly read-only reporting and telemetry emission. |
+| **Information Disclosure** | Telemetry logs or drift diffs leaking cloud secrets, PATs, or JWTs | Automatic recursive regex scrubbing in `emit-telemetry.py`, `simulate-drift.py`, and `orchestrate-campaign.py`. |
+| **Tampering** | Rogue actor altering telemetry logs, drift reports, or campaign states | Explicit symlink rejection (`os.path.islink`) and deterministic SHA-256 event and campaign digests over canonical payload. |
+| **Elevation of Privilege** | Observability, drift, or campaign pipeline attempting unauthorized destructive actions | Zero automatic remediation invariant in drift engine; fail-closed Canary Gate in campaign orchestrator. |
 | **Denial of Service** | Corrupted or massive telemetry files crashing parser | Strict schema v1.0 validation and size containment. |
-| **Repudiation** | Unverified audit claims without execution evidence | Every event records `event_id`, UTC timestamp, `execution_context` (run ID, actor, commit SHA). |
+| **Repudiation** | Unverified audit claims without execution evidence | Every event records `event_id`, UTC timestamp, `execution_context` (run ID, actor, commit SHA), and audit trail. |
 
 ---
 
-## 7. Implementation Roadmap
+## 8. Implementation Roadmap
 
 - **G09.1 (Completed Foundation):** Fleet Observability Engine, Telemetry Schema v1.0, 5-Pillar Compliance Dashboard Generator, Offline HTML Reporting, Scheduled CI Pipeline.
 - **G09.2 (Completed):** Continuous State & Speculative Drift Detection Simulation, Multi-Cloud Normalization, 6-Category Drift Engine, Compliance Dashboard Integration.
-- **G09.3 (Next Phase):** Automated Upgrade Campaigns & Fleet Rollout Tracking.
+- **G09.3 (Completed):** Automated Upgrade Campaigns & Fleet Rollout Tracking, Fail-Closed Canary Gating, Zero-Cost Simulated PR Dispatch, Transactional Rollback.
+- **G09.4 (Next Phase):** Enterprise Governance Automation & Final Operational Maturity Verification.

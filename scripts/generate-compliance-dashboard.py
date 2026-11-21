@@ -333,6 +333,7 @@ def generate_compliance_report(
     fleet_root: Path,
     telemetry_path: Optional[Path] = None,
     drift_dir: Optional[Path] = None,
+    campaign_file: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Generates the full fleet compliance summary."""
     manifest = load_fleet_manifest(manifest_path)
@@ -398,6 +399,33 @@ def generate_compliance_report(
         "fleet_drift_verdict": "DRIFT_DETECTED" if any(r["drift_assessment"]["verdict"] == "DRIFT_DETECTED" for r in drift_assessed) else ("CLEAN" if drift_assessed else "NOT_EVALUATED"),
     }
 
+    campaign_summary = None
+    if campaign_file:
+        if os.path.islink(campaign_file) or campaign_file.is_symlink():
+            raise ValueError(f"Security rejection: campaign file '{campaign_file}' is a symlink.")
+        if campaign_file.is_file():
+            try:
+                c_data = json.loads(campaign_file.read_text(encoding="utf-8"))
+                stages = {s.get("stage_name"): s for s in c_data.get("stages", [])}
+                canary_s = stages.get("canary", {})
+                prog_s = stages.get("progressive", {})
+                total_w = sum(len(s.get("consumers", [])) for s in c_data.get("stages", []))
+                ver_w = sum(sum(1 for c in s.get("consumers", []) if c.get("status") == "VERIFIED") for s in c_data.get("stages", []))
+                campaign_summary = {
+                    "active": True,
+                    "campaign_id": c_data.get("campaign_id"),
+                    "title": c_data.get("title"),
+                    "target_platform_sha": c_data.get("target_platform_sha"),
+                    "status": c_data.get("status"),
+                    "created_at": c_data.get("created_at"),
+                    "canary_status": canary_s.get("status", "UNKNOWN"),
+                    "progressive_status": prog_s.get("status", "UNKNOWN"),
+                    "total_workloads": total_w,
+                    "verified_workloads": ver_w,
+                }
+            except Exception as e:
+                campaign_summary = {"active": False, "error": f"Failed reading campaign file: {e}"}
+
     return {
         "schema_version": "1.0",
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -416,6 +444,7 @@ def generate_compliance_report(
             "fleet_status": fleet_status,
         },
         "drift_summary": drift_summary,
+        "campaign_summary": campaign_summary,
         "consumers": reports,
     }
 
@@ -450,9 +479,31 @@ def render_markdown_dashboard(data: Dict[str, Any]) -> str:
             f"| **Infrastructure State Drift** | **{drift_s.get('clean_consumers')}/{drift_s.get('total_assessed')} Clean** | 100% Synchronized | {drift_badge} |"
         )
 
+    camp_s = data.get("campaign_summary")
+    if camp_s and camp_s.get("active"):
+        c_status = camp_s.get("status", "UNKNOWN")
+        st_icon = "🟢" if c_status == "COMPLETED" else ("🟡" if "IN_PROGRESS" in c_status or c_status == "CANARY_VERIFIED" else ("🔄" if c_status == "ROLLED_BACK" else "ℹ️"))
+        canary_badge = "🟢 PASS" if camp_s.get("canary_status") == "VERIFIED" else ("🟡 PENDING" if camp_s.get("canary_status") in {"PENDING", "RUNNING"} else "🔴 FAILED")
+        prog_badge = "🟢 PASS" if camp_s.get("progressive_status") == "VERIFIED" else ("🟡 PENDING" if camp_s.get("progressive_status") in {"PENDING", "RUNNING"} else "🔴 FAILED")
+        roll_badge = "🟢 COMPLETE" if camp_s.get("verified_workloads") == camp_s.get("total_workloads") else "🟡 IN_PROGRESS"
+
+        lines.extend([
+            "",
+            "## 2. Active Fleet Upgrade Campaign",
+            "",
+            "| Campaign Attribute | Value | Target / Requirement | Status |",
+            "| :--- | :---: | :---: | :---: |",
+            f"| **Campaign ID** | `{camp_s.get('campaign_id')}` | Active Staged Campaign | ℹ️ ACTIVE |",
+            f"| **Target Platform Release SHA** | `{camp_s.get('target_platform_sha', '')[:7]}` | Pinned Release Commit | 🟢 VALID |",
+            f"| **Campaign Lifecycle Status** | **`{c_status}`** | COMPLETED | {st_icon} {c_status} |",
+            f"| **Canary Rollout Gate** | **`{camp_s.get('canary_status')}`** | VERIFIED | {canary_badge} |",
+            f"| **Progressive Batch Rollout** | **`{camp_s.get('progressive_status')}`** | VERIFIED | {prog_badge} |",
+            f"| **Workload Rollout Velocity** | **{camp_s.get('verified_workloads')} / {camp_s.get('total_workloads')} Workloads** | 100% Verified | {roll_badge} |",
+        ])
+
     lines.extend([
         "",
-        "## 2. Multi-Tenant Workload Posture",
+        "## 2. Multi-Tenant Workload Posture" if not (camp_s and camp_s.get("active")) else "## 3. Multi-Tenant Workload Posture",
         "",
         "| Consumer ID | Workload / Repo | Adapter | P1 (Contract) | P2 (Immutability) | P3 (Security) | P4 (Permissions) | P5 (Drift) | Total Score | Status |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
@@ -467,7 +518,7 @@ def render_markdown_dashboard(data: Dict[str, Any]) -> str:
 
     lines.extend([
         "",
-        "## 3. Governance Findings & Recommendations",
+        "## 3. Governance Findings & Recommendations" if not (camp_s and camp_s.get("active")) else "## 4. Governance Findings & Recommendations",
         "",
     ])
 
@@ -792,6 +843,10 @@ def parse_args() -> argparse.Namespace:
         "--drift-dir",
         help="Optional directory containing per-consumer drift report JSON files (G09.2)",
     )
+    parser.add_argument(
+        "--campaign-file",
+        help="Optional path to active upgrade campaign JSON state file (G09.3)",
+    )
     return parser.parse_args()
 
 
@@ -802,6 +857,7 @@ def main() -> int:
     fleet_r = Path(args.fleet_root)
     telemetry_p = Path(args.telemetry_path) if args.telemetry_path else None
     drift_d = Path(args.drift_dir) if args.drift_dir else None
+    campaign_f = Path(args.campaign_file) if args.campaign_file else None
 
     try:
         report_data = generate_compliance_report(
@@ -809,6 +865,7 @@ def main() -> int:
             fleet_root=fleet_r,
             telemetry_path=telemetry_p,
             drift_dir=drift_d,
+            campaign_file=campaign_f,
         )
     except Exception as e:
         sys.stderr.write(f"[ERROR] Compliance report generation failed: {e}\n")

@@ -5354,6 +5354,257 @@ else
   record_fail "Drift Adversarial Test Suite [15/15]: Test suite" "One or more tests in test_drift_detection.py failed"
 fi
 
+# ==============================================================================
+# SECTION 24: Automated Upgrade Campaigns & Lifecycle Tracking (G09.3)
+# ==============================================================================
+log_header "24. Automated Upgrade Campaigns & Lifecycle Tracking (G09.3)"
+
+# Test 24.1: scripts/orchestrate-campaign.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/orchestrate-campaign.py" && -x "${REPO_ROOT}/scripts/orchestrate-campaign.py" ]]; then
+  record_pass "Campaign Tooling [1/15]: scripts/orchestrate-campaign.py exists and is executable"
+else
+  record_fail "Campaign Tooling [1/15]: Script check" "scripts/orchestrate-campaign.py missing or not executable"
+fi
+
+# Test 24.2: orchestrate-campaign.py --help runs cleanly
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" --help >/dev/null 2>&1; then
+  record_pass "Campaign CLI Help [2/15]: orchestrate-campaign.py --help runs with zero exit code"
+else
+  record_fail "Campaign CLI Help [2/15]: Help execution" "orchestrate-campaign.py --help failed"
+fi
+
+# Test 24.3: Campaign creation produces valid Schema v1.0 JSON state file
+TMP_CAMP_FILE="$(mktemp -t campaign_XXXXXX.json)"
+VALID_SHA="be51718f06a2662099500a710e93e6e8201b4f1c"
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1; then
+  if grep -q '"schema_version": "1.0"' "${TMP_CAMP_FILE}" && \
+     grep -q '"status": "PLANNED"' "${TMP_CAMP_FILE}" && \
+     grep -q '"target_platform_sha": "'"${VALID_SHA}"'"' "${TMP_CAMP_FILE}"; then
+    record_pass "Campaign Creation [3/15]: --create initializes valid Schema v1.0 campaign state"
+  else
+    record_fail "Campaign Creation [3/15]: Content check" "Campaign state missing required schema fields or status"
+  fi
+else
+  record_fail "Campaign Creation [3/15]: Execution" "Failed executing --create"
+fi
+
+# Test 24.4: SHA-256 cryptographic anti-tampering verification
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --status \
+    --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1; then
+  # Tamper with file
+  sed -i 's/"status": "PLANNED"/"status": "COMPLETED"/' "${TMP_CAMP_FILE}"
+  if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" --status --campaign-file "${TMP_CAMP_FILE}" >/dev/null 2>&1; then
+    record_pass "Campaign Anti-Tampering [4/15]: SHA-256 signature verification rejects tampered state file"
+  else
+    record_fail "Campaign Anti-Tampering [4/15]: Integrity check" "Tampered campaign file was unexpectedly accepted"
+  fi
+else
+  record_fail "Campaign Anti-Tampering [4/15]: Status execution" "Failed reading status before tampering"
+fi
+rm -f "${TMP_CAMP_FILE}"
+
+# Test 24.5: Rejection of invalid commit SHAs
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "main" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "/tmp/should_fail.json" >/dev/null 2>&1; then
+  record_pass "SHA Validation [5/15]: Non-40-char SHA (mutable branch name) rejected with error"
+else
+  record_fail "SHA Validation [5/15]: Input check" "Invalid SHA 'main' was unexpectedly accepted"
+fi
+rm -f "/tmp/should_fail.json"
+
+# Test 24.6: Rejection of symbolic link campaign state files
+TMP_REAL_CAMP="$(mktemp -t real_camp_XXXXXX.json)"
+TMP_SYM_CAMP="${TMP_REAL_CAMP}.sym"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_REAL_CAMP}" >/dev/null 2>&1
+ln -s "${TMP_REAL_CAMP}" "${TMP_SYM_CAMP}"
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --status \
+    --campaign-file "${TMP_SYM_CAMP}" >/dev/null 2>&1; then
+  record_pass "Symlink Rejection [6/15]: Symlink campaign file rejected by security boundary"
+else
+  record_fail "Symlink Rejection [6/15]: Security check" "Symlink campaign file was unexpectedly accepted"
+fi
+rm -f "${TMP_REAL_CAMP}" "${TMP_SYM_CAMP}"
+
+# Test 24.7: Fail-closed Canary Gate blocks progressive rollout when canary is PENDING
+TMP_GATE_CAMP="$(mktemp -t gate_camp_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_GATE_CAMP}" >/dev/null 2>&1
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage progressive \
+    --campaign-file "${TMP_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" >/dev/null 2>&1; then
+  record_pass "Canary Gate [7/15]: Progressive rollout strictly blocked when canary is PENDING (fail-closed)"
+else
+  record_fail "Canary Gate [7/15]: Gate check" "Progressive rollout succeeded despite unverified canary"
+fi
+
+# Test 24.8: Successful Canary stage execution in dry-run mode
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --dry-run >/dev/null 2>&1; then
+  record_pass "Canary Execution [8/15]: Canary stage executes and passes verification in dry-run mode"
+else
+  record_fail "Canary Execution [8/15]: Execution" "Canary stage execution failed in dry-run mode"
+fi
+
+# Test 24.9: Simulated PR metadata and branch name generation
+TMP_PR_JSON="$(mktemp -t pr_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_PR_JSON}" \
+    --dry-run >/dev/null 2>&1
+if grep -q '"branch": "infraflow/upgrade-' "${TMP_PR_JSON}" && \
+   grep -q '"simulated_pr_url": "https://github.com/' "${TMP_PR_JSON}"; then
+  record_pass "Simulated PR Dispatch [9/15]: Simulated PR metadata and branch name generated deterministically"
+else
+  record_fail "Simulated PR Dispatch [9/15]: Content check" "Simulated PR branch or URL missing in output JSON"
+fi
+rm -f "${TMP_PR_JSON}" "${TMP_GATE_CAMP}"
+
+# Test 24.10: Full end-to-end staged rollout reaches COMPLETED status
+TMP_E2E_CAMP="$(mktemp -t e2e_camp_XXXXXX.json)"
+TMP_E2E_OUT="$(mktemp -t e2e_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_E2E_CAMP}" >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage all \
+    --campaign-file "${TMP_E2E_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_E2E_OUT}" \
+    --dry-run >/dev/null 2>&1; then
+  if grep -q '"status": "COMPLETED"' "${TMP_E2E_OUT}"; then
+    record_pass "End-to-End Staged Rollout [10/15]: --execute-stage all reaches COMPLETED status across fleet"
+  else
+    record_fail "End-to-End Staged Rollout [10/15]: Status check" "Campaign status was not COMPLETED after execute-stage all"
+  fi
+else
+  record_fail "End-to-End Staged Rollout [10/15]: Execution" "Failed running --execute-stage all"
+fi
+rm -f "${TMP_E2E_CAMP}" "${TMP_E2E_OUT}"
+
+# Test 24.11: Pre-flight critical drift gate enforcement
+TMP_DRIFT_GATE_CAMP="$(mktemp -t drift_gate_camp_XXXXXX.json)"
+TMP_MOCK_DRIFT_DIR="$(mktemp -d -t mock_drift_XXXXXX)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_DRIFT_GATE_CAMP}" >/dev/null 2>&1
+echo '{"summary": {"verdict": "DRIFT_DETECTED", "severity_counts": {"CRITICAL": 1}}}' > "${TMP_MOCK_DRIFT_DIR}/consumer-networking.json"
+if ! python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_DRIFT_GATE_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --drift-dir "${TMP_MOCK_DRIFT_DIR}" \
+    --dry-run >/dev/null 2>&1; then
+  record_pass "Drift Gate Enforcement [11/15]: Critical state drift halts rollout pre-flight (fail-closed)"
+else
+  record_fail "Drift Gate Enforcement [11/15]: Gate check" "Campaign executed despite critical state drift"
+fi
+rm -rf "${TMP_DRIFT_GATE_CAMP}" "${TMP_MOCK_DRIFT_DIR}"
+
+# Test 24.12: Campaign rollback restores rollback_sha
+TMP_RB_CAMP="$(mktemp -t rb_camp_XXXXXX.json)"
+TMP_RB_OUT="$(mktemp -t rb_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_RB_CAMP}" >/dev/null 2>&1
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --execute-stage canary \
+    --campaign-file "${TMP_RB_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_RB_CAMP}" \
+    --dry-run >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --rollback \
+    --rollback-reason "Section 24 verification test rollback" \
+    --campaign-file "${TMP_RB_CAMP}" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --output-json "${TMP_RB_OUT}" \
+    --dry-run >/dev/null 2>&1; then
+  if grep -q '"status": "ROLLED_BACK"' "${TMP_RB_OUT}" && \
+     grep -q '"executed": true' "${TMP_RB_OUT}"; then
+    record_pass "Rollback Orchestration [12/15]: --rollback transitions status to ROLLED_BACK and records audit"
+  else
+    record_fail "Rollback Orchestration [12/15]: Content check" "Rollback output missing status ROLLED_BACK or executed true"
+  fi
+else
+  record_fail "Rollback Orchestration [12/15]: Execution" "Failed executing --rollback"
+fi
+rm -f "${TMP_RB_CAMP}" "${TMP_RB_OUT}"
+
+# Test 24.13: Telemetry emission for campaign lifecycle events
+TMP_CAMP_TEL="$(mktemp -t camp_tel_XXXXXX.jsonl)"
+TMP_TEL_CAMP="$(mktemp -t tel_camp_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_TEL_CAMP}" \
+    --emit-telemetry \
+    --telemetry-file "${TMP_CAMP_TEL}" >/dev/null 2>&1
+if [[ -s "${TMP_CAMP_TEL}" ]] && grep -q '"event_type": "campaign_planned"' "${TMP_CAMP_TEL}"; then
+  record_pass "Campaign Telemetry Integration [13/15]: --emit-telemetry emitted schema v1.0 campaign events"
+else
+  record_fail "Campaign Telemetry Integration [13/15]: Content check" "Emitted telemetry missing campaign_planned event"
+fi
+rm -f "${TMP_CAMP_TEL}" "${TMP_TEL_CAMP}"
+
+# Test 24.14: Central Compliance Dashboard ingests campaign file
+TMP_DASH_CAMP="$(mktemp -t dash_camp_XXXXXX.json)"
+TMP_DASH_OUT="$(mktemp -t dash_out_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/orchestrate-campaign.py" \
+    --create \
+    --target-sha "${VALID_SHA}" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --campaign-file "${TMP_DASH_CAMP}" >/dev/null 2>&1
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}/fixtures/consumers" \
+    --campaign-file "${TMP_DASH_CAMP}" \
+    --output-json "${TMP_DASH_OUT}" >/dev/null 2>&1; then
+  if grep -q '"campaign_summary"' "${TMP_DASH_OUT}" && grep -q '"active": true' "${TMP_DASH_OUT}"; then
+    record_pass "Compliance Dashboard Campaign Integration [14/15]: Dashboard ingests active campaign state"
+  else
+    record_fail "Compliance Dashboard Campaign Integration [14/15]: Content check" "Dashboard output missing campaign_summary"
+  fi
+else
+  record_fail "Compliance Dashboard Campaign Integration [14/15]: Execution" "Failed executing compliance dashboard with campaign-file"
+fi
+rm -f "${TMP_DASH_CAMP}" "${TMP_DASH_OUT}"
+
+# Test 24.15: Dedicated 32-test upgrade campaigns test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_upgrade_campaigns.py" >/dev/null 2>&1; then
+  record_pass "Campaign Adversarial Test Suite [15/15]: Dedicated 32-test suite passed (test_upgrade_campaigns.py)"
+else
+  record_fail "Campaign Adversarial Test Suite [15/15]: Test suite" "One or more tests in test_upgrade_campaigns.py failed"
+fi
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 

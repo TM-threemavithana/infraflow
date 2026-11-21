@@ -38,6 +38,13 @@ VALID_EVENT_TYPES = {
     "drift_assessment_failed",
     "fleet_audit_completed",
     "compliance_evaluated",
+    "campaign_planned",
+    "campaign_stage_started",
+    "campaign_canary_verified",
+    "campaign_stage_completed",
+    "campaign_rollback_executed",
+    "campaign_completed",
+    "campaign_aborted",
 }
 
 # Common sensitive data patterns to scrub

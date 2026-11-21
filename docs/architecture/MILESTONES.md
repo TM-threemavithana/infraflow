@@ -19,7 +19,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, centralized governance, fleet upgrade orchestration, and release v0.6.0. | **PASS (Completed)** |
-| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1 & G09.2 Implemented) |
+| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1, G09.2 & G09.3 Implemented) |
 
 ---
 
@@ -427,14 +427,31 @@ Milestone G09.2 establishes a provider-neutral, multi-cloud Continuous State & S
 
 ---
 
-## 28. Quality Gate Definitions
+## 28. Milestone G09.3 — Acceptance Criteria (Automated Upgrade Campaigns & Lifecycle Tracking)
+
+Milestone G09.3 implements Pillar 4 of the InfraFlow Operational Maturity Architecture, establishing a production-grade Fleet Upgrade Campaign Orchestration & Lifecycle Tracking Engine ([`scripts/orchestrate-campaign.py`](file:///home/tharuka/projects/infraflow/scripts/orchestrate-campaign.py)). It introduces cryptographically signed Schema v1.0 upgrade campaigns, a 7-stage deterministic lifecycle state machine (PLANNED to COMPLETED/ROLLED_BACK), fail-closed Canary Gate enforcement, pre-flight and post-flight quality gates (contract compatibility, compliance scoring >=90%, and zero critical drift), transactional rollback orchestration, zero-cost simulated PR and branch generation, telemetry bus event emissions, and central compliance dashboard integration ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G09-17** | Upgrade Campaign Security & Lifecycle Specification | Document multi-stage rollout architecture, 7-stage lifecycle state machine, Canary Gate model, and STRIDE threat mitigations in [`docs/operations/G09-UPGRADE-CAMPAIGNS.md`](file:///home/tharuka/projects/infraflow/docs/operations/G09-UPGRADE-CAMPAIGNS.md). | Documentation audit & architecture review | **PASS (G09.3 Implemented)** |
+| **AC-G09-18** | Deterministic Campaign Initialization & Signatures | Implement `--create` generating Schema v1.0 JSON state files with deterministic SHA-256 signature calculated over canonical state. Anti-tampering rejection verified. | Unit tests & CLI execution | **PASS (G09.3 Implemented)** |
+| **AC-G09-19** | Fail-Closed Canary Gate Enforcement | Enforce strict isolation blocking `--execute-stage progressive` whenever canary workloads are `PENDING`, `RUNNING`, or `FAILED` (`CanaryGateError`). | Adversarial unit tests & CLI validation | **PASS (G09.3 Implemented)** |
+| **AC-G09-20** | Pre-Flight Compliance & State Drift Gates | Enforce caller workflow contract compatibility, mandatory compliance score threshold (>=90%), and halting of workloads exhibiting `CRITICAL` state drift. | Unit tests & drift fixtures | **PASS (G09.3 Implemented)** |
+| **AC-G09-21** | Zero-Cost Simulated PR & Branch Dispatch | Generate deterministic simulated PR metadata (`infraflow/upgrade-<short>`), PR numbers, and review markdown summaries with zero live external API calls. | Schema check & PR body audit | **PASS (G09.3 Implemented)** |
+| **AC-G09-22** | Transactional & Emergency Rollback Orchestration | Implement `--rollback` and `--auto-rollback` restoring registered `rollback_sha` references and updating campaign state to `ROLLED_BACK`. | Dry-run & transactional tests | **PASS (G09.3 Implemented)** |
+| **AC-G09-23** | Telemetry & Compliance Dashboard Integration | Extend telemetry schema with campaign lifecycle events and integrate `--campaign-file` into central compliance dashboard reporting. | Telemetry validation & dashboard render | **PASS (G09.3 Implemented)** |
+| **AC-G09-24** | Dedicated Adversarial Test Suite & Harness Integration | Author 32-test suite [`tests/test_upgrade_campaigns.py`](file:///home/tharuka/projects/infraflow/tests/test_upgrade_campaigns.py) and add Section 24 to `scripts/validate-local.sh` (15 new checks, raising platform quality checks to 392). | `validate-local.sh` (392/392 passed) | **PASS (G09.3 Implemented)** |
+
+---
+
+## 29. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G09:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (377/377 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (392/392 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).
