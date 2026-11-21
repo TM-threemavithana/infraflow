@@ -74,7 +74,11 @@ jobs:
         id: drift_check
         run: |
           echo "Executing central fleet drift check..."
-          python3 scripts/plan-fleet-upgrade.py --manifest config/fleet-manifest.yaml --check-drift
+          python3 scripts/plan-fleet-upgrade.py \
+            --manifest config/fleet-manifest.yaml \
+            --fleet-root fleet \
+            --platform-dir . \
+            --check-drift
 
       - name: "Generate Central Fleet Compliance Dashboard"
         id: generate_dashboard
