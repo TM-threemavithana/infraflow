@@ -78,10 +78,18 @@ Every cloud adapter must conform to the following architectural standard:
   }
   ```
 
-#### State Management
+#### State Management & AWS S3 Backend Contract
 - **Backend Type**: `s3`
-- **Bucket Configuration**: Amazon S3 with SSE-KMS encryption, versioning enabled, public access blocked.
-- **Locking**: Amazon DynamoDB table with `LockID` string partition key.
+- **Bucket Configuration**: Amazon S3 with SSE-KMS encryption (`kms_key_id`), object versioning enabled, and public access blocked.
+- **State Locking Evolution & Standards**:
+  - **Historical Mechanism**: Amazon DynamoDB table with `LockID` string partition key (`dynamodb_table = "..."`).
+  - **Modern Standard**: Native S3 conditional write locking via `use_lockfile = true` (introduced in Terraform 1.10+). S3 conditional writes enforce concurrency safety by writing a `.tflock` object with `If-None-Match: *`, eliminating the need for a separate DynamoDB table.
+  - **Deprecated Status of DynamoDB**: In modern Terraform deployments (>= 1.10), DynamoDB locking is deprecated in favor of native S3 locking. InfraFlow maintains legacy DynamoDB compatibility for historical configurations while recommending `use_lockfile = true`.
+  - **Cloud-Free Simulation Notice**: In InfraFlow's cloud-free model ($0.00 cloud spend), speculative planning executes with `terraform init -backend=false`. Therefore, neither live DynamoDB nor native S3 locks are acquired, released, or modified. Live remote state migration or alterations to the baseline backend design are deferred to future authorized milestones.
+
+#### Cloud Adapter Simulation Limitations
+- All three adapters (AWS, GCP, Azure) execute speculative planning in a cloud-free environment without live credentials.
+- Real infrastructure provisioning, apply/destroy execution, live cloud token exchange, and authenticated remote backend access are strictly simulated and fail-closed.
 
 ---
 

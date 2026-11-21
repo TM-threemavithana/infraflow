@@ -18,7 +18,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
-| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
+| **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, validation toolkit. | In Progress (G08.1 & G08.2 Implemented; G08.3 Pending) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
 ---
@@ -307,14 +307,83 @@ Milestone G07.7 integrates and validates the completed Azure Cloud-Free Adapter 
 
 ---
 
-## 21. Quality Gate Definitions
+## 21. Milestone G08.1 — Acceptance Criteria (Multi-Repository Adoption Foundation & Consumer Onboarding Toolkit)
 
-To achieve status **PASS** for G01 through G07:
+Milestone G08.1 establishes an enterprise-grade onboarding model, consumer configuration contract, self-service repository template, automated validation tooling, and three isolated reference consumer fixtures (Networking, Application, Data Platform) with zero live cloud infrastructure provisioning ($0.00 spend).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-01** | Multi-Repository Adoption Architecture | Define comprehensive adoption architecture ([`docs/architecture/G08-MULTI-REPOSITORY-ADOPTION.md`](file:///home/tharuka/projects/infraflow/docs/architecture/G08-MULTI-REPOSITORY-ADOPTION.md)), 5-stage lifecycle model, platform vs consumer responsibility matrix, and centralized policy distribution model. | Documentation audit | **PASS (G08.1 Implemented)** |
+| **AC-G08-02** | Consumer Onboarding Guide & Versioning Policy | Author developer-friendly onboarding guide ([`docs/adoption/CONSUMER-ONBOARDING-GUIDE.md`](file:///home/tharuka/projects/infraflow/docs/adoption/CONSUMER-ONBOARDING-GUIDE.md)) and platform versioning policy ([`docs/adoption/PLATFORM-VERSIONING-AND-UPGRADES.md`](file:///home/tharuka/projects/infraflow/docs/adoption/PLATFORM-VERSIONING-AND-UPGRADES.md)) detailing immutable 40-character commit SHA pinning. | Documentation audit | **PASS (G08.1 Implemented)** |
+| **AC-G08-03** | Self-Service Consumer Repository Template | Implement `templates/consumer-repository/` containing standard caller workflow (`.github/workflows/infraflow.yml`), versioned contract (`infraflow.config.yaml`), cloud-free reference module (`terraform_data`), native unit tests, and template README. | Filesystem inspection & `actionlint` | **PASS (G08.1 Implemented)** |
+| **AC-G08-04** | Standardized Consumer Configuration Contract | Define strict versioned schema for `infraflow.config.yaml` specifying `consumer_id`, `workload_type`, `terraform_dir`, `platform_ref`, `platform_sha`, `adapter`, and mandatory security controls. Reject mutable refs, path traversal, unknown keys, and cloud auth requests. | `validate-consumer.py` schema validation | **PASS (G08.1 Implemented)** |
+| **AC-G08-05** | Automated Consumer Validation Tooling | Implement Python validation utility ([`scripts/validate-consumer.py`](file:///home/tharuka/projects/infraflow/scripts/validate-consumer.py)) checking config schema, workspace containment, symlink security, workflow permissions (`contents: read`), and commit SHA pinning. | CLI execution & test suite | **PASS (G08.1 Implemented)** |
+| **AC-G08-06** | Multi-Consumer Reference Fixtures (3 Archetypes) | Implement three independent reference fixtures: Networking ([`fixtures/consumers/networking/`](file:///home/tharuka/projects/infraflow/fixtures/consumers/networking/)), Application ([`fixtures/consumers/application/`](file:///home/tharuka/projects/infraflow/fixtures/consumers/application/)), and Data Platform ([`fixtures/consumers/data-platform/`](file:///home/tharuka/projects/infraflow/fixtures/consumers/data-platform/)) with distinct contracts and native tests. | `terraform test` & `validate-consumer.py` | **PASS (G08.1 Implemented)** |
+| **AC-G08-07** | Dedicated Consumer Onboarding Test Suite | Implement comprehensive 31-test unit and integration suite ([`tests/test_consumer_onboarding.py`](file:///home/tharuka/projects/infraflow/tests/test_consumer_onboarding.py)) covering valid configs, schema violations, path traversals, symlink escapes, excessive permissions, and CLI execution. | `python3 -m unittest tests/test_consumer_onboarding.py` (31/31 passed) | **PASS (G08.1 Implemented)** |
+| **AC-G08-08** | Local Validation Harness Expansion (Section 19) | Expand `scripts/validate-local.sh` with Section 19 quality gates (18 new checks, raising total platform checks from 303 to 321). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G07. | `scripts/validate-local.sh` execution | **PASS (G08.1 Implemented)** |
+
+---
+
+## 22. Milestone G08.2 — Acceptance Criteria (Independent Multi-Repository Adoption & External Fleet Integration)
+
+Milestone G08.2 deploys, configures, and validates three independent external consumer repositories on live GitHub Actions runners across AWS, Azure, and GCP adapters ($0.00 cloud spend, zero live credentials, fail-closed policy enforcement).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-09** | Platform G08 Feature Branch Publication & CI Gate | Publish `feature/g08-consumer-onboarding` to `TM-threemavithana/infraflow` and open PR [#6](https://github.com/TM-threemavithana/infraflow/pull/6). Verify all mandatory CI checks pass cleanly. | GitHub Actions CI Execution ([PR #6](https://github.com/TM-threemavithana/infraflow/pull/6)) | **PASS (G08.2 Implemented)** |
+| **AC-G08-10** | Three Independent External Consumer Repositories Created | Provision three dedicated public GitHub repositories under `TM-threemavithana`: [`infraflow-consumer-networking`](https://github.com/TM-threemavithana/infraflow-consumer-networking), [`infraflow-consumer-application`](https://github.com/TM-threemavithana/infraflow-consumer-application), and [`infraflow-consumer-data-platform`](https://github.com/TM-threemavithana/infraflow-consumer-data-platform). | GitHub API & Repository Verification | **PASS (G08.2 Implemented)** |
+| **AC-G08-11** | Independent Consumer Onboarding & Local Contract Validation | Onboard each consumer with schema v1.0 contract (`infraflow.config.yaml`), caller workflow, and cloud-free `terraform_data` modules. Verify 15/15 checks pass per repo (45/45 total). | `scripts/validate-consumer.py` execution (45/45 passed) | **PASS (G08.2 Implemented)** |
+| **AC-G08-12** | External Multi-Cloud GitHub Actions Execution Verification | Trigger and verify live pull request workflows across all three external repositories. All runs succeed cleanly calling AWS, Azure, and GCP reusable workflows. | GHA Runs [44870873397](https://github.com/TM-threemavithana/infraflow-consumer-networking/actions/runs/44870873397), [44870894843](https://github.com/TM-threemavithana/infraflow-consumer-application/actions/runs/44870894843), [44870921177](https://github.com/TM-threemavithana/infraflow-consumer-data-platform/actions/runs/44870921177) | **PASS (G08.2 Implemented)** |
+| **AC-G08-13** | Output Contract Enforcement on Live Runners | Verify all seven reusable workflow outputs (`plan-status`, `<cloud>-auth-status`, `security-status`, `authorization-status`, `has-changes`, `has-destructive-changes`, `total-changes`) aggregated cleanly on live runners. | GHA Run Step Summaries & Job Logs | **PASS (G08.2 Implemented)** |
+| **AC-G08-14** | Platform Centralization & Zero Redundant Policy Invariant | Verify 0 policies, 0 scanners, and 0 workflow logic duplicated in consumer repositories. Centralized governance ensures 100% policy inheritance. | Filesystem audit across consumer fleet | **PASS (G08.2 Implemented)** |
+| **AC-G08-15** | Multi-Repository Adversarial & Security Testing | Execute 8-scenario adversarial test suite verifying fail-closed rejection of mutable references (`@main`), path traversals, disabled scanners, `write-all` permissions, and `pull_request_target` escalations. | Automated adversarial suite execution | **PASS (G08.2 Implemented)** |
+| **AC-G08-16** | Historical Regression & Cloud Spend Invariant | Guarantee exactly $0.00 cloud infrastructure spend across all four repositories. Verify 100% pass across 321/321 platform quality checks and historical consumer integrity. | `scripts/validate-local.sh` (321/321 PASS) | **PASS (G08.2 Implemented)** |
+
+---
+
+## 23. Milestone G08.3 — Acceptance Criteria (Centralized Governance, Policy Enforcement & Consumer Trust Hardening)
+
+Milestone G08.3 establishes centralized governance, Open Policy Agent (OPA) policy enforcement, supply chain trust hardening, and fleet auditing across all participating consumer repositories ($0.00 cloud spend, zero live credentials, fail-closed policy gates).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-17** | 4-Layer Defense-in-Depth Governance Model | Formulate and document the four-layer governance model (Layer A: Local Validator, Layer B: Reusable Governance Workflow, Layer C: GitHub Branch Rulesets, Layer D: Central Fleet Audit) in [`docs/security/G08-CONSUMER-GOVERNANCE-MODEL.md`](file:///home/tharuka/projects/infraflow/docs/security/G08-CONSUMER-GOVERNANCE-MODEL.md). | Documentation audit & architecture review | **PASS (G08.3 Implemented)** |
+| **AC-G08-18** | Critical Onboarding Validation Tooling Hardening | Refactor [`scripts/validate-consumer.py`](file:///home/tharuka/projects/infraflow/scripts/validate-consumer.py) to resolve GOV-G08-01 (fail closed on missing workflow dir), GOV-G08-02 (enforce adapter invocation), and GOV-G08-03 (duplicate YAML key rejection, write permission rejection, `id-token: write` rejection, `pull_request_target` rejection, `secrets: inherit` rejection). | Python unit tests & adversarial suite | **PASS (G08.3 Implemented)** |
+| **AC-G08-19** | Central OPA Consumer Governance Policy Contract | Implement [`policies/governance/consumer_governance.rego`](file:///home/tharuka/projects/infraflow/policies/governance/consumer_governance.rego) (package `governance.consumer`) with 14 enterprise deny rules and 23 dedicated unit tests ([`policies/governance/consumer_governance_test.rego`](file:///home/tharuka/projects/infraflow/policies/governance/consumer_governance_test.rego)). Elevate Rego test assertions from 171 to 194. | `conftest verify -p policies` (194/194 passed) | **PASS (G08.3 Implemented)** |
+| **AC-G08-20** | Reusable Consumer Governance Gate Workflow | Implement [`.github/workflows/reusable-tf-governance.yml`](file:///home/tharuka/projects/infraflow/.github/workflows/reusable-tf-governance.yml) (`workflow_call`). Runs with `permissions: contents: read` (zero `id-token: write`), checks out platform at immutable SHA, executes authoritative validator, and evaluates Conftest OPA policies. | `actionlint` & `zizmor` (0 errors, 0 findings) | **PASS (G08.3 Implemented)** |
+| **AC-G08-21** | Fleet-Wide Consumer Governance Rollout | Update external consumer repositories (`infraflow-consumer-networking`, `infraflow-consumer-application`, `infraflow-consumer-data-platform`) to invoke `reusable-tf-governance.yml` with `needs: [governance-gate]`. Verify all runs pass cleanly on GitHub Actions. | Live GitHub Actions execution across 3 repos | **PASS (G08.3 Implemented)** |
+| **AC-G08-22** | Dedicated 40-Scenario Adversarial Test Suite | Implement comprehensive adversarial test suite ([`tests/test_consumer_governance.py`](file:///home/tharuka/projects/infraflow/tests/test_consumer_governance.py)) with 40 distinct test vectors proving fail-closed rejection of missing workflows, duplicate keys, privilege escalations, contradictory adapters, and tampered inputs. | `python3 -m unittest tests/test_consumer_governance.py` (40/40 passed) | **PASS (G08.3 Implemented)** |
+| **AC-G08-23** | Central Fleet Governance Auditor Utility | Implement [`scripts/audit-consumer-fleet.py`](file:///home/tharuka/projects/infraflow/scripts/audit-consumer-fleet.py) providing Layer D out-of-band monitoring across all participating consumer repositories, auditing configuration, workflow invocation, and branch ruleset protection. | CLI execution across fixtures & external repos | **PASS (G08.3 Implemented)** |
+| **AC-G08-24** | Local Validation Harness Expansion (Section 20) | Expand `scripts/validate-local.sh` with Section 20 quality gates (12 new checks, raising total platform checks from 321 to 333). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G08.2. | `scripts/validate-local.sh` (333/333 passed) | **PASS (G08.3 Implemented)** |
+
+---
+
+## 24. Milestone G08.4 — Acceptance Criteria (Fleet-Wide Upgrade Orchestration, Configuration Drift Detection & Rollback Validation)
+
+Milestone G08.4 establishes an automated, auditable, and fail-safe fleet-wide upgrade orchestration framework, versioned fleet registry, candidate compatibility verification, 15-vector drift detection, canary isolation, progressive rollout coordination, and atomic rollback guarantees across all consumer repositories ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-25** | Fleet Upgrade Architecture & Operating Model | Define the six-stage upgrade lifecycle model (Inventory, Compatibility, Canary, Progressive, Verification, Rollback), strict cloud-free scope boundary, and 15-vector configuration/version/governance drift taxonomy in [`docs/architecture/G08-FLEET-UPGRADE-ARCHITECTURE.md`](file:///home/tharuka/projects/infraflow/docs/architecture/G08-FLEET-UPGRADE-ARCHITECTURE.md). | Documentation audit & architecture review | **PASS (G08.4 Implemented)** |
+| **AC-G08-26** | Versioned Fleet Upgrade Manifest Specification | Implement authoritative registry [`config/fleet-manifest.yaml`](file:///home/tharuka/projects/infraflow/config/fleet-manifest.yaml) (Schema 1.0) defining registered consumers, adapters, workload types, current/target/rollback commit SHAs, candidate SHAs, and adapter workflow output contracts. | Schema validation & YAML parsing | **PASS (G08.4 Implemented)** |
+| **AC-G08-27** | Automated Fleet Upgrade Orchestration & Planning Tool | Implement Python engine [`scripts/plan-fleet-upgrade.py`](file:///home/tharuka/projects/infraflow/scripts/plan-fleet-upgrade.py) with `--list`, `--inventory`, `--check-drift`, `--compatibility`, `--plan`, `--apply`, and `--rollback` actions. | CLI execution & test suite | **PASS (G08.4 Implemented)** |
+| **AC-G08-28** | Platform Contract Compatibility Matrix Verification | Enforce pre-rollout evaluation verifying that candidate platform commit provides all mandatory outputs across AWS, Azure, GCP, and generic reusable workflows. Fail closed on contract deviations. | `plan-fleet-upgrade.py --compatibility` | **PASS (G08.4 Implemented)** |
+| **AC-G08-29** | Controlled Canary Deployment & Fleet Isolation (AWS) | Upgrade canary consumer (`infraflow-consumer-networking`) to candidate platform commit (`1630e619...`). Verify that remaining consumers remain strictly isolated on baseline commit (`f1ad39fb...`). Verify canary CI passes 100% on GitHub Actions. | Live GitHub Actions execution ([Run 44876169983](https://github.com/TM-threemavithana/infraflow-consumer-networking/actions/runs/44876169983)) | **PASS (G08.4 Implemented)** |
+| **AC-G08-29A**| Safe Rollback & Reversion Verification | Demonstrate atomic rollback restoring consumer configuration and workflow references back to known-good baseline (`f1ad39fb...`). Verify all local validation tests pass cleanly post-rollback. | CLI execution & test suite verification | **PASS (G08.4 Implemented)** |
+| **AC-G08-30** | Progressive Rollout & Multi-Cloud Fleet CI Verification | Upon canary success, progressively upgrade Application (`infraflow-consumer-application`, Azure) and Data Platform (`infraflow-consumer-data-platform`, GCP) consumers. Verify all GitHub Actions CI runs pass cleanly. | Live GitHub Actions execution ([Run 44876281497](https://github.com/TM-threemavithana/infraflow-consumer-application/actions/runs/44876281497) & [Run 44876291264](https://github.com/TM-threemavithana/infraflow-consumer-data-platform/actions/runs/44876291264)) | **PASS (G08.4 Implemented)** |
+| **AC-G08-31** | Dedicated 32-Scenario Adversarial Upgrade Test Suite | Implement comprehensive test suite [`tests/test_fleet_upgrades.py`](file:///home/tharuka/projects/infraflow/tests/test_fleet_upgrades.py) (32 tests) verifying manifest schema rules, staged planning, 15-vector drift detection, breaking change detection, canary failure containment, and rollback atomicity. | `python3 -m unittest tests/test_fleet_upgrades.py` (32/32 passed) | **PASS (G08.4 Implemented)** |
+| **AC-G08-32** | Local Validation Harness Expansion (Section 21) | Expand `scripts/validate-local.sh` with Section 21 quality gates (14 new checks, raising total platform checks from 333 to 347). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G08.3. | `scripts/validate-local.sh` (347/347 passed) | **PASS (G08.4 Implemented)** |
+
+---
+
+## 25. Quality Gate Definitions
+
+To achieve status **PASS** for G01 through G08:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (303/303 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (347/347 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

@@ -77,9 +77,9 @@ InfraFlow provides standardized reusable workflows callable via GitHub Actions `
 | [`.github/workflows/reusable-tf-security.yml`](.github/workflows/reusable-tf-security.yml) | DevSecOps security scanning | `scan-severity`, `policy-directory` | TFLint, Trivy, Zizmor, Conftest/OPA |
 | [`.github/workflows/reusable-tf-plan.yml`](.github/workflows/reusable-tf-plan.yml) | Speculative plan & governance | `environment`, `var-file` | Dual scanners, Sigstore attestation, redaction |
 | [`.github/workflows/reusable-tf-apply.yml`](.github/workflows/reusable-tf-apply.yml) | Protected apply simulation | `plan-file`, `plan-integrity-digest` | KMS envelope encryption, state lineage, atomic consumption |
-| [`.github/workflows/reusable-tf-aws.yml`](.github/workflows/reusable-tf-aws.yml) | AWS cloud adapter | `aws-region`, `role-to-assume`, `s3-bucket` | IAM OIDC validation, S3 encryption & locking |
-| [`.github/workflows/reusable-tf-gcp.yml`](.github/workflows/reusable-tf-gcp.yml) | GCP cloud adapter | `workload-identity-provider`, `service-account`, `gcs-bucket` | WIF OIDC validation, GCS UBLA & versioning |
-| [`.github/workflows/reusable-tf-azure.yml`](.github/workflows/reusable-tf-azure.yml) | Azure cloud adapter | `client-id`, `tenant-id`, `storage-account` | Entra ID OIDC validation, Azure AD auth, TLS 1.2+ |
+| [`.github/workflows/reusable-tf-aws.yml`](.github/workflows/reusable-tf-aws.yml) | AWS cloud adapter | `aws-region`, `role-to-assume`, `backend-bucket` | IAM OIDC validation, S3 encryption & locking |
+| [`.github/workflows/reusable-tf-gcp.yml`](.github/workflows/reusable-tf-gcp.yml) | GCP cloud adapter | `gcp-project-id`, `service-account`, `backend-bucket` | WIF OIDC validation, GCS UBLA & versioning |
+| [`.github/workflows/reusable-tf-azure.yml`](.github/workflows/reusable-tf-azure.yml) | Azure cloud adapter | `azure-subscription-id`, `azure-client-id`, `azure-storage-account-name` | Entra ID OIDC validation, Azure AD auth, TLS 1.2+ |
 
 ---
 
@@ -106,7 +106,10 @@ InfraFlow delivers architectural parity across all three major cloud providers i
 
 ## Consuming Repository Quick Start
 
-To call InfraFlow reusable workflows from an external repository, reference an immutable release tag (`@v0.5.0`) or commit SHA:
+To call InfraFlow reusable workflows from an external repository, reference an immutable 40-character commit SHA (recommended for production: `@2ce0ddd5de01530b6bf7aba749f0081620fb9b27`) or official release tag (`@v0.5.0`):
+
+> [!TIP]
+> **Immutability Best Practice**: While git release tags (`@v0.5.0`) provide convenient human-readable references, git tags are technically mutable references in git. For true cryptographically immutable dependency pinning and supply-chain security compliance (SLSA / CIS), consumers should pin the full 40-character commit SHA in caller workflows.
 
 ```yaml
 name: "Terraform Multi-Cloud CI"
@@ -123,7 +126,7 @@ permissions:
 jobs:
   validate:
     name: "Validate Terraform"
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@v0.5.0
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
       terraform-version: "1.10.4"
       working-directory: "terraform"
@@ -134,7 +137,7 @@ jobs:
   azure-plan:
     name: "Azure Speculative Plan (Cloud-Free)"
     needs: [validate]
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@v0.5.0
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27 # v0.5.0
     with:
       working-directory: "terraform/azure"
       environment: "dev"
