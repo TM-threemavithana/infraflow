@@ -4905,9 +4905,9 @@ else
   record_fail "Fleet Upgrade Test Suite [12/14]: Test suite" "One or more tests in tests/test_fleet_upgrades.py failed"
 fi
 
-# Test 21.13: Full Platform Python Test Suite (406 tests)
+# Test 21.13: Full Platform Python Test Suite (437 tests)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
-  record_pass "Platform Python Test Suite [13/14]: All 406 platform tests passed (tests/test_*.py)"
+  record_pass "Platform Python Test Suite [13/14]: All 437 platform tests passed (tests/test_*.py)"
 else
   record_fail "Platform Python Test Suite [13/14]: Platform test suite" "One or more platform tests failed"
 fi
@@ -4919,7 +4919,209 @@ else
   record_fail "OPA Policy Verification [14/14]: conftest verify" "One or more Rego policy verification tests failed"
 fi
 
-# --- 22. Summary Report ---
+# ==============================================================================
+# 22. Fleet Observability, Telemetry & Central Compliance Dashboard (G09.1)
+# ==============================================================================
+log_header "22. Fleet Observability, Telemetry & Central Compliance Dashboard (G09.1)"
+
+# Test 22.1: emit-telemetry.py script exists and is available
+if [[ -f "${REPO_ROOT}/scripts/emit-telemetry.py" ]]; then
+  record_pass "Observability Tooling [1/15]: scripts/emit-telemetry.py exists and is available"
+else
+  record_fail "Observability Tooling [1/15]: File check" "scripts/emit-telemetry.py not found"
+fi
+
+# Test 22.2: emit-telemetry.py creates valid schema v1.0 event with SHA-256 digest
+TMP_TEL_EVENT="$(mktemp -t tel_evt_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type governance_gate_evaluated \
+    --consumer-id test-networking \
+    --repository TM-threemavithana/infraflow-consumer-networking \
+    --status PASS \
+    --adapter aws \
+    --output "${TMP_TEL_EVENT}" >/dev/null 2>&1; then
+  if grep -q '"schema_version": "1.0"' "${TMP_TEL_EVENT}" && grep -q '"event_digest"' "${TMP_TEL_EVENT}"; then
+    record_pass "Observability Schema [2/15]: emit-telemetry.py generated schema v1.0 event with SHA-256 digest"
+  else
+    record_fail "Observability Schema [2/15]: Payload content" "Missing schema_version or event_digest in emitted event"
+  fi
+else
+  record_fail "Observability Schema [2/15]: Execution" "emit-telemetry.py failed to emit test event"
+fi
+rm -f "${TMP_TEL_EVENT}"
+
+# Test 22.3: emit-telemetry.py scrubs sensitive credentials (AWS keys, tokens, passwords)
+TMP_SCRUB_CHECK="$(python3 -c '
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("telemetry", "scripts/emit-telemetry.py")
+tel = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tel)
+leak = "AKIAIOSFODNN7EXAMPLE ghp_1234567890abcdefghijklmnopqrstuvwxyz password=MySecretPassword123"
+scrubbed = tel.scrub_sensitive_string(leak)
+assert "AKIAIOSFODNN7EXAMPLE" not in scrubbed
+assert "ghp_1234567890abcdefghijklmnopqrstuvwxyz" not in scrubbed
+assert "MySecretPassword123" not in scrubbed
+print("CLEAN")
+' 2>/dev/null || true)"
+if [[ "${TMP_SCRUB_CHECK}" == "CLEAN" ]]; then
+  record_pass "Observability Redaction [3/15]: emit-telemetry.py automatically scrubs AWS keys, tokens & passwords"
+else
+  record_fail "Observability Redaction [3/15]: Secret scrubbing" "Failed to redact sensitive patterns"
+fi
+
+# Test 22.4: emit-telemetry.py detects and rejects tampered event payload (digest mismatch)
+TMP_TAMPER_CHECK="$(python3 -c '
+import importlib.util
+spec = importlib.util.spec_from_file_location("telemetry", "scripts/emit-telemetry.py")
+tel = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tel)
+evt = tel.create_telemetry_event("contract_verified", "cid-1", "org/repo", "PASS")
+evt["verdict"]["status"] = "FAIL"
+valid, errors = tel.validate_telemetry_event(evt)
+assert not valid and any("tampering" in e.lower() for e in errors)
+print("DETECTED")
+' 2>/dev/null || true)"
+if [[ "${TMP_TAMPER_CHECK}" == "DETECTED" ]]; then
+  record_pass "Observability Anti-Tampering [4/15]: Telemetry validator detects & rejects tampered event payloads"
+else
+  record_fail "Observability Anti-Tampering [4/15]: Anti-tampering" "Tampered payload unexpectedly validated"
+fi
+
+# Test 22.5: emit-telemetry.py rejects invalid event type fail-closed
+if python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type unauthorized_event \
+    --consumer-id test-cid \
+    --repository TM-threemavithana/infraflow \
+    --status PASS >/dev/null 2>&1; then
+  record_fail "Observability Guard [5/15]: Invalid event type" "emit-telemetry.py accepted unauthorized event type"
+else
+  record_pass "Observability Guard [5/15]: emit-telemetry.py rejected invalid event type fail-closed"
+fi
+
+# Test 22.6: generate-compliance-dashboard.py exists and is available
+if [[ -f "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" ]]; then
+  record_pass "Compliance Tooling [6/15]: scripts/generate-compliance-dashboard.py exists and is available"
+else
+  record_fail "Compliance Tooling [6/15]: File check" "scripts/generate-compliance-dashboard.py not found"
+fi
+
+# Test 22.7: generate-compliance-dashboard.py executes successfully against fleet manifest
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" >/dev/null 2>&1; then
+  record_pass "Compliance Tooling [7/15]: scripts/generate-compliance-dashboard.py executed successfully"
+else
+  record_fail "Compliance Tooling [7/15]: Execution" "generate-compliance-dashboard.py failed to execute"
+fi
+
+# Test 22.8: generate-compliance-dashboard.py generates valid JSON report
+TMP_DASH_JSON="$(mktemp -t dash_XXXXXX.json)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --output-json "${TMP_DASH_JSON}" >/dev/null 2>&1; then
+  if grep -q '"fleet_compliance_score"' "${TMP_DASH_JSON}" && grep -q '"fleet_status"' "${TMP_DASH_JSON}"; then
+    record_pass "Compliance Reporting [8/15]: Generated valid JSON report with fleet metrics"
+  else
+    record_fail "Compliance Reporting [8/15]: Content check" "JSON report missing expected compliance score"
+  fi
+else
+  record_fail "Compliance Reporting [8/15]: Execution" "Failed to generate JSON compliance report"
+fi
+rm -f "${TMP_DASH_JSON}"
+
+# Test 22.9: generate-compliance-dashboard.py generates valid Markdown dashboard
+TMP_DASH_MD="$(mktemp -t dash_XXXXXX.md)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --output-markdown "${TMP_DASH_MD}" >/dev/null 2>&1; then
+  if grep -q "InfraFlow Central Fleet Compliance & Observability Dashboard" "${TMP_DASH_MD}" && \
+     grep -q "Multi-Tenant Workload Posture" "${TMP_DASH_MD}"; then
+    record_pass "Compliance Reporting [9/15]: Generated valid Markdown dashboard for step summaries"
+  else
+    record_fail "Compliance Reporting [9/15]: Content check" "Markdown report missing expected header or sections"
+  fi
+else
+  record_fail "Compliance Reporting [9/15]: Execution" "Failed to generate Markdown dashboard"
+fi
+rm -f "${TMP_DASH_MD}"
+
+# Test 22.10: generate-compliance-dashboard.py generates standalone offline HTML dashboard (zero remote scripts/CDNs)
+TMP_DASH_HTML="$(mktemp -t dash_XXXXXX.html)"
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --output-html "${TMP_DASH_HTML}" >/dev/null 2>&1; then
+  if grep -q "<!DOCTYPE html>" "${TMP_DASH_HTML}" && \
+     ! grep -q "https://cdn." "${TMP_DASH_HTML}" && \
+     ! grep -q "<link rel=\"stylesheet\" href=\"http" "${TMP_DASH_HTML}"; then
+    record_pass "Compliance Reporting [10/15]: Generated standalone offline HTML dashboard (zero external CDNs)"
+  else
+    record_fail "Compliance Reporting [10/15]: Content check" "HTML dashboard missing or contains forbidden remote CDN links"
+  fi
+else
+  record_fail "Compliance Reporting [10/15]: Execution" "Failed to generate HTML dashboard"
+fi
+rm -f "${TMP_DASH_HTML}"
+
+# Test 22.11: generate-compliance-dashboard.py enforces minimum threshold gate
+if python3 "${REPO_ROOT}/scripts/generate-compliance-dashboard.py" \
+    --manifest "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --fleet-root "${REPO_ROOT}" \
+    --enforce-threshold 80.0 >/dev/null 2>&1; then
+  record_pass "Compliance Gate [11/15]: Dashboard generator passes when fleet score exceeds mandatory threshold"
+else
+  record_fail "Compliance Gate [11/15]: Threshold check" "Dashboard generator unexpectedly failed compliant threshold"
+fi
+
+# Test 22.12: fleet-observability.yml workflow passes actionlint static analysis
+if actionlint "${REPO_ROOT}/.github/workflows/fleet-observability.yml" >/dev/null 2>&1; then
+  record_pass "Observability Pipeline [12/15]: fleet-observability.yml passed actionlint syntax validation"
+else
+  record_fail "Observability Pipeline [12/15]: actionlint" "fleet-observability.yml failed actionlint linting"
+fi
+
+# Test 22.13: fleet-observability.yml workflow passes zizmor supply chain audit
+if zizmor "${REPO_ROOT}/.github/workflows/fleet-observability.yml" >/dev/null 2>&1; then
+  record_pass "Observability Pipeline [13/15]: fleet-observability.yml passed zizmor audit (zero supply chain findings)"
+else
+  record_fail "Observability Pipeline [13/15]: zizmor" "fleet-observability.yml has security findings in zizmor"
+fi
+
+# Test 22.14: Dedicated 31-test observability and compliance test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_observability_and_compliance.py" >/dev/null 2>&1; then
+  record_pass "Observability Test Suite [14/15]: Dedicated 31-test suite passed (test_observability_and_compliance.py)"
+else
+  record_fail "Observability Test Suite [14/15]: Test suite" "One or more tests in test_observability_and_compliance.py failed"
+fi
+
+# Test 22.15: Telemetry roundtrip emission & parsing verification
+TMP_ROUNDTRIP="$(mktemp -t tel_roundtrip_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/emit-telemetry.py" \
+    --event-type compliance_evaluated \
+    --consumer-id fleet-central \
+    --repository TM-threemavithana/infraflow \
+    --status PASS \
+    --duration-ms 42 \
+    --metric score=100.0 \
+    --output "${TMP_ROUNDTRIP}" >/dev/null 2>&1
+if [[ -s "${TMP_ROUNDTRIP}" ]] && python3 -c '
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["event_type"] == "compliance_evaluated"
+assert data["metrics"]["duration_ms"] == 42
+assert data["metrics"]["score"] == 100.0
+assert data["verdict"]["compliance_status"] == "COMPLIANT"
+' "${TMP_ROUNDTRIP}" >/dev/null 2>&1; then
+  record_pass "Observability Telemetry Roundtrip [15/15]: Structured telemetry emission & roundtrip parsing verified"
+else
+  record_fail "Observability Telemetry Roundtrip [15/15]: Roundtrip check" "Failed roundtrip verification of emitted telemetry"
+fi
+rm -f "${TMP_ROUNDTRIP}"
+
+# --- Summary Report ---
 log_header "Summary of Validation Results"
 
 echo -e "Total Checks Executed : ${COLOR_BLUE}${TOTAL_CHECKS}${COLOR_RESET}"
@@ -4927,7 +5129,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08/G09 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"

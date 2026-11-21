@@ -19,7 +19,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, centralized governance, fleet upgrade orchestration, and release v0.6.0. | **PASS (Completed)** |
-| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
+| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1 Implemented) |
 
 ---
 
@@ -393,14 +393,31 @@ Milestone G08.5 finalizes G08 by merging upstream platform PR #6, repinning all 
 
 ---
 
-## 26. Quality Gate Definitions
+## 26. Milestone G09.1 — Acceptance Criteria (Fleet Observability, Structured Telemetry & Central Compliance Dashboard Foundation)
 
-To achieve status **PASS** for G01 through G08:
+Milestone G09.1 establishes the foundational observability and compliance architecture for the InfraFlow enterprise platform, introducing standardized OpenTelemetry/RFC 5424 structured event schemas, automated sensitive secret scrubbing, deterministic SHA-256 event integrity protection, an offline 5-pillar compliance scoring engine, multi-format dashboard exporters (JSON, GitHub Step Summary Markdown, offline standalone HTML), and a supply-chain hardened scheduled observability pipeline ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G09-01** | G09 Operational Maturity Architecture Specification | Formulate and document the four-pillar operational maturity framework (Observability & Telemetry, Compliance Dashboard, Drift Detection, Automated Upgrades), event taxonomy, scoring engine mathematics, and STRIDE security model in [`docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md`](file:///home/tharuka/projects/infraflow/docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md). | Documentation audit & architecture review | **PASS (G09.1 Implemented)** |
+| **AC-G09-02** | Structured Telemetry Emission Engine | Implement standardized telemetry CLI utility [`scripts/emit-telemetry.py`](file:///home/tharuka/projects/infraflow/scripts/emit-telemetry.py) generating schema v1.0 JSON-Lines events across 10 lifecycle events (`governance_gate_evaluated`, `security_scan_completed`, `speculative_plan_completed`, `contract_verified`, etc.) with ISO 8601 timestamps and execution context. | Schema validation & CLI execution | **PASS (G09.1 Implemented)** |
+| **AC-G09-03** | Sensitive Data Redaction & Anti-Tampering Engine | Enforce multi-tier regex redaction (AWS access keys, GitHub tokens `ghp_`/`github_pat_`, JWTs, private keys, passwords) and compute deterministic SHA-256 integrity digests over canonicalized payload fields to detect out-of-band tampering. | Python unit tests & adversarial vectors | **PASS (G09.1 Implemented)** |
+| **AC-G09-04** | Central Compliance Scoring Engine & Multi-Format Exporters | Implement [`scripts/generate-compliance-dashboard.py`](file:///home/tharuka/projects/infraflow/scripts/generate-compliance-dashboard.py) executing a deterministic 5-pillar scoring algorithm (20% weight per pillar: Contract Validity, Supply Chain Immutability, Mandatory Scanners, Least Privilege, Version Drift) exporting JSON, Markdown step summaries, and standalone offline-ready HTML dashboards. | CLI verification across fixtures & repos | **PASS (G09.1 Implemented)** |
+| **AC-G09-05** | Central Fleet Observability Workflow Pipeline | Implement [`.github/workflows/fleet-observability.yml`](file:///home/tharuka/projects/infraflow/.github/workflows/fleet-observability.yml) running on weekly schedule (`0 6 * * 1`) and `workflow_dispatch` with strict least privilege (`contents: read`), zero live cloud credentials, generating compliance dashboards and publishing step summaries. | `actionlint` & `zizmor` (0 errors, 0 findings) | **PASS (G09.1 Implemented)** |
+| **AC-G09-06** | Dedicated 31-Scenario Observability & Compliance Test Suite | Implement comprehensive test suite [`tests/test_observability_and_compliance.py`](file:///home/tharuka/projects/infraflow/tests/test_observability_and_compliance.py) (31 tests) verifying event schemas, secret scrubbing, anti-tampering verification, scoring algorithms, drift impacts, and threshold enforcement gates. | `python3 -m unittest tests/test_observability_and_compliance.py` (31/31 passed) | **PASS (G09.1 Implemented)** |
+| **AC-G09-07** | Local Validation Harness Expansion (Section 22) | Expand `scripts/validate-local.sh` with Section 22 quality gates (15 new checks, raising total platform checks from 347 to 362). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G08.5. | `scripts/validate-local.sh` (362/362 passed) | **PASS (G09.1 Implemented)** |
+| **AC-G09-08** | Milestone Verification Evidence Report | Produce comprehensive milestone verification report [`docs/evidence/G09/G09-1-OBSERVABILITY-AND-COMPLIANCE-REPORT.md`](file:///home/tharuka/projects/infraflow/docs/evidence/G09/G09-1-OBSERVABILITY-AND-COMPLIANCE-REPORT.md) capturing all test results, architecture invariants, security posture, and zero-spend compliance. | Documentation review & audit | **PASS (G09.1 Implemented)** |
+
+---
+
+## 27. Quality Gate Definitions
+
+To achieve status **PASS** for G01 through G09:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (347/347 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (362/362 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).
