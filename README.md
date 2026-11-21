@@ -6,7 +6,7 @@
 [![Quality Gates](https://img.shields.io/badge/Quality_Gates-407%2F407_PASS-brightgreen.svg)](#21-testing-and-verification)
 [![Python Tests](https://img.shields.io/badge/Python_Tests-535_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![OPA Rego](https://img.shields.io/badge/OPA_Policies-194_Passing-brightgreen.svg)](#21-testing-and-verification)
-[![Release](https://img.shields.io/badge/Release-v0.6.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
+[![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
 ---
 
@@ -566,7 +566,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 ## 24. Current Project Status
 
-- **Current Published Release**: [`v0.6.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.6.0)
+- **Current Published Release**: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0)
 - **Active Development Branch**: `feature/g09-operational-maturity`
 - **Completed Phases**: G01 through G09.4 (Foundation through Enterprise Operational Maturity)
 - **Quality Gates**: 407/407 automated validation checks passing locally and in CI.
