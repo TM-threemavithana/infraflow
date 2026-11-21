@@ -87,18 +87,40 @@ Every cloud adapter must conform to the following architectural standard:
 
 ### 3.2 Azure Adapter Specification (`reusable-tf-azure.yml`)
 
-#### Authentication Flow
-- **Mechanism**: Microsoft Entra ID Workload Identity Federation.
-- **Action**: `azure/login` (SHA pinned).
-- **Federated Credential**:
-  - **Issuer**: `https://token.actions.githubusercontent.com`
-  - **Subject**: `repo:<ORG>/<REPO>:ref:refs/heads/main`
-  - **Audience**: `api://AzureADTokenExchange`
+#### Authentication Flow & Trust Model
+- **Mechanism**: Microsoft Entra ID Workload Identity Federation (WIF) via GitHub Actions OIDC.
+- **Action**: `azure/login` (immutable commit SHA pinned).
+- **Entra ID Configuration & Security Invariants**:
+  - **Issuer Validation**: Strictly `https://token.actions.githubusercontent.com`.
+  - **Audience Validation**: Strictly `api://AzureADTokenExchange`. Wildcard (`*`) audiences are strictly rejected.
+  - **Subject Claim Formats**:
+    - Standard branch format: `repo:<ORG>/<REPO>:ref:refs/heads/<BRANCH>`
+    - Standard environment format: `repo:<ORG>/<REPO>:environment:<ENV>`
+    - Immutable format (post-July 15, 2026): `repo-id:<REPO_ID>:ref:refs/heads/<BRANCH>` or `repo-id:<REPO_ID>:environment:<ENV>`
+  - **Zero Wildcards**: Wildcard subjects (`*`) are strictly prohibited in federated identity credentials.
+  - **Repository Confinement**: Subject must match authorized repository identity (`TM-threemavithana/infraflow`).
+  - **Least-Privilege RBAC**: Service principal bound to `Storage Blob Data Contributor` on the storage account / container. Primitive `Owner` or `Contributor` roles at subscription or management group scope are strictly rejected.
+- **Fail-Closed Simulation Invariant**:
+  - In Milestone G07.5, live Azure authentication is strictly disabled (`enable-azure-auth: false`). Setting `enable-azure-auth: true` triggers an immediate fail-closed security error.
+  - Untrusted pull requests (`pull_request`, `pull_request_target`) are strictly prohibited from enabling live authentication (SEC-02 fail-closed).
 
-#### State Management
+#### State Management & Azure Blob Storage Backend Contract
 - **Backend Type**: `azurerm`
-- **Storage**: Azure Storage Account Blob Container with immutable blob versioning.
-- **Locking**: Native Azure Blob Lease locking mechanism.
+- **Storage Account & Container Security Controls**:
+  - **Data Plane Authentication**: `use_azuread_auth = true` or `use_oidc = true` enforced; static `access_key` strictly prohibited.
+  - **Shared Access Keys Disabled**: `shared_access_key_enabled = false` enforced (CIS Azure 5.1).
+  - **Private Container Access**: `container_access_type = "private"` enforced (CIS Azure 5.2).
+  - **Network Access Control**: Unrestricted public access disabled (`public_network_access_enabled = false` or `network_rules default_action = 'Deny'`).
+  - **Minimum TLS Version**: `min_tls_version = "TLS1_2"` or `"TLS1_3"` enforced (NIST SP 800-52).
+  - **Blob Versioning**: `blob_properties.versioning_enabled = true` enforced for state recovery.
+  - **Infrastructure Encryption**: Supported and validated.
+- **State Locking**: Native Azure Blob Storage renewable 60-second lease locking (`LeaseAlreadyPresent` concurrency protection).
+- **State Namespace Isolation**: Backend key must include environment namespace (`env/prod/...`) to prevent cross-environment state collisions.
+
+#### Reference Implementation & Testing
+- **Module Location**: `examples/azure-reference-module/`
+- **Mock Provider Testing**: Uses native Terraform `>= 1.7.0` provider mocking (`mock_provider "azurerm" {}`) in `tests/azure_test.tftest.hcl` for deterministic offline verification without cloud spend ($0.00).
+- **Full Guide**: See `docs/adapters/azure-adapter-guide.md` for comprehensive architecture, policy specifications, and verification steps.
 
 ---
 

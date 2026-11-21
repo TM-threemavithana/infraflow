@@ -1,0 +1,820 @@
+name: "InfraFlow Reusable Microsoft Azure Terraform Adapter"
+
+# ==============================================================================
+# INFRAFLOW TIER 2 CLOUD ADAPTER: MICROSOFT AZURE
+# 
+# Security Invariants:
+# 1. Passwordless Microsoft Entra ID Workload Identity Federation (OIDC) Architecture.
+# 2. Zero Static Credentials: Long-lived Client Secrets, Certificates, or Access Keys are strictly prohibited.
+# 3. Cloud-Free Isolation: Milestone G07.5 enables cloud-free offline validation only.
+#    Live Azure authentication is strictly disabled in G07.5 to guarantee zero cloud spend.
+# 4. Strict SEC-02 Compliance: Untrusted pull requests cannot request Azure credentials.
+# 5. Remote State Integrity: Standardized on native Azure Blob Storage with native Blob Lease locking.
+# 6. Immutable SHA Pinning: All third-party actions pinned to full 40-character SHAs.
+# ==============================================================================
+
+on:
+  workflow_call:
+    inputs:
+      azure-subscription-id:
+        description: "Target Azure Subscription ID (UUIDv4)"
+        required: true
+        type: string
+      azure-tenant-id:
+        description: "Microsoft Entra ID Directory (Tenant) ID (UUIDv4)"
+        required: false
+        default: ""
+        type: string
+      azure-client-id:
+        description: "Microsoft Entra ID Application (Client) ID for OIDC federation"
+        required: false
+        default: ""
+        type: string
+      azure-resource-group-name:
+        description: "Azure Resource Group containing state storage account"
+        required: false
+        default: ""
+        type: string
+      backend-resource-group:
+        description: "Alias for azure-resource-group-name"
+        required: false
+        default: ""
+        type: string
+      azure-region:
+        description: "Target Azure region (e.g. eastus, westeurope)"
+        required: false
+        default: "eastus"
+        type: string
+      azure-storage-account-name:
+        description: "Azure Storage Account name for state storage (3-24 lowercase alphanumeric)"
+        required: false
+        default: ""
+        type: string
+      backend-storage-account:
+        description: "Alias for azure-storage-account-name"
+        required: false
+        default: ""
+        type: string
+      azure-storage-container-name:
+        description: "Azure Blob Storage container name for state storage (3-63 lowercase alphanumeric and hyphens)"
+        required: false
+        default: "tfstate"
+        type: string
+      backend-container:
+        description: "Alias for azure-storage-container-name"
+        required: false
+        default: "tfstate"
+        type: string
+      azure-backend-key:
+        description: "Blob path for state file (e.g. env/production/terraform.tfstate)"
+        required: false
+        default: "terraform.tfstate"
+        type: string
+      backend-key:
+        description: "Alias for azure-backend-key"
+        required: false
+        default: "terraform.tfstate"
+        type: string
+      terraform-version:
+        description: "Terraform version to use (e.g. 1.10.4). Must be >= 1.6.0"
+        required: false
+        default: "1.10.4"
+        type: string
+      working-directory:
+        description: "Relative path to the Terraform module or root configuration"
+        required: false
+        default: "."
+        type: string
+      var-file:
+        description: "Optional relative path to a .tfvars file for planning"
+        required: false
+        default: ""
+        type: string
+      environment:
+        description: "Target deployment environment context for policy evaluation"
+        required: false
+        default: "production"
+        type: string
+      enable-azure-auth:
+        description: "Opt-in to authenticate against Azure via OIDC (strictly disabled in Milestone G07.5; must be false)"
+        required: false
+        default: false
+        type: boolean
+      enable-policy-evaluation:
+        description: "Whether to execute Conftest / OPA policy checks on plan JSON"
+        required: false
+        default: true
+        type: boolean
+      policy-directory:
+        description: "Optional relative path to additional consumer Rego policies directory"
+        required: false
+        default: "policies"
+        type: string
+      enable-trivy:
+        description: "Whether to execute Trivy IaC misconfiguration scanning"
+        required: false
+        default: true
+        type: boolean
+      severity-threshold:
+        description: "Severity levels that trigger failure. InfraFlow strictly mandates 'HIGH,CRITICAL'."
+        required: false
+        default: "HIGH,CRITICAL"
+        type: string
+      fail-on-destructive:
+        description: "Whether to fail plan generation if deletions or replacements occur"
+        required: false
+        default: true
+        type: boolean
+
+    outputs:
+      plan-status:
+        description: "Outcome of speculative plan generation (success, failure, skipped)"
+        value: ${{ jobs.summary.outputs.plan-status }}
+      azure-auth-status:
+        description: "Outcome of Azure authentication (success, skipped, disabled)"
+        value: ${{ jobs.summary.outputs.azure-auth-status }}
+      security-status:
+        description: "Outcome of security scanning and policy evaluation"
+        value: ${{ jobs.summary.outputs.security-status }}
+      authorization-status:
+        description: "Outcome of the verified adapter gate (authorized, not-applicable, rejected)"
+        value: ${{ jobs.summary.outputs.authorization-status }}
+      has-changes:
+        description: "Whether the plan contains modifying resource changes"
+        value: ${{ jobs.summary.outputs.has-changes }}
+      has-destructive-changes:
+        description: "Whether the plan contains deletions or replacements"
+        value: ${{ jobs.summary.outputs.has-destructive-changes }}
+      total-changes:
+        description: "Total count of modifying resource changes"
+        value: ${{ jobs.summary.outputs.total-changes }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================================
+  # JOB 1: VALIDATE & GUARD INPUTS
+  # ============================================================================
+  validate-inputs:
+    name: "Validate & Guard Azure Adapter Inputs"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: "Security Guard: Sanitize and Validate Azure Adapter Inputs"
+        id: guard
+        env:
+          INPUT_SUBSCRIPTION_ID: ${{ inputs.azure-subscription-id }}
+          INPUT_TENANT_ID: ${{ inputs.azure-tenant-id }}
+          INPUT_CLIENT_ID: ${{ inputs.azure-client-id }}
+          INPUT_AZURE_RG: ${{ inputs.azure-resource-group-name }}
+          INPUT_BACKEND_RG: ${{ inputs.backend-resource-group }}
+          INPUT_REGION: ${{ inputs.azure-region }}
+          INPUT_AZURE_SA: ${{ inputs.azure-storage-account-name }}
+          INPUT_BACKEND_SA: ${{ inputs.backend-storage-account }}
+          INPUT_AZURE_CONTAINER: ${{ inputs.azure-storage-container-name }}
+          INPUT_BACKEND_CONTAINER: ${{ inputs.backend-container }}
+          INPUT_AZURE_KEY: ${{ inputs.azure-backend-key }}
+          INPUT_BACKEND_KEY: ${{ inputs.backend-key }}
+          INPUT_VERSION: ${{ inputs.terraform-version }}
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+          INPUT_ENV: ${{ inputs.environment }}
+          ENABLE_AZURE_AUTH: ${{ inputs.enable-azure-auth }}
+          ENABLE_POLICY_EVAL: ${{ inputs.enable-policy-evaluation }}
+          INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
+          INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+          FAIL_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_REF: ${{ github.ref }}
+          WORKFLOW_REPO: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          echo "=============================================================================="
+          echo ">>> InfraFlow Azure Adapter Security Guard & Input Validation"
+          echo "=============================================================================="
+
+          # Resolve aliased inputs
+          RG_NAME="${INPUT_AZURE_RG:-${INPUT_BACKEND_RG:-${INPUT_RESOURCE_GROUP_NAME:-}}}"
+          STORAGE_ACCOUNT="${INPUT_AZURE_SA:-${INPUT_BACKEND_SA:-${INPUT_STORAGE_ACCOUNT_NAME:-}}}"
+          CONTAINER_NAME="${INPUT_AZURE_CONTAINER:-${INPUT_BACKEND_CONTAINER:-${INPUT_STORAGE_CONTAINER_NAME:-tfstate}}}"
+          STATE_KEY="${INPUT_AZURE_KEY:-${INPUT_BACKEND_KEY:-terraform.tfstate}}"
+          INPUT_REGION="${INPUT_REGION:-eastus}"
+
+          # 1. Milestone Invariant: Live Azure authentication is strictly disabled in G07.5
+          if [[ "${ENABLE_AZURE_AUTH}" == "true" ]]; then
+            echo "::error::Security Violation: Live Azure authentication is strictly disabled in Milestone G07.5 (cloud-free simulation only). Set enable-azure-auth: false."
+            exit 1
+          fi
+
+          # 2. SEC-02 Compliance: Untrusted pull requests cannot request live credentials
+          if [[ "${EVENT_NAME}" == "pull_request" || "${EVENT_NAME}" == "pull_request_target" ]]; then
+            if [[ "${ENABLE_AZURE_AUTH}" == "true" ]]; then
+              echo "::error::Security Violation (SEC-02): Pull request events are strictly forbidden from enabling Azure authentication."
+              exit 1
+            fi
+          fi
+
+          # 3. Mandatory Security Gates Cannot Be Disabled
+          if [[ "${ENABLE_POLICY_EVAL}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory policy evaluation (enable-policy-evaluation: false) is strictly prohibited in enterprise workflows."
+            exit 1
+          fi
+
+          if [[ "${ENABLE_TRIVY}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Trivy IaC scanning (enable-trivy: false) is strictly prohibited in enterprise workflows."
+            exit 1
+          fi
+
+          # 4. Reusable Workflow Reference Pinning & Trust Boundary
+          EXPECTED_PLATFORM_REPO="TM-threemavithana/infraflow"
+          if [[ -n "${WORKFLOW_REPO:-}" && "${WORKFLOW_REPO}" != "${EXPECTED_PLATFORM_REPO}" ]]; then
+            echo "::error::Security Violation: Reusable Azure workflow must originate from trusted repository '${EXPECTED_PLATFORM_REPO}', got '${WORKFLOW_REPO}'."
+            exit 1
+          fi
+
+          if [[ -n "${WORKFLOW_REF}" ]]; then
+            echo "Inspecting reusable workflow reference: ${WORKFLOW_REF}"
+            if [[ "${WORKFLOW_REF}" =~ ^([^@]+)@(.+)$ ]]; then
+              REF_TARGET="${BASH_REMATCH[2]}"
+              if [[ ! "${REF_TARGET}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                echo "::error::Security Violation: Reusable workflow reference must be pinned to an immutable 40-character hexadecimal commit SHA, got '${REF_TARGET}'."
+                exit 1
+              fi
+            fi
+          fi
+
+          # 5. Azure Subscription ID Validation (UUIDv4)
+          UUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          if [[ ! "${INPUT_SUBSCRIPTION_ID}" =~ ${UUID_REGEX} ]]; then
+            echo "::error::Security Violation: azure-subscription-id '${INPUT_SUBSCRIPTION_ID}' is not a valid UUID format."
+            exit 1
+          fi
+
+          # 6. Azure Tenant ID Validation (if provided)
+          if [[ -n "${INPUT_TENANT_ID}" && ! "${INPUT_TENANT_ID}" =~ ${UUID_REGEX} ]]; then
+            echo "::error::Security Violation: azure-tenant-id '${INPUT_TENANT_ID}' is not a valid UUID format."
+            exit 1
+          fi
+
+          # 7. Azure Client ID Validation (if provided)
+          if [[ -n "${INPUT_CLIENT_ID}" && ! "${INPUT_CLIENT_ID}" =~ ${UUID_REGEX} ]]; then
+            echo "::error::Security Violation: azure-client-id '${INPUT_CLIENT_ID}' is not a valid UUID format."
+            exit 1
+          fi
+
+          # 8. Resource Group Name Validation (1-90 chars, alphanumeric, underscores, hyphens, periods, parentheses, cannot end with period)
+          if [[ -n "${RG_NAME}" ]]; then
+            RG_REGEX='^[a-zA-Z0-9_().-]+$'
+            if [[ ${#RG_NAME} -gt 90 || ! "${RG_NAME}" =~ ${RG_REGEX} || "${RG_NAME}" =~ \.$ ]]; then
+              echo "::error::Security Violation: Resource group name '${RG_NAME}' contains invalid characters or ends with a period."
+              exit 1
+            fi
+          fi
+
+          # 9. Azure Region Validation (lowercase alphanumeric, e.g. eastus, westeurope)
+          REGION_REGEX='^[a-z0-9]+$'
+          if [[ ! "${INPUT_REGION}" =~ ${REGION_REGEX} ]]; then
+            echo "::error::Security Violation: azure-region '${INPUT_REGION}' contains invalid characters."
+            exit 1
+          fi
+
+          # 10. Storage Account Name Validation (3-24 characters, numbers and lowercase letters only)
+          if [[ -n "${STORAGE_ACCOUNT}" ]]; then
+            SA_REGEX='^[a-z0-9]{3,24}$'
+            if [[ ! "${STORAGE_ACCOUNT}" =~ ${SA_REGEX} ]]; then
+              echo "::error::Security Violation: azure-storage-account-name '${STORAGE_ACCOUNT}' must be 3-24 lowercase alphanumeric characters only."
+              exit 1
+            fi
+          fi
+
+          # 11. Storage Container Name Validation (3-63 lowercase alphanumeric and hyphens, no consecutive hyphens, cannot start or end with hyphen)
+          if [[ -n "${CONTAINER_NAME}" ]]; then
+            CONTAINER_REGEX='^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$'
+            if [[ ! "${CONTAINER_NAME}" =~ ${CONTAINER_REGEX} ]] || [[ "${CONTAINER_NAME}" =~ -- ]]; then
+              echo "::error::Security Violation: azure-storage-container-name '${CONTAINER_NAME}' violates Azure container naming rules."
+              exit 1
+            fi
+          fi
+
+          # 12. State Blob Key Validation (no leading slash, no traversal, valid blob name)
+          if [[ -n "${STATE_KEY}" ]]; then
+            if [[ "${STATE_KEY}" =~ ^/ ]] || [[ "${STATE_KEY}" =~ \.\. ]] || [[ "${STATE_KEY}" == *\\* ]]; then
+              echo "::error::Security Violation: azure-backend-key '${STATE_KEY}' contains path traversal or leading slash."
+              exit 1
+            fi
+          fi
+
+          # 13. Terraform Version Validation: Semantic Version >= 1.6.0
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if [[ ! "${INPUT_VERSION}" =~ ${SEMVER_REGEX} ]]; then
+            echo "::error::Validation Failed: Invalid Semantic Version format for terraform-version: '${INPUT_VERSION}'."
+            exit 1
+          fi
+
+          MAJOR_VER=$(echo "${INPUT_VERSION}" | cut -d. -f1)
+          MINOR_VER=$(echo "${INPUT_VERSION}" | cut -d. -f2)
+          if (( MAJOR_VER < 1 )) || (( MAJOR_VER == 1 && MINOR_VER < 6 )); then
+            echo "::error::Validation Failed: Terraform version '${INPUT_VERSION}' is unsupported. Minimum supported version is 1.6.0."
+            exit 1
+          fi
+
+          # 14. Working Directory & Path Traversal Validation
+          if [[ "${INPUT_DIR}" =~ ^/ ]] || [[ "${INPUT_DIR}" =~ ^~ ]]; then
+            echo "::error::Security Violation: Absolute and home-directory paths are strictly prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+          if [[ "${INPUT_DIR}" =~ \.\. ]]; then
+            echo "::error::Security Violation: Path traversal sequences ('..') are strictly prohibited: '${INPUT_DIR}'."
+            exit 1
+          fi
+          if [[ ! "${INPUT_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::Security Violation: Working directory contains forbidden characters: '${INPUT_DIR}'."
+            exit 1
+          fi
+
+          # 15. Var-File Validation (if provided)
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            if [[ "${INPUT_VAR_FILE}" =~ ^/ ]] || [[ "${INPUT_VAR_FILE}" =~ ^~ ]] || [[ "${INPUT_VAR_FILE}" =~ \.\. ]]; then
+              echo "::error::Security Violation: Path traversal or absolute paths in var-file are strictly prohibited: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_VAR_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: var-file contains forbidden characters: '${INPUT_VAR_FILE}'."
+              exit 1
+            fi
+          fi
+
+          # 16. Target Environment Context
+          if [[ ! "${INPUT_ENV}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error::Validation Failed: Environment name must contain only alphanumeric characters, hyphens, and underscores: '${INPUT_ENV}'."
+            exit 1
+          fi
+
+          # 17. Policy Directory Validation (if provided)
+          if [[ -n "${INPUT_POLICY_DIR}" ]]; then
+            if [[ "${INPUT_POLICY_DIR}" =~ ^/ ]] || [[ "${INPUT_POLICY_DIR}" =~ ^~ ]] || [[ "${INPUT_POLICY_DIR}" =~ \.\. ]]; then
+              echo "::error::Security Violation: policy-directory must be a safe relative path: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_POLICY_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: policy-directory contains forbidden characters: '${INPUT_POLICY_DIR}'."
+              exit 1
+            fi
+          fi
+
+          # 18. Security Severity Threshold Validation
+          if [[ "${INPUT_SEVERITY}" != "HIGH,CRITICAL" && "${INPUT_SEVERITY}" != "CRITICAL" ]]; then
+            echo "::error::Security Violation: Severity threshold '${INPUT_SEVERITY}' is unauthorized. Must strictly enforce 'HIGH,CRITICAL' or 'CRITICAL'."
+            exit 1
+          fi
+
+          echo "Azure Adapter inputs validated successfully. Pre-flight checks passed."
+
+  # ============================================================================
+  # JOB 2: CLOUD-FREE SPECULATIVE PLAN & VALIDATION (SIMULATION-ONLY)
+  # ============================================================================
+  cloud-free-plan:
+    name: "Cloud-Free Speculative Plan (Offline Validation)"
+    needs: [validate-inputs]
+    if: inputs.enable-azure-auth == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+
+    outputs:
+      plan-status: ${{ steps.summary.outputs.plan-status }}
+      security-status: ${{ steps.summary.outputs.security-status }}
+      has-changes: ${{ steps.summary.outputs.has-changes }}
+      has-destructive-changes: ${{ steps.summary.outputs.has-destructive-changes }}
+      total-changes: ${{ steps.summary.outputs.total-changes }}
+
+    steps:
+      - name: "Checkout Consumer Target Repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: "Checkout InfraFlow Platform Toolchain"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ".infraflow-platform"
+          persist-credentials: false
+
+      - name: "Isolate Platform Toolchain"
+        id: isolate_platform
+        run: |
+          set -euo pipefail
+          echo "::group::Isolating Platform Toolchain Outside Consumer Workspace"
+          PLATFORM_DIR="${RUNNER_TEMP}/infraflow-platform"
+          rm -rf "${PLATFORM_DIR}"
+          if [[ -d "${GITHUB_WORKSPACE}/.infraflow-platform" ]]; then
+            mv "${GITHUB_WORKSPACE}/.infraflow-platform" "${PLATFORM_DIR}"
+          elif [[ -d "${GITHUB_WORKSPACE}/scripts" && -d "${GITHUB_WORKSPACE}/policies" ]]; then
+            mkdir -p "${PLATFORM_DIR}"
+            cp -r "${GITHUB_WORKSPACE}/scripts" "${PLATFORM_DIR}/"
+            cp -r "${GITHUB_WORKSPACE}/policies" "${PLATFORM_DIR}/"
+          else
+            echo "::error::Platform toolchain directory not found."
+            exit 1
+          fi
+          echo "PLATFORM_DIR=${PLATFORM_DIR}" >> "${GITHUB_ENV}"
+          echo "Isolated platform toolchain to: ${PLATFORM_DIR}"
+          echo "::endgroup::"
+
+      - name: "Verify Workspace Containment & Reject Symlinks"
+        id: verify_workspace
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+          INPUT_VAR_FILE: ${{ inputs.var-file }}
+          POLICY_DIR: ${{ inputs.policy-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Workspace Containment & Symlink Verification"
+
+          TARGET_PATH="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+          if [[ ! -d "${TARGET_PATH}" ]]; then
+            echo "::error::Configuration Error: Working directory '${INPUT_DIR}' does not exist inside workspace."
+            exit 1
+          fi
+
+          if [[ -L "${TARGET_PATH}" ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' is a symbolic link. Symlinks are strictly prohibited."
+            exit 1
+          fi
+
+          CANONICAL_TARGET="$(cd "${TARGET_PATH}" && pwd -P)"
+          CANONICAL_WORKSPACE="$(cd "${GITHUB_WORKSPACE}" && pwd -P)"
+          if [[ "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}" && "${CANONICAL_TARGET}" != "${CANONICAL_WORKSPACE}/"* ]]; then
+            echo "::error::Security Violation: Working directory '${INPUT_DIR}' resolves outside GITHUB_WORKSPACE."
+            exit 1
+          fi
+
+          if [[ -n "${INPUT_VAR_FILE}" ]]; then
+            VAR_FILE_PATH="${TARGET_PATH}/${INPUT_VAR_FILE}"
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              VAR_FILE_PATH="${GITHUB_WORKSPACE}/${INPUT_VAR_FILE}"
+            fi
+            if [[ -L "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Security Violation: var-file '${INPUT_VAR_FILE}' is a symbolic link. Symlinks are strictly prohibited."
+              exit 1
+            fi
+            if [[ ! -f "${VAR_FILE_PATH}" ]]; then
+              echo "::error::Configuration Error: Specified var-file '${INPUT_VAR_FILE}' was not found in '${TARGET_PATH}' or workspace root."
+              exit 1
+            fi
+          fi
+
+          if [[ -n "${POLICY_DIR}" && -d "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+            if [[ -L "${GITHUB_WORKSPACE}/${POLICY_DIR}" ]]; then
+              echo "::error::Security Violation: policy-directory '${POLICY_DIR}' is a symbolic link."
+              exit 1
+            fi
+          fi
+
+          echo "Working directory '${INPUT_DIR}' is verified and safely contained within workspace."
+          echo "::endgroup::"
+
+      - name: "Setup Offline Tooling (Terraform, Conftest, Trivy)"
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: "Install Conftest"
+        env:
+          CONFTEST_VERSION: "0.56.0"
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Conftest Policy Engine"
+          if command -v conftest >/dev/null 2>&1; then
+            echo "Conftest is already installed: $(conftest --version | head -n1)"
+          else
+            mkdir -p "${RUNNER_TEMP}/bin"
+            ARCH=$(uname -m)
+            [[ "${ARCH}" == "x86_64" ]] && ARCH="x86_64" || ARCH="arm64"
+            curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_${ARCH}.tar.gz"
+            tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
+            chmod +x "${RUNNER_TEMP}/bin/conftest"
+            echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+            echo "Conftest installed successfully."
+          fi
+          echo "::endgroup::"
+
+      - name: "Install Trivy"
+        if: inputs.enable-trivy == true
+        env:
+          TRIVY_VERSION: "0.76.2"
+          TRIVY_SHA: "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
+        run: |
+          set -euo pipefail
+          echo "::group::Installing Trivy Scanner"
+          if command -v trivy >/dev/null 2>&1; then
+            echo "Trivy is already installed: $(trivy --version | head -n1)"
+          else
+            mkdir -p "${RUNNER_TEMP}/bin"
+            ARCH=$(uname -m)
+            [[ "${ARCH}" == "x86_64" ]] && ARCH="64bit" || ARCH="ARM64"
+            curl -fsSL -o "${RUNNER_TEMP}/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"
+            echo "${TRIVY_SHA}  ${RUNNER_TEMP}/trivy.tar.gz" | sha256sum -c -
+            tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C "${RUNNER_TEMP}/bin" trivy
+            chmod +x "${RUNNER_TEMP}/bin/trivy"
+            echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+            echo "Trivy installed successfully."
+          fi
+          echo "::endgroup::"
+
+      - name: "Execute Cloud-Free Plan & Speculative Analysis"
+        id: plan
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          PLATFORM_DIR: ${{ env.PLATFORM_DIR }}
+          TARGET_ENV: ${{ inputs.environment }}
+          VAR_FILE: ${{ inputs.var-file }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
+          ENABLE_POLICY: ${{ inputs.enable-policy-evaluation }}
+          POLICY_DIR: ${{ inputs.policy-directory }}
+          SEVERITY: ${{ inputs.severity-threshold }}
+          FAIL_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f tfplan tfplan.json' EXIT INT TERM
+          echo "=============================================================================="
+          echo ">>> Executing Cloud-Free Speculative Plan for Azure Module"
+          echo "=============================================================================="
+
+          # 1. Initialize without remote backend
+          terraform init -backend=false -no-color
+
+          # 2. Construct Plan Command
+          PLAN_ARGS=("-no-color" "-out=tfplan")
+          if [[ -n "${VAR_FILE}" && -f "${VAR_FILE}" ]]; then
+            PLAN_ARGS+=("-var-file=${VAR_FILE}")
+          fi
+
+          # Execute speculative planning
+          terraform plan "${PLAN_ARGS[@]}"
+
+          # 3. Export Plan to JSON
+          terraform show -json tfplan > tfplan.json
+
+          # 4. Analyze Plan Changes
+          ANALYZER_PY="${PLATFORM_DIR}/scripts/analyze-plan.py"
+          python3 "${ANALYZER_PY}" --plan-json tfplan.json --output-json plan-metrics.json --output-markdown plan-summary.md
+
+          if [[ ! -s plan-metrics.json ]]; then
+            echo "::error::Plan metrics file 'plan-metrics.json' is missing or empty."
+            exit 1
+          fi
+
+          TOTAL_CHANGES=$(jq -r '.metrics.total_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+          HAS_CHANGES=$(jq -r '.has_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+          HAS_DESTRUCTIVE=$(jq -r '.has_destructive_changes' plan-metrics.json 2>/dev/null || echo "invalid")
+
+          if [[ -z "${TOTAL_CHANGES}" || "${TOTAL_CHANGES}" == "null" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Security Violation: 'metrics.total_changes' is missing or not a non-negative integer: '${TOTAL_CHANGES}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" != "true" && "${HAS_CHANGES}" != "false" ]]; then
+            echo "::error::Security Violation: 'has_changes' is missing or not a boolean: '${HAS_CHANGES}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_DESTRUCTIVE}" != "true" && "${HAS_DESTRUCTIVE}" != "false" ]]; then
+            echo "::error::Security Violation: 'has_destructive_changes' is missing or not a boolean: '${HAS_DESTRUCTIVE}'"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" == "true" && "${TOTAL_CHANGES}" -le 0 ]]; then
+            echo "::error::Security Violation: Inconsistent plan metrics: has-changes is true but total-changes is ${TOTAL_CHANGES} (must be > 0)"
+            exit 1
+          fi
+
+          if [[ "${HAS_CHANGES}" == "false" && "${TOTAL_CHANGES}" -ne 0 ]]; then
+            echo "::error::Security Violation: Inconsistent plan metrics: has-changes is false but total-changes is ${TOTAL_CHANGES} (must be == 0)"
+            exit 1
+          fi
+
+          {
+            echo "TOTAL_CHANGES=${TOTAL_CHANGES}"
+            echo "HAS_CHANGES=${HAS_CHANGES}"
+            echo "HAS_DESTRUCTIVE=${HAS_DESTRUCTIVE}"
+          } >> "${GITHUB_ENV}"
+
+          # 5. Execute Trivy Scanning (if enabled)
+          TRIVY_STATUS="passed"
+          if [[ "${ENABLE_TRIVY}" == "true" ]]; then
+            echo "::group::Executing Trivy IaC Misconfiguration Scan"
+            for var in $(env | grep -E '^TRIVY_' | cut -d= -f1 || true); do
+              unset "${var}"
+            done
+            unset XDG_CACHE_HOME || true
+
+            TRIVY_CACHE="${RUNNER_TEMP}/infraflow-trivy-cache"
+            TRIVY_CONF="${RUNNER_TEMP}/infraflow-trivy.yaml"
+            mkdir -p "${TRIVY_CACHE}"
+            mkdir -p "${HOME}/.trivy/policy"
+            mkdir -p "${HOME}/.trivy/modules"
+
+            printf '%s\n' \
+              'ignorefile: ""' \
+              'rego:' \
+              '  skip-check-update: false' \
+              'misconfiguration:' \
+              '  scanners:' \
+              '    - terraform' > "${TRIVY_CONF}"
+
+            if trivy config \
+              --config "${TRIVY_CONF}" \
+              --cache-dir "${TRIVY_CACHE}" \
+              --ignorefile "" \
+              --severity "${SEVERITY}" \
+              --exit-code 1 \
+              --format table \
+              .; then
+              echo "Trivy scan passed cleanly."
+            else
+              echo "::error::Trivy detected misconfigurations matching severity '${SEVERITY}'."
+              TRIVY_STATUS="failed"
+            fi
+            echo "::endgroup::"
+          fi
+
+          # 6. Execute Conftest / OPA Policy Evaluation (if enabled)
+          OPA_STATUS="passed"
+          if [[ "${ENABLE_POLICY}" == "true" ]]; then
+            echo "::group::Executing Conftest OPA Policy Evaluation"
+            POLICY_PATHS=()
+            [[ -d "${PLATFORM_DIR}/policies/common" ]] && POLICY_PATHS+=("-p" "${PLATFORM_DIR}/policies/common")
+            [[ -d "${PLATFORM_DIR}/policies/azure" ]] && POLICY_PATHS+=("-p" "${PLATFORM_DIR}/policies/azure")
+            [[ -d "${POLICY_DIR}" ]] && POLICY_PATHS+=("-p" "${POLICY_DIR}")
+
+            if conftest test tfplan.json "${POLICY_PATHS[@]}" --no-color; then
+              echo "OPA policies verified successfully."
+            else
+              echo "::error::Conftest policy evaluation failed."
+              OPA_STATUS="failed"
+            fi
+            echo "::endgroup::"
+          fi
+
+          # 7. Evaluate Destructive Changes Gate
+          if [[ "${FAIL_DESTRUCTIVE}" == "true" && "${HAS_DESTRUCTIVE}" == "true" ]]; then
+            echo "::error::Policy Failure: Destructive changes (deletions or replacements) detected and fail-on-destructive is active."
+            exit 1
+          fi
+
+          if [[ "${TRIVY_STATUS}" == "failed" || "${OPA_STATUS}" == "failed" ]]; then
+            echo "::error::Security quality gates failed."
+            exit 1
+          fi
+
+          # 8. Clean up sensitive plan artifact
+          rm -f tfplan tfplan.json
+
+      - name: "Record Cloud-Free Outputs"
+        id: summary
+        run: |
+          if [[ -z "${TOTAL_CHANGES:-}" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Internal Error: TOTAL_CHANGES is invalid or unset: '${TOTAL_CHANGES:-}'"
+            exit 1
+          fi
+          if [[ "${HAS_CHANGES:-}" != "true" && "${HAS_CHANGES:-}" != "false" ]]; then
+            echo "::error::Internal Error: HAS_CHANGES is invalid or unset: '${HAS_CHANGES:-}'"
+            exit 1
+          fi
+          if [[ "${HAS_DESTRUCTIVE:-}" != "true" && "${HAS_DESTRUCTIVE:-}" != "false" ]]; then
+            echo "::error::Internal Error: HAS_DESTRUCTIVE is invalid or unset: '${HAS_DESTRUCTIVE:-}'"
+            exit 1
+          fi
+
+          {
+            echo "plan-status=success"
+            echo "security-status=success"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+            echo "total-changes=${TOTAL_CHANGES}"
+          } >> "${GITHUB_OUTPUT}"
+
+  # ============================================================================
+  # JOB 3: SUMMARY & AGGREGATION GATE
+  # ============================================================================
+  summary:
+    name: "Azure Adapter Execution Summary"
+    needs: [validate-inputs, cloud-free-plan]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+
+    outputs:
+      plan-status: ${{ steps.aggregate.outputs.plan-status }}
+      azure-auth-status: ${{ steps.aggregate.outputs.azure-auth-status }}
+      security-status: ${{ steps.aggregate.outputs.security-status }}
+      authorization-status: ${{ steps.aggregate.outputs.authorization-status }}
+      has-changes: ${{ steps.aggregate.outputs.has-changes }}
+      has-destructive-changes: ${{ steps.aggregate.outputs.has-destructive-changes }}
+      total-changes: ${{ steps.aggregate.outputs.total-changes }}
+
+    steps:
+      - name: "Aggregate Adapter Outputs"
+        id: aggregate
+        env:
+          VALIDATE_RESULT: ${{ needs.validate-inputs.result }}
+          CF_PLAN_RESULT: ${{ needs.cloud-free-plan.result }}
+          CF_PLAN_STATUS: ${{ needs.cloud-free-plan.outputs.plan-status }}
+          CF_SEC_STATUS: ${{ needs.cloud-free-plan.outputs.security-status }}
+          CF_HAS_CHANGES: ${{ needs.cloud-free-plan.outputs.has-changes }}
+          CF_HAS_DESTRUCTIVE: ${{ needs.cloud-free-plan.outputs.has-destructive-changes }}
+          CF_TOTAL_CHANGES: ${{ needs.cloud-free-plan.outputs.total-changes }}
+          ENABLE_AZURE_AUTH: ${{ inputs.enable-azure-auth }}
+        run: |
+          set -euo pipefail
+          echo "=============================================================================="
+          echo ">>> Aggregating Azure Adapter Execution Outputs"
+          echo "=============================================================================="
+
+          PLAN_STATUS="failure"
+          AZURE_AUTH_STATUS="disabled"
+          SEC_STATUS="failure"
+          AUTHORIZATION_STATUS="rejected"
+          HAS_CHANGES="false"
+          HAS_DESTRUCTIVE="false"
+          TOTAL_CHANGES="0"
+
+          if [[ "${VALIDATE_RESULT}" != "success" ]]; then
+            PLAN_STATUS="failure"
+            SEC_STATUS="failure"
+            AUTHORIZATION_STATUS="rejected"
+          elif [[ "${ENABLE_AZURE_AUTH}" == "true" ]]; then
+            # Live authentication is strictly disabled in Milestone G07.5
+            PLAN_STATUS="failure"
+            AZURE_AUTH_STATUS="disabled"
+            AUTHORIZATION_STATUS="rejected"
+          else
+            # Cloud-Free Offline Execution Mode (G07.5)
+            AZURE_AUTH_STATUS="disabled"
+            if [[ "${CF_PLAN_RESULT}" == "success" ]]; then
+              PLAN_STATUS="${CF_PLAN_STATUS:-success}"
+              SEC_STATUS="${CF_SEC_STATUS:-success}"
+              AUTHORIZATION_STATUS="not-applicable"
+              HAS_CHANGES="${CF_HAS_CHANGES:-false}"
+              HAS_DESTRUCTIVE="${CF_HAS_DESTRUCTIVE:-false}"
+              TOTAL_CHANGES="${CF_TOTAL_CHANGES:-0}"
+
+              # Validate metric consistency in aggregator
+              if [[ ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
+                echo "::error::Security Violation: Aggregated total-changes '${TOTAL_CHANGES}' is not a non-negative integer."
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              elif [[ "${HAS_CHANGES}" == "true" && "${TOTAL_CHANGES}" -le 0 ]]; then
+                echo "::error::Security Violation: Aggregated metrics inconsistent: has-changes is true but total-changes is ${TOTAL_CHANGES}"
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              elif [[ "${HAS_CHANGES}" == "false" && "${TOTAL_CHANGES}" -ne 0 ]]; then
+                echo "::error::Security Violation: Aggregated metrics inconsistent: has-changes is false but total-changes is ${TOTAL_CHANGES}"
+                PLAN_STATUS="failure"
+                SEC_STATUS="failure"
+                AUTHORIZATION_STATUS="rejected"
+              fi
+            else
+              PLAN_STATUS="failure"
+              SEC_STATUS="failure"
+              AUTHORIZATION_STATUS="rejected"
+            fi
+          fi
+
+          echo "Final aggregated outputs:"
+          echo "  plan-status:          ${PLAN_STATUS}"
+          echo "  azure-auth-status:    ${AZURE_AUTH_STATUS}"
+          echo "  security-status:      ${SEC_STATUS}"
+          echo "  authorization-status: ${AUTHORIZATION_STATUS}"
+          echo "  has-changes:          ${HAS_CHANGES}"
+          echo "  has-destructive:      ${HAS_DESTRUCTIVE}"
+          echo "  total-changes:        ${TOTAL_CHANGES}"
+
+          {
+            echo "plan-status=${PLAN_STATUS}"
+            echo "azure-auth-status=${AZURE_AUTH_STATUS}"
+            echo "security-status=${SEC_STATUS}"
+            echo "authorization-status=${AUTHORIZATION_STATUS}"
+            echo "has-changes=${HAS_CHANGES}"
+            echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
+            echo "total-changes=${TOTAL_CHANGES}"
+          } >> "${GITHUB_OUTPUT}"
+
+          if [[ "${AUTHORIZATION_STATUS}" == "rejected" ]]; then
+            echo "::error::Azure adapter gate failed closed. Authorization rejected."
+            exit 1
+          fi

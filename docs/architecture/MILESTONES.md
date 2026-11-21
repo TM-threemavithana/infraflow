@@ -17,7 +17,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G04.1.4** | **InfraFlow Architecture Finalization** | Governance rulesets, GitHub Artifact Attestations (Sigstore OIDC), automated verified policy gate, dual scanner enforcement, permission boundary isolation, 176/176 checks. | **PASS** |
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
-| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | Backlog (Future) |
+| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | In Progress (GCP Integrated; Azure Pending) |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 
@@ -259,13 +259,29 @@ Milestone G07.3 executes comprehensive security hardening, OPA discrepancy recon
 
 ---
 
-## 18. Quality Gate Definitions
+## 18. Milestone G07.5 — Acceptance Criteria (Microsoft Azure Adapter & Workload Identity Foundation)
+
+Milestone G07.5 implements the foundation of the Microsoft Azure adapter, establishing passwordless Microsoft Entra ID Workload Identity Federation (WIF) OIDC security policies, secure Azure Blob Storage remote backend contracts, an offline speculative plan reusable workflow, and native mock-provider testing without requiring an Azure account, subscription, credentials, or paid cloud infrastructure ($0.00 spend).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G07-16** | Microsoft Entra ID OIDC Federation Policies as Code | Implement OPA Rego policies ([`policies/azure/entra_oidc.rego`](file:///home/tharuka/projects/infraflow/policies/azure/entra_oidc.rego)) enforcing GitHub Actions issuer URI, explicit audience (`api://AzureADTokenExchange`), exact subject claim formats (standard branch, standard environment, and immutable repository ID post-July 15, 2026), complete rejection of wildcard subjects (`*`), SEC-02 pull request rejection, UUID format constraints, parent identity binding, and least-privilege RBAC. | Unit test execution (`conftest verify`) — 18/18 tests passed | **PASS (G07.5 Implemented)** |
+| **AC-G07-17** | Azure Blob Storage Backend Security Contract as Code | Implement OPA Rego policies ([`policies/azure/storage_backend.rego`](file:///home/tharuka/projects/infraflow/policies/azure/storage_backend.rego)) enforcing resource group, storage account, and container naming rules, state key path traversal defense, mandatory Microsoft Entra ID data-plane authentication (`use_azuread_auth` or `use_oidc`), prohibition of static access keys, private container access, minimum TLS 1.2, network restrictions, encryption, blob versioning, and environment namespace isolation. | Unit test execution (`conftest verify`) — 18/18 tests passed | **PASS (G07.5 Implemented)** |
+| **AC-G07-18** | Reusable Azure Workflow Contract (`reusable-tf-azure.yml`) | Implement `.github/workflows/reusable-tf-azure.yml` with strict regex and UUIDv4 input guards, aliased input support (`backend-resource-group`, `backend-storage-account`, etc.), immutable SHA caller verification, fail-closed live authentication rejection (`enable-azure-auth: true` blocked in G07.5 simulation), speculative cloud-free planning (`terraform init -backend=false`), dual security scanning (Trivy + Conftest), and standardized 7-output contract with plan metrics extraction and summary aggregator. | `actionlint`, `zizmor` (0 findings), and workflow unit tests | **PASS (G07.5 Implemented)** |
+| **AC-G07-19** | Azure Reference Module & Mock Provider Testing | Implement `examples/azure-reference-module/` with Terraform `>= 1.7.0` provider mocking (`mock_provider "azurerm" {}` in `tests/azure_test.tftest.hcl`), full policy compliance (private container, network rules, TLS 1.2, versioning, infrastructure encryption, mandatory tags), and zero credential requirement. | `terraform fmt`, `init -backend=false`, `validate`, `test` | **PASS (G07.5 Implemented)** |
+| **AC-G07-20** | Dedicated Azure Python Test Suite | Implement comprehensive unit test suite ([`tests/test_azure_adapter.py`](file:///home/tharuka/projects/infraflow/tests/test_azure_adapter.py)) with 39 unit and adversarial tests covering UUIDv4, resource group, storage account, container, and region regexes, extracted bash guard execution, summary failure propagation, and reference module configuration. | `python3 -m unittest tests/test_azure_adapter.py` — 39/39 tests passed | **PASS (G07.5 Implemented)** |
+| **AC-G07-21** | Local Validation Harness Expansion (302 Checks) | Expand `scripts/validate-local.sh` with Section 18 Azure quality gates (25 new checks, including Actionlint, Zizmor, Conftest verify, 13 negative input and security tests, reference module tests, Trivy, and test suite). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G07.4. | `scripts/validate-local.sh` execution (302/302 PASS) | **PASS (G07.5 Implemented)** |
+| **AC-G07-22** | Azure Implementation & Architecture Documentation | Author comprehensive implementation and security guide ([`docs/adapters/azure-adapter-guide.md`](file:///home/tharuka/projects/infraflow/docs/adapters/azure-adapter-guide.md)) and update architectural specifications ([`docs/architecture/ADAPTERS.md`](file:///home/tharuka/projects/infraflow/docs/architecture/ADAPTERS.md) and [`docs/architecture/MILESTONES.md`](file:///home/tharuka/projects/infraflow/docs/architecture/MILESTONES.md)). | Documentation audit and link verification | **PASS (G07.5 Implemented)** |
+
+---
+
+## 19. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G07:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (276/276 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (302/302 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
