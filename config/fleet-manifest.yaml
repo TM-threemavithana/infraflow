@@ -1,0 +1,122 @@
+schema_version: "1.0"
+
+# ==============================================================================
+# INFRAFLOW FLEET UPGRADE MANIFEST (Milestone G08.4)
+#
+# Authoritative registry of registered consumer repositories, expected adapters,
+# platform release references, and rollout configuration.
+#
+# Rules:
+# 1. Exactly 40-character commit SHAs (no mutable tags or branch names).
+# 2. No secrets or cloud credentials stored.
+# 3. Unique repository identities and consumer IDs.
+# 4. Strict adapter to workflow mapping.
+# ==============================================================================
+
+platform:
+  repository: "TM-threemavithana/infraflow"
+  current_release_tag: "v0.5.0"
+  current_release_sha: "2ce0ddd5de01530b6bf7aba749f0081620fb9b27"
+  known_good_rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+  candidate_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+  upgrade_stage: "canary" # inventory | compatibility | canary | progressive | fleet-verified | rollback
+
+governance_defaults:
+  enforce_mandatory_scanners: true
+  fail_on_destructive: false
+  reusable_governance_required: true
+  allowed_environments:
+    - "dev"
+    - "staging"
+    - "prod"
+    - "sand"
+    - "test"
+  allowed_permissions:
+    contents: "read"
+  disallowed_triggers:
+    - "pull_request_target"
+  disallowed_auth_keys:
+    - "enable-aws-auth"
+    - "enable-azure-auth"
+    - "enable-gcp-auth"
+
+workflow_contracts:
+  aws:
+    workflow: "reusable-tf-aws.yml"
+    mandatory_outputs:
+      - "plan-status"
+      - "aws-auth-status"
+      - "security-status"
+      - "authorization-status"
+      - "has-changes"
+      - "has-destructive-changes"
+      - "total-changes"
+  azure:
+    workflow: "reusable-tf-azure.yml"
+    mandatory_outputs:
+      - "plan-status"
+      - "azure-auth-status"
+      - "security-status"
+      - "authorization-status"
+      - "has-changes"
+      - "has-destructive-changes"
+      - "total-changes"
+  gcp:
+    workflow: "reusable-tf-gcp.yml"
+    mandatory_outputs:
+      - "plan-status"
+      - "gcp-auth-status"
+      - "security-status"
+      - "authorization-status"
+      - "has-changes"
+      - "has-destructive-changes"
+      - "total-changes"
+  generic:
+    workflow: "reusable-tf-validate.yml"
+    mandatory_outputs:
+      - "fmt-status"
+      - "validate-status"
+      - "test-status"
+
+consumers:
+  - repository: "TM-threemavithana/infraflow-consumer-networking"
+    consumer_id: "consumer-networking"
+    team: "platform-networking"
+    workload_type: "networking"
+    adapter: "aws"
+    terraform_dir: "terraform"
+    environment: "dev"
+    current_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+    target_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+    rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+    upgrade_role: "canary" # canary | progressive
+    max_allowed_deletions: 10
+    caller_workflow: ".github/workflows/infraflow-ci.yml"
+
+  - repository: "TM-threemavithana/infraflow-consumer-application"
+    consumer_id: "consumer-application"
+    team: "app-services-team"
+    workload_type: "application"
+    adapter: "azure"
+    terraform_dir: "terraform"
+    environment: "dev"
+    current_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+    target_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+    rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+    upgrade_role: "progressive"
+    max_allowed_deletions: 15
+    caller_workflow: ".github/workflows/infraflow-ci.yml"
+
+  - repository: "TM-threemavithana/infraflow-consumer-data-platform"
+    consumer_id: "consumer-data-platform"
+    team: "data-engineering"
+    workload_type: "data-platform"
+    adapter: "gcp"
+    terraform_dir: "terraform"
+    environment: "dev"
+    current_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+    target_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+    rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+    upgrade_role: "progressive"
+    max_allowed_deletions: 20
+    caller_workflow: ".github/workflows/infraflow-ci.yml"

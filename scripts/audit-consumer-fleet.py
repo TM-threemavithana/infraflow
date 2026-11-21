@@ -24,6 +24,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 DEFAULT_CONSUMER_REPOS = [
     {
         "name": "infraflow-consumer-networking",
@@ -65,6 +70,13 @@ def audit_local_consumer(repo_path: Path, expected_adapter: str, validator_path:
         report["errors"].append("Missing infraflow.config.yaml")
         return report
     report["config_present"] = True
+    try:
+        if yaml:
+            cfg = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+            if isinstance(cfg, dict):
+                report["config_sha"] = cfg.get("platform_sha")
+    except Exception:
+        pass
 
     workflows_dir = repo_path / ".github" / "workflows"
     if not workflows_dir.is_dir():
@@ -107,37 +119,82 @@ def audit_local_consumer(repo_path: Path, expected_adapter: str, validator_path:
 
 
 def audit_remote_rulesets(owner: str, repo_name: str) -> Dict[str, Any]:
-    """Inspects GitHub branch rulesets and protections via gh CLI."""
+    """Inspects GitHub branch rulesets, protections, and latest CI status via gh CLI."""
     ruleset_info: Dict[str, Any] = {
         "rulesets_active": False,
+        "ruleset_ids": [],
         "branch_protection_active": False,
         "required_status_checks": [],
+        "server_side_status": "unverified",
+        "latest_ci_run": None,
         "details": "",
     }
 
-    # Query rulesets
+    # 1. Query rulesets
     res = subprocess.run(["gh", "api", f"repos/{owner}/{repo_name}/rulesets"], capture_output=True, text=True)
     if res.returncode == 0:
         try:
             rulesets = json.loads(res.stdout)
-            if rulesets:
+            if isinstance(rulesets, list) and rulesets:
                 ruleset_info["rulesets_active"] = True
+                ruleset_info["ruleset_ids"] = [r.get("id") for r in rulesets if isinstance(r, dict)]
                 ruleset_info["details"] = f"{len(rulesets)} active ruleset(s)"
+                ruleset_info["server_side_status"] = "enforced"
+            else:
+                ruleset_info["rulesets_active"] = False
         except Exception:
-            pass
+            ruleset_info["server_side_status"] = "unknown"
+    else:
+        ruleset_info["server_side_status"] = "inaccessible"
 
-    # Query branch protection
+    # 2. Query branch protection (legacy API check to ensure protections aren't overlooked)
     res_bp = subprocess.run(["gh", "api", f"repos/{owner}/{repo_name}/branches/main/protection"], capture_output=True, text=True)
     if res_bp.returncode == 0:
         try:
             bp = json.loads(res_bp.stdout)
-            ruleset_info["branch_protection_active"] = True
-            checks = bp.get("required_status_checks", {}).get("contexts", [])
-            ruleset_info["required_status_checks"] = checks
+            if isinstance(bp, dict):
+                ruleset_info["branch_protection_active"] = True
+                checks = bp.get("required_status_checks", {}).get("contexts", [])
+                ruleset_info["required_status_checks"] = checks
+                ruleset_info["server_side_status"] = "enforced"
+        except Exception:
+            pass
+    elif res.returncode == 0 and not ruleset_info["rulesets_active"]:
+        ruleset_info["server_side_status"] = "not_enforced"
+
+    # 3. Query latest CI run
+    res_ci = subprocess.run(
+        ["gh", "run", "list", "--repo", f"{owner}/{repo_name}", "-L", "1", "--json", "status,conclusion,url,headSha"],
+        capture_output=True,
+        text=True,
+    )
+    if res_ci.returncode == 0:
+        try:
+            runs = json.loads(res_ci.stdout)
+            if isinstance(runs, list) and runs:
+                ruleset_info["latest_ci_run"] = runs[0]
         except Exception:
             pass
 
     return ruleset_info
+
+
+def calculate_drift_severity(report: Dict[str, Any], expected_sha: str) -> str:
+    """Calculates drift severity: CRITICAL, HIGH, LOW, or NONE."""
+    if not report.get("governance_workflow_invoked") or not report.get("passed"):
+        return "CRITICAL"
+
+    config_sha = report.get("config_sha")
+    if not config_sha or config_sha in {"main", "master", "latest", "dev", "HEAD", "v0.5.0", "v0.4.0"}:
+        return "CRITICAL"
+
+    if expected_sha and config_sha != expected_sha:
+        return "HIGH"
+
+    if report.get("errors"):
+        return "HIGH"
+
+    return "NONE"
 
 
 def main():
@@ -222,6 +279,7 @@ def main():
                 continue
 
             report = audit_local_consumer(repo_dir, item["expected_adapter"], validator_path)
+            report["drift_severity"] = calculate_drift_severity(report, expected_sha="")
 
             if args.check_remote:
                 remote_info = audit_remote_rulesets(item["owner"], item["name"])
@@ -245,14 +303,18 @@ def main():
         print("==============================================================================")
         for r in fleet_reports:
             status = "PASS" if r.get("passed") else "VIOLATION"
-            print(f"[{status}] {r['repository']}")
+            sev = r.get("drift_severity", "UNKNOWN")
+            print(f"[{status}] {r['repository']} (Drift Severity: {sev})")
             if r.get("errors"):
                 for err in r["errors"]:
                     print(f"       - Error: {err}")
             if "remote_governance" in r:
                 rg = r["remote_governance"]
-                active = "Active" if (rg.get("rulesets_active") or rg.get("branch_protection_active")) else "NOT ACTIVE"
+                active = "Active" if (rg.get("rulesets_active") or rg.get("branch_protection_active")) else "NOT ACTIVE (unverified)"
                 print(f"       - Server-Side Protection: {active}")
+                if rg.get("latest_ci_run"):
+                    ci = rg["latest_ci_run"]
+                    print(f"       - Latest CI: {ci.get('conclusion', ci.get('status'))} ({ci.get('url')})")
         print("==============================================================================")
         print(f"Fleet Status: {'COMPLIANT' if all_compliant else 'NON-COMPLIANT'}")
         print("==============================================================================")
