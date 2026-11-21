@@ -161,17 +161,12 @@ jobs:
           set -euo pipefail
           echo "::group::Installing Conftest Policy Engine"
           mkdir -p "${RUNNER_TEMP}/bin"
-          if command -v conftest >/dev/null 2>&1; then
-            echo "Conftest already installed on runner: $(conftest --version | head -n1)"
-            cp "$(command -v conftest)" "${RUNNER_TEMP}/bin/conftest"
-          else
-            CONFTEST_VERSION="0.56.0"
-            CONFTEST_SHA="b8d4f40f3b0e129dd9dd299cb8f9d8a39d482bb2b45e2ef11eb1752b7bceb83e"
-            curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
-            echo "${CONFTEST_SHA}  ${RUNNER_TEMP}/conftest.tar.gz" | sha256sum -c -
-            tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
-            chmod +x "${RUNNER_TEMP}/bin/conftest"
-          fi
+          CONFTEST_VERSION="0.71.1"
+          CONFTEST_SHA="c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985"
+          curl -sSL -o "${RUNNER_TEMP}/conftest.tar.gz" "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          echo "${CONFTEST_SHA}  ${RUNNER_TEMP}/conftest.tar.gz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/conftest.tar.gz" -C "${RUNNER_TEMP}/bin" conftest
+          chmod +x "${RUNNER_TEMP}/bin/conftest"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
           echo "::endgroup::"
 
