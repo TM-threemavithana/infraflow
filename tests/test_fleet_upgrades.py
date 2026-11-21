@@ -475,6 +475,60 @@ jobs:
         issues = planner.check_platform_compatibility(platform_mock, VALID_BASE_MANIFEST)
         self.assertTrue(any("reusable-tf-aws.yml" in i for i in issues))
 
+    # 33. Transactional Recovery on Write Failure
+    def test_33_transactional_recovery_on_write_failure(self):
+        repo_dir = self._create_consumer_fixture("infraflow-consumer-networking")
+        orig_config = (repo_dir / "infraflow.config.yaml").read_text(encoding="utf-8")
+
+        # Make workflow directory unwriteable or workflow file read-only
+        wf_file = repo_dir / ".github" / "workflows" / "infraflow-ci.yml"
+        os.chmod(wf_file, 0o444)
+
+        target = "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+        try:
+            ok, logs = planner.apply_consumer_upgrade(repo_dir, target, is_rollback=False)
+            self.assertFalse(ok)
+            # Verify config file was rolled back / compensated to original content
+            current_config = (repo_dir / "infraflow.config.yaml").read_text(encoding="utf-8")
+            self.assertEqual(current_config, orig_config)
+        finally:
+            os.chmod(wf_file, 0o644)
+
+    # 34. Invalid SHA Prevalidation Rejects Without Modifications
+    def test_34_invalid_sha_prevalidation_rejects_without_modifications(self):
+        repo_dir = self._create_consumer_fixture("infraflow-consumer-networking")
+        orig_config = (repo_dir / "infraflow.config.yaml").read_text(encoding="utf-8")
+
+        ok, logs = planner.apply_consumer_upgrade(repo_dir, "invalid-short-sha", is_rollback=False)
+        self.assertFalse(ok)
+        self.assertTrue(any("Invalid target SHA" in log for log in logs))
+        current_config = (repo_dir / "infraflow.config.yaml").read_text(encoding="utf-8")
+        self.assertEqual(current_config, orig_config)
+
+    # 35. Symlink Rejection Prevents Escape
+    def test_35_symlink_rejection_prevents_escape(self):
+        repo_dir = self._create_consumer_fixture("infraflow-consumer-networking")
+        target_outside = self.temp_path / "outside_target.yml"
+        target_outside.write_text("malicious: true", encoding="utf-8")
+        symlink_wf = repo_dir / ".github" / "workflows" / "symlink_escape.yml"
+        os.symlink(target_outside, symlink_wf)
+
+        target = "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+        ok, logs = planner.apply_consumer_upgrade(repo_dir, target, is_rollback=False)
+        self.assertFalse(ok)
+        self.assertTrue(any("symlink" in log for log in logs))
+
+    # 36. Manifest Lifecycle Consistency Verified
+    def test_36_manifest_lifecycle_consistency_verified(self):
+        real_manifest_path = REPO_ROOT / "config" / "fleet-manifest.yaml"
+        manifest = planner.load_manifest(real_manifest_path)
+        self.assertEqual(manifest["platform"]["upgrade_stage"], "fleet-verified")
+        self.assertIn("historical_baseline_sha", manifest["platform"])
+        for c in manifest["consumers"]:
+            self.assertEqual(c["current_sha"], c["target_sha"])
+            self.assertEqual(c["status"], "fleet-verified")
+            self.assertIn("historical_baseline_sha", c)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4789,7 +4789,7 @@ fi
 
 # Test 20.12: Full Platform Test Suite passing
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
-  record_pass "Platform Python Test Suite [12/12]: All 402 platform tests passed (tests/test_*.py)"
+  record_pass "Platform Python Test Suite [12/12]: All 406 platform tests passed (tests/test_*.py)"
 else
   record_fail "Platform Python Test Suite [12/12]: Platform test suite" "One or more platform tests failed"
 fi
@@ -4898,16 +4898,16 @@ else
   record_fail "Fleet Drift Severity [11/14]: Drift severity" "Drift severity logic failed unit check"
 fi
 
-# Test 21.12: Dedicated Adversarial Fleet Upgrade Python Test Suite (32 tests)
+# Test 21.12: Dedicated Adversarial Fleet Upgrade Python Test Suite (36 tests)
 if python3 -m unittest "${REPO_ROOT}/tests/test_fleet_upgrades.py" >/dev/null 2>&1; then
-  record_pass "Fleet Upgrade Test Suite [12/14]: Dedicated 32-test adversarial upgrade suite passed (tests/test_fleet_upgrades.py)"
+  record_pass "Fleet Upgrade Test Suite [12/14]: Dedicated 36-test adversarial upgrade suite passed (tests/test_fleet_upgrades.py)"
 else
   record_fail "Fleet Upgrade Test Suite [12/14]: Test suite" "One or more tests in tests/test_fleet_upgrades.py failed"
 fi
 
-# Test 21.13: Full Platform Python Test Suite (402 tests)
+# Test 21.13: Full Platform Python Test Suite (406 tests)
 if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
-  record_pass "Platform Python Test Suite [13/14]: All 402 platform tests passed (tests/test_*.py)"
+  record_pass "Platform Python Test Suite [13/14]: All 406 platform tests passed (tests/test_*.py)"
 else
   record_fail "Platform Python Test Suite [13/14]: Platform test suite" "One or more platform tests failed"
 fi

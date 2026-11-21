@@ -237,6 +237,23 @@ def main():
     fleet_reports: List[Dict[str, Any]] = []
     all_compliant = True
 
+    # Attempt to load authoritative expected SHAs from fleet manifest
+    manifest_file = args.platform_dir / "config" / "fleet-manifest.yaml"
+    expected_shas: Dict[str, str] = {}
+    if manifest_file.is_file() and yaml:
+        try:
+            m_data = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
+            if isinstance(m_data, dict):
+                p_cand = m_data.get("platform", {}).get("candidate_sha", "")
+                for c in m_data.get("consumers", []):
+                    c_repo = c.get("repository", "")
+                    c_target = c.get("target_sha") or p_cand
+                    if c_repo and c_target:
+                        expected_shas[c_repo] = c_target
+                        expected_shas[c_repo.split("/")[-1]] = c_target
+        except Exception:
+            pass
+
     if args.repos:
         for repo_dir in args.repos:
             repo_path = repo_dir.resolve()
@@ -254,8 +271,8 @@ def main():
             adapter = ""
             if config_file.is_file():
                 try:
-                    import yaml
-                    cfg = yaml.safe_load(config_file.read_text(encoding="utf-8"))
+                    if yaml:
+                        cfg = yaml.safe_load(config_file.read_text(encoding="utf-8"))
                     if isinstance(cfg, dict):
                         adapter = cfg.get("adapter", "")
                 except Exception:
@@ -279,7 +296,8 @@ def main():
                 continue
 
             report = audit_local_consumer(repo_dir, item["expected_adapter"], validator_path)
-            report["drift_severity"] = calculate_drift_severity(report, expected_sha="")
+            exp_sha = expected_shas.get(item["name"]) or expected_shas.get(f"{item['owner']}/{item['name']}") or ""
+            report["drift_severity"] = calculate_drift_severity(report, expected_sha=exp_sha)
 
             if args.check_remote:
                 remote_info = audit_remote_rulesets(item["owner"], item["name"])

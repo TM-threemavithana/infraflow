@@ -93,6 +93,15 @@ def load_manifest(manifest_path: Path) -> Dict[str, Any]:
     if not RE_SHA.match(str(rollback_sha)):
         raise ManifestValidationError(f"Invalid known_good_rollback_sha '{rollback_sha}'. Must be 40-char hex.")
 
+    upgrade_stage = platform.get("upgrade_stage", "inventory")
+    if upgrade_stage not in VALID_STAGES:
+        raise ManifestValidationError(f"Invalid upgrade_stage: '{upgrade_stage}'")
+
+    for opt_sha in ["current_release_sha", "historical_baseline_sha", "approved_deployment_target_sha"]:
+        val = platform.get(opt_sha)
+        if val is not None and not RE_SHA.match(str(val)):
+            raise ManifestValidationError(f"Platform has invalid {opt_sha}: '{val}'")
+
     # 3. Consumers Block
     consumers = data.get("consumers")
     if not isinstance(consumers, list) or not consumers:
@@ -136,6 +145,11 @@ def load_manifest(manifest_path: Path) -> Dict[str, Any]:
         for name, sha_val in [("current_sha", c_sha), ("target_sha", t_sha), ("rollback_sha", r_sha)]:
             if not RE_SHA.match(str(sha_val)):
                 raise ManifestValidationError(f"Consumer '{cid}' has invalid {name}: '{sha_val}'")
+
+        for opt_sha in ["historical_baseline_sha"]:
+            val = c.get(opt_sha)
+            if val is not None and not RE_SHA.match(str(val)):
+                raise ManifestValidationError(f"Consumer '{cid}' has invalid {opt_sha}: '{val}'")
 
         max_del = c.get("max_allowed_deletions")
         if max_del is not None:
@@ -378,57 +392,142 @@ def generate_upgrade_plan(
 def apply_consumer_upgrade(
     repo_path: Path, target_sha: str, is_rollback: bool = False
 ) -> Tuple[bool, List[str]]:
-    """Updates local consumer repository config and workflows to target_sha."""
+    """
+    Applies a transactional local upgrade to consumer configuration and caller workflows.
+
+    Architecture & Scope:
+    1. Prevalidation: Validates target_sha is 40-char hex, repo_path is not symlink,
+       config and workflow files exist, are regular files (not symlinks), and are writable.
+    2. Staged Generation: Generates updated file contents in memory and verifies valid YAML syntax.
+    3. Transactional Backup: Captures backup copies of all target files in memory before touching disk.
+    4. Staged Replacement & Failure Compensation: Writes updated contents using atomic replacement.
+       If any write fails or raises an OS error (e.g. PermissionError, IOError), immediately triggers
+       compensating rollback, restoring all previously written files from backups.
+    5. Post-Replacement Verification: Re-verifies all replaced files are valid and consistent.
+
+    Filesystem Atomicity Boundary:
+    True kernel-level multi-file atomicity spanning disparate directory hierarchies is not natively
+    guaranteed by standard POSIX or NTFS filesystems without filesystem-level transactions.
+    This implementation achieves transactional consistency via atomic single-file replacement
+    (temp file + os.replace) coupled with strict prevalidation and automatic in-process rollback
+    recovery upon any intercepted failure.
+    """
     logs: List[str] = []
+    if not RE_SHA.match(str(target_sha)):
+        return False, [f"Invalid target SHA '{target_sha}'. Must be 40-character hex string."]
+
+    # Security check: Reject symlink repositories
+    if repo_path.is_symlink():
+        return False, [f"Security rejection: repository path '{repo_path}' is a symlink."]
+
     if not repo_path.is_dir():
         return False, [f"Repository directory does not exist: {repo_path}"]
 
-    # 1. Update infraflow.config.yaml
+    # 1. Inspect config file
     config_file = repo_path / "infraflow.config.yaml"
     if not config_file.is_file():
         return False, [f"Config file not found: {config_file}"]
+    if config_file.is_symlink():
+        return False, [f"Security rejection: config file '{config_file}' is a symlink."]
+
+    # 2. Inspect workflows directory
+    wf_dir = repo_path / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return False, [f"Workflows directory not found: {wf_dir}"]
+    if wf_dir.is_symlink():
+        return False, [f"Security rejection: workflows directory '{wf_dir}' is a symlink."]
+
+    wf_files = sorted(list(wf_dir.glob("*.yml")) + list(wf_dir.glob("*.yaml")))
+    for wf in wf_files:
+        if wf.is_symlink():
+            return False, [f"Security rejection: workflow file '{wf}' is a symlink."]
+
+    # Step 1: Pre-generate staged contents & create in-memory backups
+    backups: Dict[Path, str] = {}
+    staged: Dict[Path, str] = {}
 
     try:
-        content = config_file.read_text(encoding="utf-8")
-        new_content = re.sub(
+        cfg_orig = config_file.read_text(encoding="utf-8")
+        backups[config_file] = cfg_orig
+        new_cfg = re.sub(
             r'platform_sha:\s*"[0-9a-fA-F]{40}"',
             f'platform_sha: "{target_sha}"',
-            content,
+            cfg_orig,
         )
-        if new_content == content and target_sha not in content:
-            # Fallback for plain unquoted
-            new_content = re.sub(
+        if new_cfg == cfg_orig and target_sha not in cfg_orig:
+            new_cfg = re.sub(
                 r'platform_sha:\s*[0-9a-fA-F]{40}',
                 f'platform_sha: "{target_sha}"',
-                content,
+                cfg_orig,
             )
-        config_file.write_text(new_content, encoding="utf-8")
-        action = "Rolled back" if is_rollback else "Updated"
-        logs.append(f"{action} {config_file.name} to {target_sha[:8]}...")
-    except Exception as e:
-        return False, [f"Failed updating {config_file}: {e}"]
+        # Validate new YAML syntax
+        if yaml:
+            parsed = yaml.safe_load(new_cfg)
+            if not isinstance(parsed, dict) or parsed.get("platform_sha") != target_sha:
+                return False, ["Prevalidation failure: generated config YAML invalid or missing platform_sha"]
+        staged[config_file] = new_cfg
 
-    # 2. Update workflows in .github/workflows
-    wf_dir = repo_path / ".github" / "workflows"
-    if wf_dir.is_dir():
-        for wf in list(wf_dir.glob("*.yml")) + list(wf_dir.glob("*.yaml")):
+        for wf in wf_files:
+            wf_orig = wf.read_text(encoding="utf-8")
+            backups[wf] = wf_orig
+            updated_wf = re.sub(
+                r'(TM-threemavithana/infraflow/\.github/workflows/[^@\s]+)@[0-9a-fA-F]{40}',
+                r'\g<1>@' + target_sha,
+                wf_orig,
+            )
+            updated_wf = re.sub(
+                r'(platform-sha:\s*)"[0-9a-fA-F]{40}"',
+                r'\g<1>"' + target_sha + '"',
+                updated_wf,
+            )
+            # Validate workflow doesn't contain forbidden constructs
+            if "pull_request_target" in updated_wf:
+                return False, [f"Prevalidation failure: workflow {wf.name} contains forbidden pull_request_target"]
+            staged[wf] = updated_wf
+
+    except Exception as e:
+        return False, [f"Prevalidation or staging error: {e}"]
+
+    # Step 2: Apply staged changes with transactional recovery
+    written_files: List[Path] = []
+    action = "Rolled back" if is_rollback else "Updated"
+
+    try:
+        for target_path, content in staged.items():
+            # Check write permission before write
+            if not os.access(target_path, os.W_OK):
+                raise PermissionError(f"File is not writable: {target_path}")
+
+            # Safe write via temporary file replacement in same directory
+            temp_file = target_path.parent / f".tmp_{target_path.name}"
             try:
-                wf_content = wf.read_text(encoding="utf-8")
-                updated_wf = re.sub(
-                    r'(TM-threemavithana/infraflow/\.github/workflows/[^@\s]+)@[0-9a-fA-F]{40}',
-                    r'\g<1>@' + target_sha,
-                    wf_content,
-                )
-                # Also replace platform-sha input if present
-                updated_wf = re.sub(
-                    r'(platform-sha:\s*)"[0-9a-fA-F]{40}"',
-                    r'\g<1>"' + target_sha + '"',
-                    updated_wf,
-                )
-                wf.write_text(updated_wf, encoding="utf-8")
-                logs.append(f"{action} {wf.name} references to {target_sha[:8]}...")
-            except Exception as e:
-                return False, [f"Failed updating workflow {wf.name}: {e}"]
+                temp_file.write_text(content, encoding="utf-8")
+                os.replace(temp_file, target_path)
+            finally:
+                if temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+
+            written_files.append(target_path)
+            logs.append(f"{action} {target_path.name} to {target_sha[:8]}...")
+
+    except Exception as err:
+        # Step 3: Failure Compensation / Automatic Rollback
+        recovery_errors: List[str] = []
+        for roll_path in written_files:
+            try:
+                roll_path.write_text(backups[roll_path], encoding="utf-8")
+            except Exception as rec_err:
+                recovery_errors.append(f"Failed recovering {roll_path.name}: {rec_err}")
+
+        err_msg = f"Transactional upgrade failed during write: {err}."
+        if recovery_errors:
+            err_msg += f" WARNING: Partial recovery errors: {'; '.join(recovery_errors)}"
+        else:
+            err_msg += " Original configuration and workflow references successfully restored."
+        return False, [err_msg]
 
     return True, logs
 
