@@ -18,7 +18,7 @@ platform:
   current_release_tag: "v0.5.0"
   current_release_sha: "2ce0ddd5de01530b6bf7aba749f0081620fb9b27"
   known_good_rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-  candidate_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+  candidate_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
   upgrade_stage: "canary" # inventory | compatibility | canary | progressive | fleet-verified | rollback
 
 governance_defaults:
@@ -87,7 +87,7 @@ consumers:
     terraform_dir: "terraform"
     environment: "dev"
     current_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-    target_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+    target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
     rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
     upgrade_role: "canary" # canary | progressive
     max_allowed_deletions: 10
@@ -101,7 +101,7 @@ consumers:
     terraform_dir: "terraform"
     environment: "dev"
     current_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-    target_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+    target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
     rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
     upgrade_role: "progressive"
     max_allowed_deletions: 15
@@ -115,7 +115,7 @@ consumers:
     terraform_dir: "terraform"
     environment: "dev"
     current_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
-    target_sha: "c2efbe01facdb69c9eb737b96f6632b0ec036e45"
+    target_sha: "1630e61952c99460b37eb775c11b190d0e1ab81f"
     rollback_sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
     upgrade_role: "progressive"
     max_allowed_deletions: 20
