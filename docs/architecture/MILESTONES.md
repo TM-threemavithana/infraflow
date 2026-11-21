@@ -341,14 +341,31 @@ Milestone G08.2 deploys, configures, and validates three independent external co
 
 ---
 
-## 23. Quality Gate Definitions
+## 23. Milestone G08.3 — Acceptance Criteria (Centralized Governance, Policy Enforcement & Consumer Trust Hardening)
+
+Milestone G08.3 establishes centralized governance, Open Policy Agent (OPA) policy enforcement, supply chain trust hardening, and fleet auditing across all participating consumer repositories ($0.00 cloud spend, zero live credentials, fail-closed policy gates).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G08-17** | 4-Layer Defense-in-Depth Governance Model | Formulate and document the four-layer governance model (Layer A: Local Validator, Layer B: Reusable Governance Workflow, Layer C: GitHub Branch Rulesets, Layer D: Central Fleet Audit) in [`docs/security/G08-CONSUMER-GOVERNANCE-MODEL.md`](file:///home/tharuka/projects/infraflow/docs/security/G08-CONSUMER-GOVERNANCE-MODEL.md). | Documentation audit & architecture review | **PASS (G08.3 Implemented)** |
+| **AC-G08-18** | Critical Onboarding Validation Tooling Hardening | Refactor [`scripts/validate-consumer.py`](file:///home/tharuka/projects/infraflow/scripts/validate-consumer.py) to resolve GOV-G08-01 (fail closed on missing workflow dir), GOV-G08-02 (enforce adapter invocation), and GOV-G08-03 (duplicate YAML key rejection, write permission rejection, `id-token: write` rejection, `pull_request_target` rejection, `secrets: inherit` rejection). | Python unit tests & adversarial suite | **PASS (G08.3 Implemented)** |
+| **AC-G08-19** | Central OPA Consumer Governance Policy Contract | Implement [`policies/governance/consumer_governance.rego`](file:///home/tharuka/projects/infraflow/policies/governance/consumer_governance.rego) (package `governance.consumer`) with 14 enterprise deny rules and 23 dedicated unit tests ([`policies/governance/consumer_governance_test.rego`](file:///home/tharuka/projects/infraflow/policies/governance/consumer_governance_test.rego)). Elevate Rego test assertions from 171 to 194. | `conftest verify -p policies` (194/194 passed) | **PASS (G08.3 Implemented)** |
+| **AC-G08-20** | Reusable Consumer Governance Gate Workflow | Implement [`.github/workflows/reusable-tf-governance.yml`](file:///home/tharuka/projects/infraflow/.github/workflows/reusable-tf-governance.yml) (`workflow_call`). Runs with `permissions: contents: read` (zero `id-token: write`), checks out platform at immutable SHA, executes authoritative validator, and evaluates Conftest OPA policies. | `actionlint` & `zizmor` (0 errors, 0 findings) | **PASS (G08.3 Implemented)** |
+| **AC-G08-21** | Fleet-Wide Consumer Governance Rollout | Update external consumer repositories (`infraflow-consumer-networking`, `infraflow-consumer-application`, `infraflow-consumer-data-platform`) to invoke `reusable-tf-governance.yml` with `needs: [governance-gate]`. Verify all runs pass cleanly on GitHub Actions. | Live GitHub Actions execution across 3 repos | **PASS (G08.3 Implemented)** |
+| **AC-G08-22** | Dedicated 40-Scenario Adversarial Test Suite | Implement comprehensive adversarial test suite ([`tests/test_consumer_governance.py`](file:///home/tharuka/projects/infraflow/tests/test_consumer_governance.py)) with 40 distinct test vectors proving fail-closed rejection of missing workflows, duplicate keys, privilege escalations, contradictory adapters, and tampered inputs. | `python3 -m unittest tests/test_consumer_governance.py` (40/40 passed) | **PASS (G08.3 Implemented)** |
+| **AC-G08-23** | Central Fleet Governance Auditor Utility | Implement [`scripts/audit-consumer-fleet.py`](file:///home/tharuka/projects/infraflow/scripts/audit-consumer-fleet.py) providing Layer D out-of-band monitoring across all participating consumer repositories, auditing configuration, workflow invocation, and branch ruleset protection. | CLI execution across fixtures & external repos | **PASS (G08.3 Implemented)** |
+| **AC-G08-24** | Local Validation Harness Expansion (Section 20) | Expand `scripts/validate-local.sh` with Section 20 quality gates (12 new checks, raising total platform checks from 321 to 333). Verify 100% offline ($0.00 cloud spend) with zero regressions across G01–G08.2. | `scripts/validate-local.sh` (333/333 passed) | **PASS (G08.3 Implemented)** |
+
+---
+
+## 24. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G08:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (321/321 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (333/333 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

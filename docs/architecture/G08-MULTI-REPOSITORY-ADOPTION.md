@@ -146,3 +146,16 @@ In Milestone G08.2, InfraFlow's multi-repository architecture was verified again
 3. **Least Privilege Invariant**: All caller workflows enforce `permissions: contents: read` with zero elevated permissions.
 4. **Output Contract Parity**: Aggregated all 7 standard outputs (`plan-status`, `<cloud>-auth-status`, `security-status`, `authorization-status`, `has-changes`, `has-destructive-changes`, `total-changes`) consistently across AWS, Azure, and GCP adapters.
 
+---
+
+## 7. Centralized Governance & Consumer Trust Hardening (G08.3)
+
+In Milestone G08.3, InfraFlow advanced beyond optional client-side onboarding checks to establish a mandatory 4-layer defense-in-depth governance model:
+1. **Layer A (Local Pre-Flight Validator)**: Hardened `validate-consumer.py` resolving GOV-G08-01 (fail closed on missing `.github/workflows`), GOV-G08-02 (enforce adapter invocation), and GOV-G08-03 (duplicate YAML keys, write permission rejection, `id-token: write` rejection, `pull_request_target` rejection, `secrets: inherit` rejection).
+2. **Layer B (Pipeline Governance Gate)**: Central reusable workflow (`reusable-tf-governance.yml`) invoked with `needs: [governance-gate]`. Evaluates normalized metadata against 14 enterprise OPA Rego rules (`policies/governance/consumer_governance.rego`).
+3. **Layer C (Server-Side Rulesets)**: GitHub Branch Protection / Rulesets enforcing required status checks (`Evaluate Consumer Governance & Adoption Contracts`), preventing workflow deletion or modification on protected branches.
+4. **Layer D (Central Fleet Audit)**: Periodic out-of-band monitoring (`scripts/audit-consumer-fleet.py`) auditing the entire fleet of consumer repositories for contract compliance and active branch ruleset protections.
+
+All three external consumer repositories (`infraflow-consumer-networking`, `infraflow-consumer-application`, `infraflow-consumer-data-platform`) have been updated to pin platform commit `f1ad39fb0f0bdce7c475ed36e717e859b2e9b106` and enforce the central governance gate in live CI pipelines.
+
+

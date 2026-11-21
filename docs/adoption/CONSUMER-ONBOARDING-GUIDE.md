@@ -117,9 +117,19 @@ permissions:
   contents: read
 
 jobs:
+  governance-gate:
+    name: "InfraFlow Governance Gate"
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-governance.yml@f1ad39fb0f0bdce7c475ed36e717e859b2e9b106
+    with:
+      config-file: "infraflow.config.yaml"
+      working-directory: "."
+      platform-sha: "f1ad39fb0f0bdce7c475ed36e717e859b2e9b106"
+      expected-adapter: "provider-neutral"
+
   validate:
     name: "Validate Terraform"
-    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@2ce0ddd5de01530b6bf7aba749f0081620fb9b27
+    needs: [governance-gate]
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@f1ad39fb0f0bdce7c475ed36e717e859b2e9b106
     with:
       terraform-version: "1.10.4"
       working-directory: "terraform"
