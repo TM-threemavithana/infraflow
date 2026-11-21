@@ -5,21 +5,21 @@
 | Attribute | Details |
 | :--- | :--- |
 | **Milestone** | **G07.7 — External Azure Consumer Integration & Multi-Cloud Release Readiness** |
-| **Status** | **COMPLETED & VALIDATED (PRs OPEN — RELEASE READY)** |
+| **Status** | **COMPLETED, MERGED & VALIDATED (MAIN MERGE VERIFIED)** |
 | **Platform Repository** | `TM-threemavithana/infraflow` |
 | **Platform Base Branch** | `main` |
 | **Platform Feature Branch** | `feature/g07-azure-adapter` |
-| **Platform Pull Request** | [PR #5: feat(g07): Azure cloud-free adapter, Entra federation policies and Blob backend security](https://github.com/TM-threemavithana/infraflow/pull/5) (Open) |
-| **Platform Feature Commit SHA** | `de8ff47dc513ea88892ef29b363e419d396b4290` |
-| **Platform CI Verification** | [Run 44863813914](https://github.com/TM-threemavithana/infraflow/actions/runs/44863899814) (PR #5 CI: SUCCESS) |
+| **Platform Pull Request** | [PR #5: feat(g07): Azure cloud-free adapter, Entra federation policies and Blob backend security](https://github.com/TM-threemavithana/infraflow/pull/5) (Merged) |
+| **Platform Feature Commit SHA** | `2af2aaf1bc26503b28fc7ec741581ed7458eb391` |
+| **Platform Main Merge SHA** | `59500fddecd40cf50d4b53e1852b5aca8ed8f192` |
+| **Platform Post-Merge CI** | [Run 44865850485](https://github.com/TM-threemavithana/infraflow/actions/runs/44865850485) (main CI: SUCCESS) |
 | **Consumer Repository** | `TM-threemavithana/infraflow-consumer-test` |
 | **Consumer Base Branch** | `main` |
 | **Consumer Feature Branch** | `test/g07-azure-adapter-smoke` |
-| **Consumer Pull Request** | [PR #5: test(g07): external Azure adapter cloud-free integration and adversarial validation](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/5) (Open) |
-| **Consumer Feature Commit SHA** | `8eca2a0487d2ef1df3a677bf10bb15ee76ec0cf5` |
-| **Consumer Push Run** | [Run 44864588624](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44864588624) (All 6 jobs PASS) |
-| **Consumer PR Run** | [Run 44864715399](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44864715399) (All 6 jobs PASS) |
-| **Published Baseline** | `v0.4.0` (Untouched, no new release tag) |
+| **Consumer Pull Request** | [PR #5: test(g07): external Azure adapter cloud-free integration and adversarial validation](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/5) (Merged) |
+| **Consumer Repin Commit SHA** | `1bdd087d84fbb739c6560411d515a4e320f77aa9` |
+| **Consumer Main Merge SHA** | `1cf205c0087f1f97da1c3425c3c25d9f7488586b` |
+| **Consumer Post-Merge CI** | [Run 44866151965](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44866151965) (Azure Plan: SUCCESS), [Run 44866152006](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44866152006) (Apply Simulation: SUCCESS) |
 | **Cloud Spend** | **$0.00 (Strict Invariant)** |
 | **Live Credentials** | **Zero Azure Credentials / Tokens Used** |
 | **Local Quality Gates** | **303/303 Platform Quality Checks Passing (100%)** |
@@ -249,12 +249,13 @@ With G07.7 completed, InfraFlow achieves full multi-cloud tier-2 adapter parity:
 
 ## 10. Release Readiness & Final Verification
 
-### Status of Pull Requests
-- **Platform PR #5**: [https://github.com/TM-threemavithana/infraflow/pull/5](https://github.com/TM-threemavithana/infraflow/pull/5) — **OPEN** (Awaiting formal merge review).
-- **Consumer PR #5**: [https://github.com/TM-threemavithana/infraflow-consumer-test/pull/5](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/5) — **OPEN** (All 37 checks PASS).
+### Status of Pull Requests & Main Merges
+- **Platform PR #5**: [https://github.com/TM-threemavithana/infraflow/pull/5](https://github.com/TM-threemavithana/infraflow/pull/5) — **MERGED** (Squash commit `59500fddecd40cf50d4b53e1852b5aca8ed8f192`). Post-merge CI Run [44865850485](https://github.com/TM-threemavithana/infraflow/actions/runs/44865850485) passed with SUCCESS.
+- **Consumer Repin**: Updated all workflow references and negative tests to platform merge commit `59500fddecd40cf50d4b53e1852b5aca8ed8f192` (commit `1bdd087d84fbb739c6560411d515a4e320f77aa9`). Verified 100% PASS in CI Run [44866045894](https://github.com/TM-threemavithana/infraflow-consumer-test/actions/runs/44866045894).
+- **Consumer PR #5**: [https://github.com/TM-threemavithana/infraflow-consumer-test/pull/5](https://github.com/TM-threemavithana/infraflow-consumer-test/pull/5) — **MERGED** (Squash commit `1cf205c0087f1f97da1c3425c3c25d9f7488586b`). Post-merge CI across all 6 workflows on `main` passed with 100% SUCCESS.
 
 ### Operational Invariants Maintained
 - **Zero Live Credentials**: No cloud tokens or credentials used.
 - **Zero Cloud Expenditure**: $0.00 spent across all integration runs.
-- **Zero PR Merges**: Neither PR has been merged; release tag `v0.5.0` has NOT been created.
-- **Published Baseline Preserved**: `v0.4.0` remains the latest published release.
+- **Main Branches Verified**: Both platform and consumer `main` branches are clean, verified, and passing all checks.
+- **Ready for Release**: Platform `main` is ready for tagging and publishing `v0.5.0`.

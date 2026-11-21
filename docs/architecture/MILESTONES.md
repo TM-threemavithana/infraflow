@@ -17,7 +17,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G04.1.4** | **InfraFlow Architecture Finalization** | Governance rulesets, GitHub Artifact Attestations (Sigstore OIDC), automated verified policy gate, dual scanner enforcement, permission boundary isolation, 176/176 checks. | **PASS** |
 | **G05** | **AWS Integration** | AWS provider adapter, passwordless Workload Identity Federation (OIDC), S3 state backend. | **PASS** |
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
-| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | In Progress (GCP Integrated; Azure Pending) |
+| **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, centrally controlled organization rulesets. | Backlog (Future) |
 | **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | Backlog (Future) |
 

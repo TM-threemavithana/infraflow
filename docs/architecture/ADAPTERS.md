@@ -1,10 +1,10 @@
-# InfraFlow — Cloud Adapters Specification (Future AWS, Azure, GCP)
+# InfraFlow — Multi-Cloud Adapters Specification (AWS, Azure, GCP)
 
 ## 1. Adapter Architecture Overview
 
 InfraFlow strictly isolates provider-neutral CI/CD logic from cloud-specific deployment operations. 
 
-While **Milestone G02** establishes the provider-neutral core (`reusable-tf-validate.yml`), this document specifies the technical design, security contracts, and implementation blueprints for future cloud adapters (**Milestone G03**).
+While **Milestone G02** establishes the provider-neutral core (`reusable-tf-validate.yml`), this document specifies the technical design, security contracts, and implementation blueprints for Tier 2 cloud adapters (**Milestones G05 and G07**).
 
 ```mermaid
 flowchart TD
@@ -17,7 +17,7 @@ flowchart TD
         BranchCheck -->|"Merged to Main"| RouteAdapter["Route to Target Cloud Adapter"]
     end
 
-    subgraph Adapters["Cloud Adapters (G03 Future Scope)"]
+    subgraph Adapters["Cloud Adapters (Implemented: AWS, GCP, Azure)"]
         AWSAdapt["AWS Adapter\n(reusable-tf-aws.yml)"]
         AzureAdapt["Azure Adapter\n(reusable-tf-azure.yml)"]
         GCPAdapt["GCP Adapter\n(reusable-tf-gcp.yml)"]

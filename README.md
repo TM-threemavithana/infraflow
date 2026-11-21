@@ -4,14 +4,22 @@
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#local-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
 [![DevSecOps](https://img.shields.io/badge/Security-TFLint%20%7C%20Trivy%20%7C%20Zizmor%20%7C%20OPA-blue.svg)](docs/security/security-architecture.md)
+[![Release](https://img.shields.io/badge/Release-v0.5.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
-**InfraFlow** is an enterprise-oriented, secure, and maintainable Terraform delivery platform engineered to be reused across independent GitHub repositories.
+**InfraFlow** is an enterprise-oriented, secure, and maintainable multi-cloud Terraform delivery platform engineered to be reused across independent GitHub repositories.
 
 InfraFlow separates infrastructure delivery into distinct layers:
 1. **Tier 1 — Reusable Provider-Neutral CI/CD Core (`reusable-tf-validate.yml`)**: A standardized GitHub Actions workflow (`workflow_call`) executing linting, static validation, and native testing (`.tftest.hcl`) with **zero cloud credentials** and least-privilege tokens.
 2. **Tier 1 — DevSecOps Security Quality Gates (`reusable-tf-security.yml`)**: Automated security scanning incorporating TFLint static analysis, Trivy IaC misconfiguration scanning, Zizmor CI/CD supply chain auditing, and Conftest/OPA Policy-as-Code governance.
 3. **Tier 1 — Secure Planning & Governance Engine (`reusable-tf-plan.yml`)**: Automated speculative planning (`-lock=false`), structural change classification (`analyze-plan.py`), dual static security scanners (Trivy + OPA/Conftest), cryptographic attestation binding (`verify-plan-integrity.py`), and automated verified policy gate governance.
-4. **Tier 2 — Modular Cloud Adapters (AWS, Azure, GCP)**: Isolated adapters handling OIDC authentication, remote state backends, and speculative planning/applies on protected branches.
+4. **Tier 1 — Protected Apply & Destroy Simulation Engine (`reusable-tf-apply.yml`)**: Cryptographically verified execution simulation with envelope encryption (`kms-envelope.py`), state lineage verification (`verify-plan-lifecycle.py`), atomic plan consumption, and platform blast-radius safeguards.
+5. **Tier 2 — Modular Multi-Cloud Adapters (AWS, GCP, Azure)**:
+   - **AWS Adapter (`reusable-tf-aws.yml`)**: IAM OIDC role assumption, S3 state backend with SSE-KMS and DynamoDB locking.
+   - **GCP Adapter (`reusable-tf-gcp.yml`)**: Workload Identity Federation (WIF) OIDC token exchange, GCS state backend with UBLA, versioning, and precondition locking.
+   - **Azure Adapter (`reusable-tf-azure.yml`)**: Microsoft Entra ID Workload Identity Federation, Azure Blob Storage state backend with `use_azuread_auth`, private containers, TLS 1.2+, and blob lease locking.
+
+> [!IMPORTANT]
+> **Cloud-Free Release Scope**: InfraFlow v0.5.0 provides multi-cloud cloud-free speculative planning, static security validation, Workload Identity Federation policy enforcement, and simulated execution. It does **NOT** perform real cloud infrastructure deployment, live OIDC token exchanges, or authenticated remote Terraform state operations. Cloud expenditure is strictly **$0.00** with **zero live credentials**.
 
 ---
 
@@ -42,64 +50,72 @@ flowchart TD
         Test --> Report
     end
 
-    subgraph Adapters["Future Tier 2 Adapters (Milestone G03)"]
-        AWS["AWS Adapter (OIDC + S3)"]
-        Azure["Azure Adapter (OIDC + Blob)"]
-        GCP["GCP Adapter (OIDC + GCS)"]
+    subgraph Adapters["Tier 2 Cloud Adapters (Multi-Cloud Cloud-Free Parity)"]
+        AWS["AWS Adapter\n(reusable-tf-aws.yml\nOIDC + S3 Backend)"]
+        GCP["GCP Adapter\n(reusable-tf-gcp.yml\nWIF + GCS Backend)"]
+        Azure["Azure Adapter\n(reusable-tf-azure.yml\nEntra WIF + Blob Backend)"]
     end
 
     Repo1 -->|"workflow_call (PR Check)"| Guard
     Repo2 -->|"workflow_call (PR Check)"| Guard
     Repo3 -->|"workflow_call (PR Check)"| Guard
 
-    Report -.->|"On Merge to Main"| AWS
-    Report -.->|"On Merge to Main"| Azure
-    Report -.->|"On Merge to Main"| GCP
+    Repo1 -.->|"Cloud Speculative Plan"| AWS
+    Repo2 -.->|"Cloud Speculative Plan"| GCP
+    Repo3 -.->|"Cloud Speculative Plan"| Azure
 ```
 
 ---
 
-## Reusable Workflow Specification
+## Reusable Workflows Contract
 
-The core reusable workflow is located at [`.github/workflows/reusable-tf-validate.yml`](.github/workflows/reusable-tf-validate.yml).
+InfraFlow provides standardized reusable workflows callable via GitHub Actions `workflow_call`:
 
-### Inputs Contract
+| Reusable Workflow | Purpose | Key Inputs | Key Security Controls |
+|---|---|---|---|
+| [`.github/workflows/reusable-tf-validate.yml`](.github/workflows/reusable-tf-validate.yml) | Core validation & formatting | `terraform-version`, `working-directory` | Input regex sanitization, path containment |
+| [`.github/workflows/reusable-tf-security.yml`](.github/workflows/reusable-tf-security.yml) | DevSecOps security scanning | `scan-severity`, `policy-directory` | TFLint, Trivy, Zizmor, Conftest/OPA |
+| [`.github/workflows/reusable-tf-plan.yml`](.github/workflows/reusable-tf-plan.yml) | Speculative plan & governance | `environment`, `var-file` | Dual scanners, Sigstore attestation, redaction |
+| [`.github/workflows/reusable-tf-apply.yml`](.github/workflows/reusable-tf-apply.yml) | Protected apply simulation | `plan-file`, `plan-integrity-digest` | KMS envelope encryption, state lineage, atomic consumption |
+| [`.github/workflows/reusable-tf-aws.yml`](.github/workflows/reusable-tf-aws.yml) | AWS cloud adapter | `aws-region`, `role-to-assume`, `s3-bucket` | IAM OIDC validation, S3 encryption & locking |
+| [`.github/workflows/reusable-tf-gcp.yml`](.github/workflows/reusable-tf-gcp.yml) | GCP cloud adapter | `workload-identity-provider`, `service-account`, `gcs-bucket` | WIF OIDC validation, GCS UBLA & versioning |
+| [`.github/workflows/reusable-tf-azure.yml`](.github/workflows/reusable-tf-azure.yml) | Azure cloud adapter | `client-id`, `tenant-id`, `storage-account` | Entra ID OIDC validation, Azure AD auth, TLS 1.2+ |
 
-| Input Name | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `terraform-version` | `string` | No | `'1.10.4'` | Terraform CLI version to install. Enforced `>= 1.6.0` and validated against SemVer format. |
-| `working-directory` | `string` | No | `'.'` | Relative directory containing Terraform configuration. Traversal (`..`), absolute paths, and workspace escapes are blocked. |
-| `enable-fmt-check` | `boolean` | No | `true` | Enforces canonical styling via `terraform fmt -check`. |
-| `enable-validate` | `boolean` | No | `true` | Validates configuration integrity via `terraform validate`. |
-| `enable-test` | `boolean` | No | `true` | Runs native unit tests via `terraform test`. |
-| `test-var-file` | `string` | No | `''` | Optional relative path to a `.tfvars` file for test variables. |
+---
 
-### Outputs Contract
+## Multi-Cloud Adapter Parity (AWS vs GCP vs Azure)
 
-| Output Name | Type | Description |
-|---|---|---|
-| `fmt-status` | `string` | Formatting check outcome (`success`, `failure`, `skipped`). |
-| `validate-status` | `string` | Validation check outcome (`success`, `failure`, `skipped`). |
-| `test-status` | `string` | Native test suite outcome (`success`, `failure`, `skipped`). |
-| `summary` | `string` | Aggregated execution summary string. |
+InfraFlow delivers architectural parity across all three major cloud providers in a completely cloud-free, zero-spend model:
+
+| Capability | AWS Adapter (G05) | GCP Adapter (G07.2–G07.4) | Azure Adapter (G07.5–G07.7) |
+|---|---|---|---|
+| **OIDC Trust Mechanism** | AWS IAM Identity Provider (OIDC) | GCP Workload Identity Pool (WIF) | Microsoft Entra ID Federated Credentials |
+| **Token Exchange Audience** | `sts.amazonaws.com` | Canonical Provider URI | `api://AzureADTokenExchange` |
+| **State Storage Service** | Amazon S3 | Google Cloud Storage (GCS) | Azure Blob Storage |
+| **State Locking Mechanism**| Amazon DynamoDB (`LockID`) | GCS Object Versioning / Preconditions | Azure Blob Native Lease |
+| **Data Plane Authentication**| IAM Role Assumption | Service Account Impersonation | Microsoft Entra ID (`use_azuread_auth = true`) |
+| **Static Key Prohibition** | Reject Access Key / Secret Key | Reject Service Account JSON Keys | Reject Storage Access Key / SAS Token |
+| **Offline Speculative Plan** | `terraform init -backend=false` | `terraform init -backend=false` | `terraform init -backend=false` |
+| **Mandatory Scanning** | Trivy (HIGH,CRITICAL) | Trivy (HIGH,CRITICAL) | Trivy (HIGH,CRITICAL) |
+| **Policy Engine** | Conftest / OPA (AWS policies) | Conftest / OPA (GCP policies) | Conftest / OPA (Azure policies) |
+| **Mock Provider Testing** | Native mock provider (`aws`) | Native mock provider (`google`) | Native mock provider (`azurerm`) |
+| **Cloud-Free Spend** | **$0.00** | **$0.00** | **$0.00** |
+| **SEC-02 PR Gate** | Fail-Closed | Fail-Closed | Fail-Closed |
 
 ---
 
 ## Consuming Repository Quick Start
 
-> **NOTE**: The example below uses placeholders (`YOUR_OWNER/YOUR_REPOSITORY`). Prior to publishing release tag `v1`, callers must reference an immutable commit SHA (`@<40-char-sha>`) or active branch. See [Consumer Workflow Guide](examples/consumer-workflow/README.md) for full instructions.
-
-Create `.github/workflows/infraflow-validate.yml` in your consumer repository:
+To call InfraFlow reusable workflows from an external repository, reference an immutable release tag (`@v0.5.0`) or commit SHA:
 
 ```yaml
-name: "Terraform CI"
+name: "Terraform Multi-Cloud CI"
 
 on:
   pull_request:
     branches: [main]
     paths:
       - "terraform/**"
-      - ".github/workflows/infraflow-validate.yml"
 
 permissions:
   contents: read
@@ -107,193 +123,52 @@ permissions:
 jobs:
   validate:
     name: "Validate Terraform"
-    # Replace YOUR_OWNER/YOUR_REPOSITORY with your GitHub org/repo
-    # Replace YOUR_INFRAFLOW_COMMIT_SHA with your commit SHA (e.g., 8a3f9c...) or @v1 once published
-    uses: YOUR_OWNER/YOUR_REPOSITORY/.github/workflows/reusable-tf-validate.yml@YOUR_INFRAFLOW_COMMIT_SHA
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-validate.yml@v0.5.0
     with:
       terraform-version: "1.10.4"
       working-directory: "terraform"
       enable-fmt-check: true
       enable-validate: true
       enable-test: true
-```
 
-For full multi-module matrix execution examples, see the [Consumer Workflow Guide](examples/consumer-workflow/README.md).
+  azure-plan:
+    name: "Azure Speculative Plan (Cloud-Free)"
+    needs: [validate]
+    uses: TM-threemavithana/infraflow/.github/workflows/reusable-tf-azure.yml@v0.5.0
+    with:
+      working-directory: "terraform/azure"
+      environment: "dev"
+      storage-account-name: "stinfraflowdev"
+      container-name: "tfstate"
+      state-key: "env/dev/terraform.tfstate"
+      enable-azure-auth: false
+```
 
 ---
 
-## Security Architecture & Defenses
+## Security Architecture & Defense-in-Depth
 
-1. **Least-Privilege Token Permissions**: Workflows run with `permissions: contents: read`. No write permissions are granted to pull request jobs.
-2. **Zero Cloud Credentials in PR**: Pull request validation requires zero AWS, Azure, or GCP credentials.
+1. **Least-Privilege Token Permissions**: Workflows run with default `permissions: contents: read`. No elevated write privileges or `id-token: write` permissions are granted to pull request or cloud-free simulation jobs.
+2. **SEC-02 Fail-Closed Invariant**: Untrusted pull requests requesting live cloud credentials (`enable-*-auth: true`) fail closed immediately before toolchain execution.
 3. **No `pull_request_target`**: Prevents untrusted fork code from executing with base repository privileges.
 4. **Script Injection Mitigation**: All workflow inputs are mapped to POSIX environment variables before shell script execution. No raw `${{ inputs.* }}` expressions are evaluated directly inside `run:` strings.
-5. **Directory Traversal & Containment**: Inputs are strictly validated against regex allowlists; absolute paths (`/`), tildes (`~`), and path traversal (`..`) are rejected before checkout. Post-checkout checks enforce that the canonical working directory is contained within `$GITHUB_WORKSPACE`.
-6. **Immutable Action Pinning**: External actions are pinned to full 40-character commit SHAs:
+5. **Defensive Workspace Containment**: All path inputs are validated against regex allowlists; absolute paths (`/`), tildes (`~`), and path traversal (`..`) are rejected before checkout. Post-checkout checks enforce that the canonical working directory is strictly contained within `$GITHUB_WORKSPACE`.
+6. **Immutable Action Pinning**: External GitHub Actions are pinned to full 40-character commit SHAs:
    - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683` (# v4.2.2)
    - `hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd` (# v3.1.2)
-7. **Supply Chain Hardened CI**: Platform CI downloads and executes `actionlint` v1.7.7 verified against an immutable SHA256 checksum.
+7. **Supply Chain Hardened CI**: Platform CI executes `actionlint` and `zizmor` across all workflows, with zero medium/high findings.
 
 ---
 
-## Release Readiness & Verification Status
+## Quality Metrics & Verification
 
-### Locally Verified Capabilities (22/22 Automated Checks)
-- **Workflow Schema & Syntax**: Validated with `actionlint` across all workflows.
-- **Terraform Formatting**: Validated via `terraform fmt -check` on cloud-free modules.
-- **Backend-Free Init**: Validated via `terraform init -backend=false`.
-- **Static Validation**: Validated via `terraform validate`.
-- **Native Unit Testing**: Validated via `terraform test` (6 passed unit assertions).
-- **Negative Fixture Rejection**: Verified failure detection on invalid syntax, unformatted code, and failing assertions.
-- **Input Guard & Workspace Containment**: 12 automated security tests exercising path traversal, injection payloads, invalid SemVer, version `< 1.6.0`, absolute paths, and missing directories.
+InfraFlow enforces rigorous quality and security standards across offline test harnesses and authoritative CI runners:
 
-### Remotely Unverified Capabilities (Pending Remote Release)
-- **Live GitHub-Hosted Runner Execution**: Cannot be executed offline; requires pushing to a remote repository with active GitHub Actions runners.
-- **Live Cross-Repository Invocations**: Requires a published remote repository with cross-repository access enabled.
-
----
-
-## How to Create the First Immutable Release
-
-When ready to publish the first public release to GitHub:
-
-```bash
-# 1. Review status and create the initial commit on main
-git add .
-git commit -m "feat(core): initial release of InfraFlow reusable terraform delivery platform"
-
-# 2. Add remote origin (replace with your repository URL)
-git remote add origin https://github.com/YOUR_OWNER/YOUR_REPOSITORY.git
-
-# 3. Push main branch
-git push -u origin main
-
-# 4. Tag the immutable semantic release
-git tag -a v1.0.0 -m "Release v1.0.0: Initial release of InfraFlow CI/CD Core"
-
-# 5. Create the floating major tag
-git tag -fa v1 -m "Release v1"
-
-# 6. Push tags to GitHub
-git push origin v1.0.0 v1
-
-# 7. Configure Cross-Repository Access (if repository is private)
-# Navigate to: Settings -> Actions -> General -> Access
-# Select: "Accessible from repositories in the '{organization}' organization"
-```
-
----
-
-## Repository Structure
-
-```
-infraflow/
-├── .github/
-│   └── workflows/
-│       ├── reusable-tf-validate.yml   # Core validation reusable workflow (G02)
-│       ├── reusable-tf-security.yml   # DevSecOps quality gates reusable workflow (G03)
-│       ├── reusable-tf-plan.yml       # Speculative planning & approval gate (G04)
-│       └── ci.yml                     # Platform self-testing workflow
-├── docs/
-│   ├── architecture/                  # Architectural foundations (G01)
-│   │   ├── ARCHITECTURE.md            # System design & two-tier model
-│   │   ├── REQUIREMENTS.md            # Functional & security requirements
-│   │   ├── THREAT_MODEL.md            # STRIDE threat model & trust boundaries
-│   │   ├── ADAPTERS.md                # Multi-cloud adapter specifications
-│   │   └── MILESTONES.md              # Delivery milestones & quality gates
-│   ├── security/                      # DevSecOps security specifications (G03)
-│   │   ├── security-architecture.md   # Defense-in-depth security architecture
-│   │   ├── threat-model.md            # STRIDE security & supply chain threat model
-│   │   ├── policy-reference.md        # Rego policy reference & input contracts
-│   │   ├── scanner-configuration.md   # TFLint, Trivy, Zizmor, Conftest standards
-│   │   └── verification-report.md     # Milestone G03 engineering verification report
-│   └── planning/                      # Planning & approval specifications (G04)
-│       ├── planning-architecture.md   # Speculative planning architecture & data flow
-│       ├── approval-model.md          # Automated verified policy gate & governance model
-│       ├── plan-security.md           # Secret masking, ephemeral storage & attestation
-│       └── verification-report.md     # Milestone G04 verification & test evidence
-├── examples/
-│   ├── cloud-free-module/             # Cloud-neutral reference module (terraform_data)
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   ├── versions.tf
-│   │   └── tests/
-│   │       └── unit.tftest.hcl
-│   └── consumer-workflow/             # Sample consumer repository workflow & guide
-├── fixtures/                          # Verification and regression test fixtures
-│   ├── invalid-syntax/
-│   ├── unformatted/
-│   ├── failing-test/
-│   ├── security/                      # DevSecOps security fixtures (G03)
-│   │   ├── tflint/                    # Valid & invalid HCL lint fixtures
-│   │   ├── trivy/                     # Secure & insecure storage/network fixtures
-│   │   ├── zizmor/                    # Insecure permissions, unpinned action fixtures
-│   │   └── policies/                  # Positive & negative policy & plan JSON fixtures
-│   └── planning/                      # Planning engine fixtures (G04)
-│       ├── valid-plan/                # Valid plan JSON fixture
-│       ├── sensitive-plan/            # Sensitive attributes masking test fixture
-│       ├── destructive-plan/          # Destructive change (delete/replace) fixture
-│       └── malformed-plan/            # Corrupted plan JSON syntax fixture
-├── policies/                          # Declarative Rego Policy-as-Code suites
-│   ├── common/                        # Mandatory tags, naming, plan policies
-│   ├── aws/                           # AWS S3 encryption, public access, SG ingress
-│   ├── azure/                         # Azure storage TLS 1.2+, public blob disabled
-│   └── gcp/                           # GCP GCS uniform bucket-level access
-├── .github/
-│   ├── CODEOWNERS                     # Platform code ownership & review routing
-│   ├── rulesets/
-│   │   └── main-ruleset.json          # Repository-level GitHub governance ruleset
-│   └── workflows/
-│       ├── ci.yml                     # Platform CI pipeline
-│       ├── reusable-tf-validate.yml   # Core validation reusable workflow
-│       ├── reusable-tf-security.yml   # DevSecOps scanning reusable workflow
-│       └── reusable-tf-plan.yml       # Speculative plan & Sigstore attestation workflow
-├── docs/
-│   ├── architecture/                  # Architecture specs, requirements, threat models
-│   ├── planning/                      # Planning engine, approval model, provenance specs
-│   └── security/                      # DevSecOps, supply chain, and policy specifications
-├── examples/
-│   ├── cloud-free-module/             # Cloud-free reference module (tests, validations)
-│   └── consumer-workflow/             # Calling workflow integration patterns
-├── fixtures/                          # Positive & negative test fixtures
-│   ├── invalid-syntax/                # Malformed HCL syntax fixture
-│   ├── unformatted/                   # Canonical styling negative fixture
-│   ├── failing-test/                  # Native test failure fixture
-│   ├── security/                      # DevSecOps scanner fixtures
-│   │   ├── tflint/                    # Deprecated syntax & naming fixtures
-│   │   ├── trivy/                     # Secure & insecure storage/network fixtures
-│   │   ├── zizmor/                    # Insecure permissions, unpinned action fixtures
-│   │   └── policies/                  # Positive & negative policy & plan JSON fixtures
-│   └── planning/                      # Planning engine fixtures (G04)
-│       ├── valid-plan/                # Valid plan JSON fixture
-│       ├── sensitive-plan/            # Sensitive attributes masking test fixture
-│       ├── destructive-plan/          # Destructive change (delete/replace) fixture
-│       └── malformed-plan/            # Corrupted plan JSON syntax fixture
-├── policies/                          # Declarative Rego Policy-as-Code suites
-│   ├── common/                        # Mandatory tags, naming, plan policies
-│   ├── aws/                           # AWS S3 encryption, public access, SG ingress
-│   ├── azure/                         # Azure storage TLS 1.2+, public blob disabled
-│   ├── gcp/                           # GCP GCS uniform bucket-level access
-│   └── trust/                         # Trust anchors, public keys & revocation list
-├── scripts/
-│   ├── analyze-plan.py                # Plan analysis engine & change classifier
-│   ├── verify-plan-integrity.py       # Plan provenance, Sigstore & attestation engine
-│   └── validate-local.sh              # Local automated verification harness (183 checks)
-├── .gitignore
-├── .tflint.hcl                        # Standardized TFLint configuration
-├── .zizmor.yml                        # Zizmor workflow audit configuration
-├── LICENSE
-└── README.md
-```
-
----
-
-## Local Validation & Live CI Verification
-
-InfraFlow implements a dual verification strategy separating offline local development from authoritative cloud execution:
-- **Local Test Harness (`scripts/validate-local.sh`)**: Runs completely offline executing all 183 quality gates across G01 through G04. It evaluates schema contracts, AST workflows, security matrices, static analyzers, and cryptographic provenance using local synthetic bundles and deterministic digests without requiring internet access or cloud credentials.
-- **Authoritative Production CI (GitHub Actions)**: Operates online in live GitHub Actions workflows. It generates real cryptographically signed GitHub Artifact Attestations using short-lived GitHub Actions OIDC identity tokens and the Sigstore/Rekor public transparency log, cryptographically verified by `gh attestation verify`.
+- **Local Automated Quality Harness (`scripts/validate-local.sh`)**: **303/303** passing checks (100% pass rate) across 18 distinct test sections covering G01 through G07.
+- **Python Unit & Adversarial Test Suites**: **299/299** passing tests (`tests/`), including dedicated 30-vector GCP and 45-vector Azure adversarial integration suites.
+- **OPA / Conftest Rego Policy Suites**: **171/171** passing unit tests (`policies/`) covering naming, tags, S3, GCS, Azure Blob, AWS OIDC, GCP WIF, and Azure Entra ID federation policies.
+- **Reference Module Testing**: 4 complete reference modules (`cloud-free-module`, `aws-reference-module`, `gcp-reference-module`, `azure-reference-module`) verified with Terraform `>= 1.7.0` provider mocking, formatting, validation, and zero cloud spend ($0.00).
+- **External Consumer Integration**: Independently verified on GitHub Actions runners in `TM-threemavithana/infraflow-consumer-test` across PR #3 (G06), PR #4 (G07 GCP), and PR #5 (G07 Azure) with 100% green workflows.
 
 To execute the offline local validation harness:
 
@@ -304,25 +179,86 @@ chmod +x scripts/validate-local.sh
 
 ---
 
+## Repository Structure
+
+```
+infraflow/
+├── .github/
+│   ├── CODEOWNERS                     # Code ownership & review routing
+│   ├── rulesets/
+│   │   └── main-ruleset.json          # Repository branch protection ruleset
+│   └── workflows/
+│       ├── ci.yml                     # Platform self-testing pipeline
+│       ├── reusable-tf-validate.yml   # Provider-neutral CI core (G02)
+│       ├── reusable-tf-security.yml   # DevSecOps security scanning (G03)
+│       ├── reusable-tf-plan.yml       # Speculative planning & attestation (G04)
+│       ├── reusable-tf-apply.yml      # Protected apply simulation (G06)
+│       ├── reusable-tf-aws.yml        # AWS cloud adapter (G05)
+│       ├── reusable-tf-gcp.yml        # GCP cloud adapter (G07.2–G07.4)
+│       └── reusable-tf-azure.yml      # Azure cloud adapter (G07.5–G07.7)
+├── docs/
+│   ├── adapters/                      # Cloud adapter architecture & guides
+│   │   ├── aws-adapter-guide.md       # AWS OIDC & S3 architecture guide
+│   │   ├── gcp-adapter-guide.md       # GCP WIF & GCS architecture guide
+│   │   └── azure-adapter-guide.md     # Azure Entra ID & Blob architecture guide
+│   ├── architecture/                  # Architectural foundations & specifications
+│   │   ├── ARCHITECTURE.md            # System design & two-tier model
+│   │   ├── REQUIREMENTS.md            # Functional & security requirements
+│   │   ├── THREAT_MODEL.md            # STRIDE threat model & trust boundaries
+│   │   ├── ADAPTERS.md                # Multi-cloud adapter specifications
+│   │   └── MILESTONES.md              # Delivery milestones & quality gates
+│   ├── evidence/                      # Milestone verification & integration evidence
+│   │   ├── G05/                       # AWS integration evidence
+│   │   ├── G06/                       # Protected apply simulation evidence
+│   │   └── G07/                       # Multi-cloud assessment, GCP, Azure & release evidence
+│   ├── planning/                      # Planning & approval specifications (G04)
+│   └── security/                      # DevSecOps security specifications (G03)
+├── examples/
+│   ├── cloud-free-module/             # Cloud-neutral reference module (terraform_data)
+│   ├── aws-reference-module/          # AWS mock-provider reference module
+│   ├── gcp-reference-module/          # GCP mock-provider reference module
+│   ├── azure-reference-module/        # Azure mock-provider reference module
+│   └── consumer-workflow/             # Calling workflow integration patterns
+├── fixtures/                          # Verification, security & planning test fixtures
+├── policies/                          # Declarative Rego Policy-as-Code suites
+│   ├── common/                        # Mandatory tags, naming, plan policies
+│   ├── aws/                           # AWS S3, security groups & OIDC policies
+│   ├── gcp/                           # GCP GCS backend & WIF OIDC policies
+│   ├── azure/                         # Azure Blob backend & Entra OIDC policies
+│   └── trust/                         # Trust anchors & public key allowlists
+├── scripts/
+│   ├── analyze-plan.py                # Plan analysis & structural change classifier
+│   ├── verify-plan-integrity.py       # Plan provenance, Sigstore & attestation engine
+│   ├── kms-envelope.py                # Symmetric envelope encryption tooling
+│   ├── verify-plan-lifecycle.py       # State lineage & replay verification tooling
+│   └── validate-local.sh              # Local automated verification harness (303 checks)
+├── tests/                             # Python unit & adversarial test suites (299 tests)
+├── .tflint.hcl                        # Standardized TFLint configuration
+├── .zizmor.yml                        # Zizmor workflow audit configuration
+├── LICENSE                            # Apache License 2.0
+└── README.md
+```
+
+---
+
 ## Documentation Links
 
-### Architecture & Delivery
+### Architecture & Program Roadmap
 - [System Architecture](docs/architecture/ARCHITECTURE.md)
 - [Requirements Specification](docs/architecture/REQUIREMENTS.md)
 - [Foundational Threat Model](docs/architecture/THREAT_MODEL.md)
-- [Cloud Adapters Specification](docs/architecture/ADAPTERS.md)
+- [Multi-Cloud Adapters Specification](docs/architecture/ADAPTERS.md)
 - [Milestones & Acceptance Criteria](docs/architecture/MILESTONES.md)
-- [Consumer Integration Guide](examples/consumer-workflow/README.md)
 
-### DevSecOps Security (G03)
-- [Security Architecture](docs/security/security-architecture.md)
-- [Supply Chain Threat Model](docs/security/threat-model.md)
-- [Policy as Code Reference](docs/security/policy-reference.md)
-- [Scanner Configuration Standards](docs/security/scanner-configuration.md)
-- [G03 Security Verification Report](docs/security/verification-report.md)
+### Cloud Adapter Guides
+- [AWS Adapter Guide](docs/adapters/aws-adapter-guide.md)
+- [GCP Adapter Guide](docs/adapters/gcp-adapter-guide.md)
+- [Azure Adapter Guide](docs/adapters/azure-adapter-guide.md)
 
-### Planning & Governance Engine (G04)
-- [Planning Architecture](docs/planning/planning-architecture.md)
-- [Automated Verified Policy Gate Model](docs/planning/approval-model.md)
-- [Plan Security & Attestation](docs/planning/plan-security.md)
-- [G04 Verification Report](docs/planning/verification-report.md)
+### Verification & Release Evidence Reports
+- [G05 AWS Integration Report](docs/evidence/G05/G05-FINAL-RELEASE-REPORT.md)
+- [G06 Protected Execution Simulation Report](docs/evidence/G06/G06-FINAL-RELEASE-REPORT.md)
+- [G07 Multi-Cloud Readiness Assessment](docs/architecture/G07-MULTICLOUD-READINESS-ASSESSMENT.md)
+- [G07 GCP Integration Report](docs/evidence/G07/G07-FINAL-GCP-INTEGRATION-REPORT.md)
+- [G07 Azure Integration Report](docs/evidence/G07/G07-AZURE-EXTERNAL-INTEGRATION-REPORT.md)
+- [G07 Final Multi-Cloud Release Report](docs/evidence/G07/G07-FINAL-MULTICLOUD-RELEASE-REPORT.md)
