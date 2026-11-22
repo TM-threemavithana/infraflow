@@ -640,7 +640,7 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G10.2**: Self-service consumer onboarding, scaffolding (`infraflow init`), and fleet registration.
 - [x] **Milestone G10.3**: Consumer secret defense (`SecretScanner`) and semantic destruction protection (`critical_resources.rego`).
 - [x] **Milestone G10.3.1**: Security integration assurance, multi-cloud conftest evaluation, and decommission authorization hardening.
-- [x] **Milestone G10.4.1**: Distributed locking architecture, lease state machine, monotonic fencing tokens, and multi-cloud driver contracts.
+- [x] **Milestone G10.4.1 / G10.4.1-R**: Distributed locking architecture refinement, backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, and decoupled admin recovery.
 - [ ] **Next Horizon (Milestone G10.4.2 & Beyond)**: State lock driver implementation (`LocalFS` & `MockDistributed`), high-concurrency race suites, and pluggable alerting sinks.
 
 ---

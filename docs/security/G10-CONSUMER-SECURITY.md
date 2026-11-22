@@ -287,3 +287,25 @@ To ensure that callers cannot bypass security scanning via caller workflow input
 - `reusable-tf-plan.yml` enforces fail-closed rejection of `enable-policy-evaluation: false` and `enable-trivy: false`.
 - `reusable-tf-security.yml` enforces fail-closed rejection of `enable-trivy: false` and `enable-conftest: false`.
 - Combined with `reusable-tf-aws.yml`, `azure.yml`, and `gcp.yml`, zero execution paths permit disabling mandatory security scanners.
+
+---
+
+## 8. Distributed State Locking Security & Administrative Recovery (G10.4.1-R)
+
+### 8.1 Zero-Credential Storage Invariant in Lock Records
+Distributed lock metadata files (`infraflow-lock-metadata-v1`) are publicly inspectable by diagnostic engines (`infraflow doctor`, fleet auditors) and telemetry exporters:
+- **Mandatory Sanitization:** All metadata blocks are parsed by `SecretSanitizer` prior to persistence.
+- **Fail-Closed Protection:** Any presence of AWS access keys, GitHub PATs, private keys, or passwords in lock metadata immediately aborts lock acquisition with a `SecurityViolationError`.
+
+### 8.2 Stale Owner Interception & Fencing Boundaries
+To prevent distributed race conditions when runner virtual machines stall or experience network partitions:
+- **Fencing Tokens:** Every lock acquisition generates a monotonically increasing `fencing_token` (`uint64`).
+- **Enforcement Points:** Enforced strictly at the state backend storage gate, the plan execution replay ledger (`verify-plan-lifecycle.py`), and pre/post-execution process barriers.
+- **Provider Boundary Disclosure:** Direct cloud provider API requests (e.g. AWS EC2, GCP SQL) communicate directly with cloud control planes that do not parse InfraFlow fencing tokens. InfraFlow mitigates this by enforcing tight heartbeat safety margins ($\frac{1}{3}\text{TTL}$), client-side expiration margins ($\text{TTL} - \Delta_{\text{skew}} - \Delta_{\text{rtt}}$), and fast-fail process termination (`SIGTERM`/`SIGKILL`) if renewals fail.
+
+### 8.3 Privileged Administrative Recovery Service
+Standard worker drivers (`DistributedLockDriver`) are explicitly prohibited from performing force-unlock operations:
+- **Decoupled Recovery Service:** Isolated in `AdministrativeLockRecoveryService`.
+- **Cryptographic Gate:** Requires an authenticated asymmetric digital signature (`infraflow-admin-unlock-v1`) matching the platform trust root key.
+- **Zombie Worker Protection:** Reclaiming a wedged lock atomically increments the durable fencing token so any resurrected zombie worker is permanently fenced from committing state.
+- **Immutable Audit Logging:** Emits a `lock_force_unlocked` event to structured telemetry recording the operator identity, ticket reference, and signature digest.

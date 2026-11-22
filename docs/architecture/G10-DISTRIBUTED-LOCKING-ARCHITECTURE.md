@@ -1,8 +1,8 @@
-# InfraFlow Architecture Specification: Distributed Locking, Lease Management & Fencing Protocol (G10.4.1)
+# InfraFlow Architecture Specification: Distributed Locking, Lease Management & Fencing Protocol (G10.4.1-R)
 
-**Milestone:** G10.4.1 — Distributed Locking Architecture  
+**Milestone:** G10.4.1-R — Distributed Locking Architecture Refinement  
 **Document Category:** Systems Architecture & Protocol Specification  
-**Status:** **APPROVED FOR IMPLEMENTATION**  
+**Status:** **APPROVED & REFINED FOR IMPLEMENTATION**  
 **Lead Authors:** Principal Distributed Systems Engineer & Senior Platform Architect  
 **Target Release:** v0.8.0-dev  
 **Platform Invariant:** **$0.00 Cloud Spend, Zero Live Credentials, Zero Mutating Operations**  
@@ -29,19 +29,20 @@ In GitHub Actions and cloud-native CI/CD, every workflow run executes on an isol
 2. **Replay Ledger Ephemerality:** A local SQLite ledger (`plan_executions.db`) initialized on Runner VM A vanishes when VM A is deprovisioned, failing to guard against concurrent runs on VM B.
 3. **Plan-to-Apply Concurrency Gaps:** Speculative plans generated during Pull Request review (`reusable-tf-plan.yml`) may take minutes or hours to be approved and merged. If multiple PRs modifying the same environment are merged in rapid succession, out-of-order execution and state serial divergence occur.
 
-### 1.2 Mission of Milestone G10.4.1
-Milestone G10.4.1 defines the authoritative, production-grade distributed locking architecture for InfraFlow. It introduces:
-- A standardized, decoupled **Lock Manager Interface** supporting pluggable storage backends.
-- Monotonically increasing **fencing tokens** to eliminate distributed split-brain hazards caused by GC pauses and network partitions.
-- Time-bounded **leases with deterministic expiration and heartbeat renewal**.
-- Concrete driver specifications for offline verification (`LocalFSDriver`, `MockDistributedDriver`) and production multi-cloud targets (AWS DynamoDB/S3, Azure Blob Storage, GCP Cloud Storage/Spanner).
-- Zero credential exposure and fail-closed security guarantees.
+### 1.2 Mission of Milestone G10.4.1-R
+Milestone G10.4.1-R refines the authoritative, production-grade distributed locking architecture for InfraFlow. It addresses six core distributed systems engineering realities:
+1. **Realistic Fencing-Token Enforcement:** Defines exact boundary enforcement and explicitly documents provider-level cloud API limitations.
+2. **Canonical Lock Identity Bound to Terraform Backend:** Binds lock keys directly to actual storage location, account/project, state key, and workspace.
+3. **Durable Atomic Fencing-Token Generation:** Guarantees strict monotonicity, counter persistence, and eliminates duplicate tokens across crashes.
+4. **Lease Time Safety & Clock Skew Resilience:** Establishes storage-authoritative clock sources, conservative client safety margins, heartbeat timeouts, and fast-fail abort.
+5. **Dual-Layer Metadata Integrity:** Clearly distinguishes SHA-256 corruption checksums from authenticated cryptographic signatures and defines storage-level CAS generations.
+6. **Separation of Privileged Administrative Recovery:** Removes `force_break` from standard worker driver interfaces, establishing a separate, digitally signed administrative recovery service.
 
 ---
 
 ## 2. Separation of Concerns: InfraFlow Lock vs. Terraform Native State Lock
 
-A critical architectural tenet of InfraFlow is the strict boundary between **Platform Delivery Orchestration Locking** and **Terraform Native State Storage Locking**:
+A critical architectural tenet of InfraFlow is the strict, non-negotiable boundary between **Platform Delivery Orchestration Locking** and **Terraform Native State Storage Locking**:
 
 ```
 +-------------------------------------------------------------------------------------------------+
@@ -52,9 +53,9 @@ A critical architectural tenet of InfraFlow is the strict boundary between **Pla
 |            ▼                           ▼                                ▼                       |
 |   +-----------------------------------------------------------------------------------------+   |
 |   |                       InfraFlow Distributed Lock Manager                                |   |
-|   |   - Resource Identity Derivation (Tenant/Repo/Env/Workspace)                            |   |
-|   |   - Lease Acquisition & Heartbeat Renewal (TTL: 15m)                                    |   |
-|   |   - Monotonic Fencing Token Generation (token = prev + 1)                               |   |
+|   |   - Backend-Bound Lock Key Derivation (Storage/Account/StateKey/Workspace)              |   |
+|   |   - Lease Acquisition & Heartbeat Renewal (TTL: 15m, Heartbeat: 5m)                     |   |
+|   |   - Monotonic Fencing Token Generation (token = prev + 1, durable high-water mark)       |   |
 |   |   - Cross-Runner Mutual Exclusion & Contention Telemetry                                |   |
 |   +-----------------------------------------------------------------------------------------+   |
 |                                        │                                                        |
@@ -66,8 +67,8 @@ A critical architectural tenet of InfraFlow is the strict boundary between **Pla
 |                                                                                                 |
 |   +-----------------------------------------------------------------------------------------+   |
 |   |                      Terraform CLI Native Execution (init, plan, apply)                 |   |
-|   |   - Evaluates provider graph                                                            |   |
-|   |   - Interacts with remote state storage                                                 |   |
+|   |   - Evaluates provider graph & constructs execution DAG                                 |   |
+|   |   - Interacts directly with remote state storage                                        |   |
 |   +-----------------------------------------------------------------------------------------+   |
 |                                        │                                                        |
 |                                        ▼                                                        |
@@ -86,254 +87,334 @@ A critical architectural tenet of InfraFlow is the strict boundary between **Pla
 | Dimension | InfraFlow Distributed Lock | Terraform Native State Lock |
 |---|---|---|
 | **Scope** | Cross-pipeline, cross-job lifecycle (Plan, PR approval, Apply, Drift, Campaigns) | Single CLI command execution (`terraform plan` / `apply`) |
-| **Protected Assets** | Entire environment, workload identity, and delivery lifecycle | Raw `terraform.tfstate` binary/JSON blob |
+| **Protected Assets** | Entire environment delivery lifecycle, plan consumption, and replay ledger | Raw `terraform.tfstate` binary/JSON blob |
 | **Coordination Boundary** | Multi-runner orchestration (e.g. halts apply if drift assessment is active) | Storage blob concurrent mutation prevention |
 | **Fencing Protection** | Monotonic fencing token (`uint64`) passed downstream to verify authority | Primitive client UUID / lock ID without monotonic ordering |
-| **Replacement Rule** | **NEVER replaces native state locking.** Operates strictly as a pre-flight governance gate. | Continues to execute within Terraform runtime. |
+| **Replacement Rule** | **NEVER replaces native state locking.** Operates strictly as a pre-flight governance gate. | Continues to execute natively within Terraform runtime. |
 
 ---
 
-## 3. Resource Identity & Lock-Key Derivation
+## 3. Realistic Fencing-Token Enforcement & IaC Provider Boundaries
 
-To guarantee unambiguous mutual exclusion across multi-tenant environments, every lockable resource is resolved to a canonical, deterministic lock key.
+### 3.1 The Theoretical Model vs. Cloud Provider Reality
+In classical distributed systems literature (e.g. Martin Kleppmann's fencing token model), a fencing token guarantees linearizable safety because the *storage server* validates that incoming writes carry a token strictly greater than the highest token seen so far:
 
-### 3.1 Resource Identity Tuple
-A lockable infrastructure target is defined by the 5-tuple:
-$$\text{ResourceTarget} = (\text{tenant\_id}, \text{repository}, \text{environment}, \text{workspace}, \text{component})$$
-
-Where:
-- `tenant_id`: Enterprise organization or tenant identifier (e.g., `TM-threemavithana`).
-- `repository`: Consumer repository name (e.g., `infraflow-consumer-networking`).
-- `environment`: Deployment target environment (e.g., `production`, `staging`, `development`).
-- `workspace`: Terraform workspace name (defaults to `default`).
-- `component`: Sub-module or directory component within repository (e.g., `vpc`, `database`, `root`).
-
-### 3.2 Canonical Lock Key Derivation
-The canonical key string follows a hierarchical, path-safe URI specification:
 ```text
-infraflow/locks/v1/{tenant_id}/{repository}/{environment}/{workspace}/{component}.lock
+Client (Token 142) -----> [Storage Server validates: Token 142 >= 142] -----> Write Committed
+Client (Token 141) -----> [Storage Server validates: Token 141 < 142]  -----> REJECTED!
 ```
 
-*Example:*
-```text
-infraflow/locks/v1/TM-threemavithana/infraflow-consumer-networking/production/default/root.lock
-```
+**The Cloud IaC Challenge:**  
+Terraform does **not** communicate with a single monolithic storage server. When `terraform apply` executes:
+1. The Terraform CLI reads state from the backend (e.g. S3).
+2. The Terraform Providers (`hashicorp/aws`, `hashicorp/azurerm`, `hashicorp/google`) make direct, independent HTTPS API calls to cloud control planes:
+   - AWS EC2: `RunInstances`, `TerminateInstances`, `AuthorizeSecurityGroupIngress`
+   - Azure ARM: `Microsoft.Compute/virtualMachines/write`
+   - GCP Cloud SQL: `sql.instances.create`
+3. **None of these cloud provider APIs accept, understand, or enforce an InfraFlow fencing token!**  
+   If a stalled runner wakes up during a split-brain window, AWS EC2 will process its API requests regardless of any platform-level fencing token.
 
-### 3.3 Cryptographic Resource Fingerprint
-To support drivers with partition key length limits (e.g. AWS DynamoDB, HashiCorp Consul), a deterministic SHA-256 digest is derived:
-$$\text{ResourceFingerprint} = \text{SHA256}(\text{CanonicalKey})$$
+### 3.2 Where Fencing Tokens ARE Strictly Enforced
+InfraFlow implements fencing tokens with strict architectural honesty, enforcing them where the platform has authoritative control:
+
+1. **Terraform Remote State Backend Storage Gate:**
+   - The state backend wrapper / state gate verifies `fencing_token` before committing updated state snapshots. A stalled worker might emit cloud API calls, but it will be partitioned from updating the authoritative state file, causing Terraform to report a state lock/commit failure.
+2. **InfraFlow Plan Execution Replay Ledger:**
+   - The transactional replay ledger (`scripts/verify-plan-lifecycle.py`) checks `fencing_token` on every state transition. Stalled workers cannot reserve, consume, or update plan execution statuses.
+3. **Pre-Execution & Continuous Heartbeat Fencing Barrier:**
+   - Before any Terraform process is spawned, the wrapper validates lease validity.
+   - The background heartbeat daemon continuously tests lease validity. If the lease expired or the fencing token was superseded, the manager immediately sends `SIGTERM` (followed by `SIGKILL` after 10s) to the Terraform child process, halting API calls before subsequent resources are mutated.
+4. **Telemetry and Governance Campaign Gates:**
+   - Operational telemetry, drift reports, and upgrade campaign progress reports bearing a stale fencing token are rejected fail-closed.
+
+### 3.3 Explicit Architectural Limitations Disclosure
+> [!IMPORTANT]
+> **Provider-Level Limitation:** Without an inline cloud API proxy terminating all TLS traffic to AWS/Azure/GCP endpoints (which would introduce immense operational complexity, cloud-specific credential interception, and violate the $0.00 zero-credential boundary), direct provider API calls during the brief window between lease expiration and heartbeat fail-fast process termination cannot be cryptographically blocked at the cloud API edge.  
+> **Platform Mitigation:** InfraFlow minimizes this window using short lease safety margins ($\frac{1}{3}\text{TTL}$ heartbeat), client-side pre-expiry cutoffs, and mandatory drift quarantine (`STATUS_OUTCOME_UNCERTAIN`) on un-graceful worker terminations.
+
+---
+
+## 4. Canonical Lock Identity Bound to Terraform Backend Architecture
+
+To eliminate cross-repository and cross-environment state collisions, the canonical lock key binds directly to the **Actual Terraform Backend Target** and storage location.
+
+### 4.1 Backend Target Tuple
+A lockable infrastructure target is defined by the authoritative backend tuple:
+$$\text{BackendTarget} = (\text{backend\_type}, \text{storage\_location}, \text{account\_or\_project}, \text{state\_key}, \text{workspace})$$
+
+Combined with platform caller context:
+$$\text{CallerContext} = (\text{tenant\_id}, \text{repository}, \text{environment})$$
+
+### 4.2 Multi-Cloud Canonical Key Derivation Specification
+
+| Cloud Provider | Backend Type | Key Construction Schema | Example Canonical Lock Key |
+|---|---|---|---|
+| **AWS** | `s3` | `infraflow/locks/v1/aws/{account_id}/{bucket_name}/{state_key}/{workspace}.lock` | `infraflow/locks/v1/aws/123456789012/corp-tfstate-prod/env/prod/networking.tfstate/default.lock` |
+| **Azure** | `azurerm` | `infraflow/locks/v1/azure/{subscription_id}/{storage_account}/{container}/{state_key}/{workspace}.lock` | `infraflow/locks/v1/azure/00000000-0000-0000-0000-000000000000/corptfstateprod/tfstate/networking.tfstate/default.lock` |
+| **GCP** | `gcs` | `infraflow/locks/v1/gcp/{project_id}/{bucket_name}/{prefix}/{workspace}.lock` | `infraflow/locks/v1/gcp/corp-infra-prod/corp-gcs-tfstate/networking/state/default.lock` |
+| **Local / Test** | `local` | `infraflow/locks/v1/local/{repo_path_hash}/{state_file_path}/{workspace}.lock` | `infraflow/locks/v1/local/e3b0c442/examples/cloud-free-module/terraform.tfstate/default.lock` |
+
+### 4.3 Deterministic Resource Fingerprint
+For backend drivers with key-length or character restrictions (e.g., DynamoDB partition key, Consul key path), a deterministic SHA-256 digest is derived:
+$$\text{ResourceFingerprint} = \text{SHA256}(\text{CanonicalLockKey})$$
 
 ```python
-def derive_resource_fingerprint(
-    tenant_id: str,
-    repository: str,
-    environment: str,
+def derive_canonical_lock_identity(
+    backend_type: str,
+    storage_location: str,
+    account_or_project: str,
+    state_key: str,
     workspace: str = "default",
-    component: str = "root"
+    tenant_id: Optional[str] = None,
+    repository: Optional[str] = None,
+    environment: Optional[str] = None,
 ) -> Tuple[str, str]:
-    canonical_key = (
-        f"infraflow/locks/v1/{tenant_id.strip()}/{repository.strip()}/"
-        f"{environment.strip()}/{workspace.strip()}/{component.strip()}.lock"
-    )
-    digest = hashlib.sha256(canonical_key.encode("utf-8")).hexdigest()
-    return canonical_key, digest
+    """
+    Derives canonical hierarchical lock key and deterministic SHA-256 fingerprint.
+    Normalizes slashes, lowercases provider/account, and rejects path traversal.
+    """
+    # Guard against path traversal
+    for part in (backend_type, storage_location, account_or_project, state_key, workspace):
+        if ".." in part or part.startswith("/"):
+            raise ValueError(f"Invalid characters or traversal in lock identity part: '{part}'")
+
+    b_type = backend_type.strip().lower()
+    loc = storage_location.strip()
+    acct = account_or_project.strip().lower()
+    s_key = state_key.strip().lstrip("/")
+    ws = workspace.strip().lower()
+
+    canonical_key = f"infraflow/locks/v1/{b_type}/{acct}/{loc}/{s_key}/{ws}.lock"
+    fingerprint = hashlib.sha256(canonical_key.encode("utf-8")).hexdigest()
+    return canonical_key, fingerprint
 ```
 
 ---
 
-## 4. Lock Ownership & Metadata Schema (`infraflow-lock-metadata-v1`)
+## 5. Lock Metadata Architecture: Resolving Immutable Descriptor vs. Mutable Lease
 
-Lock state is maintained as an immutable, cryptographically attested JSON document.
+### 5.1 The Contradiction Resolved
+In naive distributed locking designs, lock records are described as "immutable documents," yet heartbeat renewals constantly update `expires_at` and `renewal_count`.  
+InfraFlow resolves this contradiction by partitioning the lock record into two formally decoupled sub-structures:
 
-### 4.1 Metadata Schema Definition
+1. **Immutable Lock Descriptor (`LockDescriptor`):**  
+   Created once during lock acquisition. Never mutates throughout the entire lifetime of the lock grant.
+2. **Mutable Lease State (`LeaseState`):**  
+   Updated on each heartbeat renewal via atomic Compare-And-Swap (CAS), protected by a monotonic **Lease Generation** integer.
+
+### 5.2 Schema Definition (`infraflow-lock-metadata-v1`)
 
 ```json
 {
   "$schema": "https://infraflow.dev/schemas/v1/lock-metadata.json",
   "schema_version": "infraflow-lock-metadata-v1",
-  "lock_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
-  "lock_key": "infraflow/locks/v1/TM-threemavithana/infraflow-consumer-networking/production/default/root.lock",
-  "resource_fingerprint": "a4f89d3c5e8b6a1d4f7e2c9b0a3d5e8f6b4c1a9d7e5f3b1c8a6d4e2f0b9c7a5e",
-  "owner_identity": {
-    "runner_id": "runner-vm-us-east-1-042",
-    "workflow_name": "reusable-tf-apply.yml",
-    "workflow_run_id": "1940827164",
-    "workflow_run_attempt": 1,
-    "job_id": "apply_production",
-    "actor": "release-robot[bot]",
-    "commit_sha": "02d755a47aa1ac3abb3b86b33964dd8a64d9482c"
+  
+  "descriptor": {
+    "lock_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "canonical_key": "infraflow/locks/v1/aws/123456789012/corp-tfstate-prod/env/prod/networking.tfstate/default.lock",
+    "resource_fingerprint": "a4f89d3c5e8b6a1d4f7e2c9b0a3d5e8f6b4c1a9d7e5f3b1c8a6d4e2f0b9c7a5e",
+    "backend_target": {
+      "provider": "aws",
+      "account_or_project": "123456789012",
+      "storage_location": "corp-tfstate-prod",
+      "state_key": "env/prod/networking.tfstate",
+      "workspace": "default"
+    },
+    "owner_identity": {
+      "runner_id": "runner-vm-us-east-1-042",
+      "workflow_name": "reusable-tf-apply.yml",
+      "workflow_run_id": "1940827164",
+      "workflow_run_attempt": 1,
+      "job_id": "apply_production",
+      "actor": "release-robot[bot]",
+      "commit_sha": "02d755a47aa1ac3abb3b86b33964dd8a64d9482c"
+    },
+    "purpose": "plan_apply",
+    "plan_binding": {
+      "plan_id": "plan-20261122-120000-prod",
+      "plan_digest_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "created_at": "2026-11-22T12:00:00.000000Z"
   },
-  "fencing_token": 142,
-  "purpose": "plan_apply",
-  "plan_binding": {
-    "plan_id": "plan-20261122-120000-prod",
-    "plan_digest_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
+
   "lease": {
-    "duration_seconds": 900,
+    "fencing_token": 142,
+    "lease_generation": 3,
+    "lease_duration_seconds": 900,
     "acquired_at": "2026-11-22T12:00:00.000000Z",
-    "expires_at": "2026-11-22T12:15:00.000000Z",
-    "renewed_at": null,
-    "renewal_count": 0,
-    "heartbeat_interval_seconds": 300
+    "expires_at": "2026-11-22T12:25:00.000000Z",
+    "renewed_at": "2026-11-22T12:10:00.000000Z",
+    "renewal_count": 2,
+    "heartbeat_interval_seconds": 300,
+    "driver_clock_epoch_seconds": 1795349400
   },
-  "driver_context": {
-    "driver_name": "LocalFSDriver",
-    "storage_version": "1.0.0",
-    "generation_id": "gen-8391204"
+
+  "integrity": {
+    "payload_sha256": "7c8e9b0a1d2f3e4c5b6a7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a",
+    "storage_generation": "gen-8391204"
   }
 }
 ```
 
-### 4.2 Security Field Invariant: Zero Credential Storage
-Lock metadata files are publicly inspectable by diagnostic tooling (`infraflow doctor`, `scripts/audit-consumer-fleet.py`).
-- **PROHIBITION:** Lock metadata **MUST NEVER** contain cloud access keys, AWS secrets, Azure client secrets, GitHub PATs, private keys, or plaintext passwords.
-- **ENFORCEMENT:** Any driver serializing metadata runs `SecretSanitizer.sanitize_dict(metadata)` prior to write. Detection of credential patterns triggers an immediate fail-closed exception (`UnsafeMetadataException`).
+### 5.3 Integrity Checksums vs. Authenticated Cryptographic Signatures
+> [!NOTE]
+> **Definitive Terminology Boundary:**  
+> - **`payload_sha256`:** An **integrity checksum**. Detects transmission corruption, partial disk writes, or bit-rot. It does *not* provide cryptographic authenticity or non-repudiation (anyone with storage write access can recompute a SHA-256 digest).
+> - **Storage CAS / Generation (`storage_generation`):** Atomic optimistic concurrency control enforced by the storage system (e.g. S3 ETag, Azure Blob ETag, GCS generation number).
+> - **Asymmetric Digital Signatures:** Required exclusively for privileged administrative overrides (`AdministrativeLockRecoveryService`), using ECDSA P-256 signatures evaluated against the pinned platform trust root (`scripts/verify-plan-integrity.py`).
 
 ---
 
-## 5. Lock Lifecycle State Machine
+## 6. Durable Atomic Fencing-Token Generation
 
-The distributed lock lifecycle is strictly modeled as a finite state machine:
+### 6.1 Durability & Monotonicity Invariants
+1. **Strict Monotonicity:** For any two successfully issued tokens $T_a$ and $T_b$:
+   $$a < b \implies T_a < T_b$$
+2. **Crash Resilience:** Fencing counters **MUST NEVER** reset to 0 or 1 upon worker restart, node reboot, or clean lock release.
+3. **High-Water Mark Record:** The driver persists a durable `high_water_mark` counter per canonical lock key that survives lock releases. When a lock is released and returns to `UNLOCKED`, the fencing counter remains at $T_n$. The next acquisition receives $T_{n+1}$.
+
+### 6.2 Storage-Specific Atomic Increment Mechanisms
+- **AWS DynamoDB:**  
+  `UpdateItem` with atomic expression:  
+  `SET fencing_token = if_not_exists(fencing_token, :zero) + :one`  
+  conditioned on `attribute_not_exists(LockKey) OR expires_at < :now`.
+- **Azure Blob Storage / GCP Cloud Storage:**  
+  Atomic Compare-And-Swap. Read active object metadata; increment `fencing_token = old_token + 1`; write with precondition `If-Match: <etag>` or `ifGenerationMatch=<gen>`. If precondition fails due to a race, reload and retry.
+- **LocalFS:**  
+  Atomic sequence update using an adjacent sequence file `resource.sequence` guarded by OS-level file locking (`fcntl.flock` on POSIX / `msvcrt.locking` on Windows) and written via atomic rename (`os.replace`).
+
+---
+
+## 7. Lease Time Safety, Clock Skew Resilience & Fast-Fail Heartbeat
+
+### 7.1 Authoritative Clock Source
+> [!WARNING]
+> **Client Clocks Are Untrusted:** In distributed environments, runner VM clocks experience jitter, NTP drift, and hypervisor pause skew.  
+> **Invariant:** Lease expiration is computed and evaluated **strictly against the storage driver's authoritative clock** (e.g. DynamoDB server time, S3 object timestamp, GCS server time).
+
+### 7.2 Safety Margin Formula
+To eliminate race conditions near the expiration boundary, the client applies a conservative safety margin:
+$$\text{TTL}_{\text{client\_effective}} = \text{TTL} - \Delta_{\text{skew\_tolerance}} - \Delta_{\text{network\_rtt}}$$
+
+Where:
+- $\text{TTL}$: Nominal lease duration (default 900 seconds / 15 minutes).
+- $\Delta_{\text{skew\_tolerance}}$: Maximum tolerable clock skew (default 60 seconds).
+- $\Delta_{\text{network\_rtt}}$: Maximum anticipated round-trip network latency (default 30 seconds).
+- $\text{TTL}_{\text{client\_effective}} = 900 - 60 - 30 = 810\text{ seconds}$ (13.5 minutes).
+
+### 7.3 Heartbeat Daemon & Fast-Fail Protocol
+The background heartbeat daemon runs in a separate daemon thread:
+1. **Renewal Frequency:** Triggers at intervals of $T_{\text{heartbeat}} = \frac{1}{3} \times \text{TTL}$ (every 300 seconds for a 15-minute lease).
+2. **Renewal Precondition:** CAS update requiring:
+   $$\text{lock\_id} == \text{current\_lock\_id} \land \text{fencing\_token} == \text{current\_token} \land \text{generation} == \text{current\_generation}$$
+3. **Fast-Fail Abort Threshold:**  
+   If renewal fails or times out:
+   - First failure ($T = 300\text{s}$): Immediate retry with exponential backoff.
+   - If renewal is not confirmed by $T = \frac{2}{3} \times \text{TTL}$ (600 seconds):
+     - The daemon transitions lock status to `LOST`.
+     - Sends `SIGTERM` to the active Terraform child process.
+     - Waits 10 seconds for graceful exit; if still running, sends `SIGKILL`.
+     - Logs critical error and marks execution as `STATUS_OUTCOME_UNCERTAIN`.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> UNLOCKED: System Initialization / Empty Key
+sequenceDiagram
+    participant Worker as Worker Process
+    participant HB as Heartbeat Daemon
+    participant Driver as Distributed Lock Driver
+    participant TF as Terraform Child Process
 
-    UNLOCKED --> ACQUIRING: Acquire Requested (Atomic CAS)
-    
-    ACQUIRING --> HELD: CAS Succeeded\n(Fencing Token = prev + 1)
-    ACQUIRING --> CONTENTION: CAS Failed (Lock Held & Active)
-    
-    CONTENTION --> [*]: Fail-Closed / Return LockHeldError
-    
-    HELD --> RENEWING: Heartbeat Interval Reached\n(TTL / 3 Elapsed)
-    RENEWING --> HELD: Renewal CAS Succeeded\n(expires_at += duration)
-    RENEWING --> LOST: Renewal Failed / Preempted
-    
-    HELD --> EXPIRED: Time > expires_at\n(Heartbeat Failed or Host Stalled)
-    
-    HELD --> RELEASING: Execution Completed Normally
-    RELEASING --> UNLOCKED: Release CAS Succeeded\n(Fencing Token & Lock ID Match)
-    RELEASING --> LOST: Release CAS Failed\n(Stale Owner Intercepted)
+    Worker->>Driver: acquire(key, owner_id, TTL=900s)
+    Driver-->>Worker: LockResult(Success, Token=142, Gen=1)
+    Worker->>HB: start_heartbeat(Interval=300s)
+    Worker->>TF: spawn(terraform apply)
 
-    EXPIRED --> ACQUIRING: New Contender Claims Expired Lock\n(Fencing Token Increments)
-    EXPIRED --> RECLAIMED: Garbage Collector Archives Expired State
+    Note over HB,Driver: T = 300s (First Heartbeat)
+    HB->>Driver: renew(Token=142, Gen=1)
+    Driver-->>HB: Renewed(Success, Gen=2, Expires=T+900s)
 
-    LOST --> OUTCOME_UNCERTAIN: Job In-Flight During Loss\n(Halts All Execution Fail-Closed)
-    OUTCOME_UNCERTAIN --> [*]: Operator / Drift Assessment Required
+    Note over HB,Driver: T = 600s (Second Heartbeat - Network Partition!)
+    HB->>Driver: renew(Token=142, Gen=2)
+    Note over Driver: Network Timeout / Drop
+    HB-->>HB: Renewal Failed (Attempt 1)
+    HB->>Driver: renew retry (Backoff)
+    Note over Driver: Network Still Partitioned
+
+    Note over HB,TF: T = 660s (> 2/3 TTL Safety Cutoff!)
+    HB->>Worker: notify_lock_lost(LEASE_TIMEOUT)
+    Worker->>TF: SIGTERM (Graceful Terminate)
+    Worker->>Worker: wait(10s)
+    Worker->>TF: SIGKILL (Force Kill)
+    Worker->>Worker: Quarantine (STATUS_OUTCOME_UNCERTAIN)
 ```
-
-### State Definitions & Transition Invariants:
-1. **UNLOCKED:** Resource is free. No owner exists. Fencing sequence is preserved in persistence.
-2. **ACQUIRING:** Atomic Compare-And-Swap operation in progress.
-3. **HELD:** Lock is exclusively owned by `owner_identity`. Heartbeat daemon is active.
-4. **RENEWING:** Heartbeat daemon extends lease. Verification guarantees ownership hasn't changed.
-5. **EXPIRED:** Lease duration has lapsed without heartbeat. Lock is eligible for acquisition by new contenders.
-6. **RELEASING:** Owner requests clean teardown. Verification guarantees `owner_id`, `lock_id`, and `fencing_token` match current record.
-7. **LOST:** Owner was preempted, paused, or partitioned. Any subsequent operation by this worker **MUST ABORT IMMEDIATELY**.
-8. **OUTCOME_UNCERTAIN:** An un-graceful loss occurred while infrastructure mutations were active. Quarantined until state consistency is verified via drift audit.
 
 ---
 
-## 6. Monotonically Increasing Fencing Tokens & Kleppmann Defense
+## 8. Lock Manager & Driver Interface Specification
 
-### 6.1 The Distributed Storage Hazard (Kleppmann Anomaly)
-A distributed lock that relies purely on client-side leases cannot guarantee mutual exclusion in the presence of asynchronous network delays or process pauses (e.g. stop-the-world garbage collection, thread starvation, hypervisor VM migration):
-
-```
-Client 1                     Lock Service                     Storage / Infrastructure
-   │                              │                                      │
-   ├────── Acquire Lock ─────────►│                                      │
-   │◄───── Lock Granted (TTL=15m)─┤                                      │
-   │                              │                                      │
-   [Process Paused / Stalled]     │                                      │
-   [Duration: 16 minutes]         │                                      │
-   │                              ├───── Lease Expires ─────►            │
-   │                              │                                      │
-   │                              │◄──── Acquire Lock ────── Client 2    │
-   │                              ├───── Lock Granted ─────► Client 2    │
-   │                              │                          │           │
-   │                              │                          ├─ Write A ─► [State Serial N+1 Written]
-   │                              │                          │           │
-   [Process Resumes]              │                          │           │
-   ├─ Write B (believes valid) ───┼──────────────────────────┼──────────► [CORRUPTION / OVERWRITE!]
-   │                              │                          │           │
-```
-
-### 6.2 The InfraFlow Fencing Protocol
-To eliminate this hazard without requiring distributed consensus algorithms (like Raft or Paxos) in simple runners, InfraFlow implements **Monotonically Increasing Fencing Tokens**:
-
-1. **Monotonic Counter Generation:**
-   - Every lock record contains an integer counter: `fencing_token`.
-   - On initial creation: `fencing_token = 1`.
-   - On every acquisition or re-acquisition of an expired lease:
-     $$\text{fencing\_token}_{\text{new}} = \text{fencing\_token}_{\text{current}} + 1$$
-   - The token **NEVER** decreases, resets, or rolls over.
-
-2. **Downstream Verification (Fencing Guard):**
-   - Every downstream operational request (e.g., plan reservation in `verify-plan-lifecycle.py`, state serialization, telemetry emission) must include the `fencing_token`.
-   - The downstream receiver inspects the token against the highest known token:
-     $$\text{if } \text{token}_{\text{presented}} < \text{token}_{\text{highest\_known}} \implies \text{REJECT (STALE\_FENCING\_TOKEN)}$$
-   - Client 1's stalled write is rejected because Storage has already processed Client 2's token ($\text{Token } 143 > \text{Token } 142$).
-
----
-
-## 7. Lock Manager & Abstract Driver Interface (`DistributedLockDriver`)
-
-The locking system is organized into a clean two-tier object-oriented architecture:
-1. `LockManager`: High-level workflow orchestration, lease monitoring, context managers, and error handling.
-2. `DistributedLockDriver`: Low-level atomic storage interface implemented per backend.
-
-### 7.1 Python Abstract Base Class (`DistributedLockDriver`)
+### 8.1 Pure Worker Driver Interface (`DistributedLockDriver`)
+In accordance with review findings, **`force_break` has been completely removed** from the standard driver interface. Everyday workers have zero access to force-unlock operations:
 
 ```python
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 @dataclass(frozen=True)
-class LockMetadata:
-    schema_version: str
+class LockDescriptor:
     lock_id: str
-    lock_key: str
+    canonical_key: str
     resource_fingerprint: str
-    owner_id: str
-    fencing_token: int
+    backend_target: Dict[str, str]
+    owner_identity: Dict[str, Any]
     purpose: str
+    plan_binding: Optional[Dict[str, str]]
+    created_at: str
+
+@dataclass(frozen=True)
+class LeaseState:
+    fencing_token: int
+    lease_generation: int
+    lease_duration_seconds: int
     acquired_at: str
     expires_at: str
-    lease_duration_seconds: int
+    renewed_at: Optional[str]
     renewal_count: int
-    custom_context: Dict[str, Any]
+
+@dataclass(frozen=True)
+class LockRecord:
+    descriptor: LockDescriptor
+    lease: LeaseState
+    payload_sha256: str
+    storage_generation: str
 
 @dataclass(frozen=True)
 class LockResult:
     success: bool
-    metadata: Optional[LockMetadata]
+    record: Optional[LockRecord]
     error_code: Optional[str]
     error_message: Optional[str]
 
 class DistributedLockDriver(ABC):
     """
-    Abstract interface for atomic distributed lock storage backends.
-    All driver implementations must guarantee linearizable, atomic CAS semantics.
+    Standard worker driver interface for distributed lock backends.
+    Guarantees atomic Compare-And-Swap (CAS) semantics without privileged override capabilities.
     """
 
     @abstractmethod
     def acquire(
         self,
         key: str,
-        owner_id: str,
+        owner_identity: Dict[str, Any],
         ttl_seconds: int,
         purpose: str,
-        context: Dict[str, Any],
+        plan_binding: Optional[Dict[str, str]] = None,
+        idempotency_token: Optional[str] = None,
     ) -> LockResult:
         """
         Atomically attempts to acquire the lock.
-        Must succeed if key is free OR if current lease is expired.
-        Must increment and persist fencing token.
-        Fails if unexpired lock is held by another owner.
+        Succeeds if key is UNLOCKED or if current lease is EXPIRED.
+        Increments durable fencing token on new lease grant.
+        Idempotent if called with matching (key, lock_id, owner_id).
         """
         pass
 
@@ -344,11 +425,13 @@ class DistributedLockDriver(ABC):
         lock_id: str,
         owner_id: str,
         fencing_token: int,
+        lease_generation: int,
         extension_seconds: int,
     ) -> LockResult:
         """
         Atomically extends the lease expiration if and only if:
-        key == key AND lock_id == lock_id AND owner_id == owner_id AND fencing_token == fencing_token.
+        key == key AND lock_id == lock_id AND fencing_token == token AND generation == gen.
+        Increments lease_generation on success.
         Fails if lock was lost, expired, or claimed by another owner.
         """
         pass
@@ -360,194 +443,205 @@ class DistributedLockDriver(ABC):
         lock_id: str,
         owner_id: str,
         fencing_token: int,
+        lease_generation: int,
     ) -> LockResult:
         """
         Atomically releases the lock if and only if caller matches active ownership.
-        Fails if caller is stale or lock was already reclaimed.
+        Fails closed if caller is stale or lock was already reclaimed.
         """
         pass
 
     @abstractmethod
-    def inspect(self, key: str) -> Optional[LockMetadata]:
+    def inspect(self, key: str) -> Optional[LockRecord]:
         """
-        Inspects the active lock status without modifying state.
-        Returns LockMetadata if held/expired, or None if completely uninitialized.
-        """
-        pass
-
-    @abstractmethod
-    def force_break(
-        self,
-        key: str,
-        admin_token: str,
-        break_reason: str,
-    ) -> LockResult:
-        """
-        Administrative override. MUST verify signed cryptographic admin token.
-        Never permissible automatically.
+        Read-only inspection of active lock record.
+        Returns LockRecord if held/expired, or None if uninitialized.
         """
         pass
 ```
 
-### 7.2 High-Level `LockManager` Context Manager Protocol
-Developers invoke locks in workflows and CLI utilities using a clean, fail-safe context manager:
+### 8.2 Idempotency Semantics
+To ensure network retries do not cause race conditions or false failures:
+1. **Acquire Idempotency:** If a worker retries `acquire` with identical `(key, lock_id, owner_id)`, the driver returns the current valid `LockRecord` with `success=True` without re-incrementing the fencing token.
+2. **Renew Idempotency:** If a renewal request with `(lock_id, lease_generation)` is re-sent due to network timeout and was already processed, the driver returns the confirmed generation without double-extending the lease.
+3. **Release Idempotency:** If `release` is retried on an already-released lock for that exact `(lock_id, fencing_token)`, it returns `success=True`.
+
+---
+
+## 9. Comprehensive Error Taxonomy
+
+All locking components adhere to a strict, typed exception hierarchy:
+
+```
+LockError (Base Platform Exception)
+├── LockAcquisitionError
+│   ├── LockHeldError (Lock actively owned by another unexpired worker)
+│   ├── ContentionTimeoutError (Wait queue / spin-lock timeout exceeded)
+│   └── ResourceIdentityError (Malformed lock target or path traversal detected)
+├── LockLostError
+│   ├── LeaseExpiredError (Lease elapsed without renewal)
+│   ├── StaleOwnerError (Caller identity does not match active owner)
+│   ├── StaleFencingTokenError (Presented token < storage high-water mark)
+│   └── LeaseGenerationMismatchError (CAS generation mismatch during update)
+├── LeaseRenewalError
+│   ├── HeartbeatTimeoutError (Heartbeat daemon failed to contact storage)
+│   └── MaxRenewalsExceededError (Lease exceeded absolute safety maximum, default 4 hours)
+├── ClockSkewExceededError (Storage-to-client clock drift exceeds tolerance)
+├── UncertainOutcomeError (Network failure during state-mutating operation)
+├── AdministrativeOverrideError (Lock terminated by privileged recovery service)
+└── SecurityViolationError (Credential detected in metadata or unauthorized caller)
+```
+
+---
+
+## 10. Standalone Privileged Administrative Recovery Service
+
+In strict accordance with distributed systems security principles, **force-unlock is decoupled into an independent privileged service**:
+
+```
++-------------------------------------------------------------------------------------------------+
+|                         AdministrativeLockRecoveryService (Privileged)                         |
+|                                                                                                 |
+|   1. Operator generates Administrative Unlock Request                                           |
+|   2. Cryptographic Attestation Signature Verified (infraflow-admin-unlock-v1)                   |
+|   3. Pre-Flight Liveness Audit: Confirms previous runner VM is deprovisioned / dead             |
+|   4. Atomic Reclaim: Overwrites lock with STATUS_QUARANTINED, increments fencing token           |
+|   5. Audit Logging: Emits lock_force_unlocked event with reason and signature to telemetry      |
++-------------------------------------------------------------------------------------------------+
+```
+
+### 10.1 Privileged Interface (`AdministrativeLockRecoveryService`)
 
 ```python
-with lock_manager.acquire_lock(
-    target=target_resource,
-    ttl_seconds=900,
-    purpose="plan_apply"
-) as lock:
-    # Critical infrastructure section
-    # Heartbeat daemon runs automatically in background thread
-    execute_terraform_apply(plan_file, fencing_token=lock.fencing_token)
-# Lock released automatically on exit; heartbeat thread stopped
+class AdministrativeLockRecoveryService:
+    """
+    Separate administrative interface for emergency lock resolution.
+    Completely isolated from regular worker pipeline execution.
+    """
+
+    def __init__(self, trust_root_public_key: str, storage_driver: Any):
+        self._trust_root = trust_root_public_key
+        self._driver = storage_driver
+
+    def break_lock(
+        self,
+        canonical_key: str,
+        authorization_envelope: Dict[str, Any],
+        operator_rationale: str,
+    ) -> LockRecoveryResult:
+        """
+        Executes a safe, auditable administrative force-unlock:
+        1. Validates asymmetric ECDSA P-256 signature on authorization envelope.
+        2. Validates operator rationale is non-empty.
+        3. Forces increment of fencing token so zombie worker is permanently fenced.
+        4. Emits structured telemetry event 'lock_force_unlocked'.
+        """
+        pass
+```
+
+### 10.2 Administrative Authorization Envelope (`infraflow-admin-unlock-v1`)
+```json
+{
+  "schema_version": "infraflow-admin-unlock-v1",
+  "canonical_key": "infraflow/locks/v1/aws/123456789012/corp-tfstate-prod/env/prod/networking.tfstate/default.lock",
+  "target_lock_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "operator": {
+    "identity": "principal-devops@infraflow.corp",
+    "ticket_reference": "OPS-8491",
+    "rationale": "Runner VM terminated mid-apply due to AWS spot interruption"
+  },
+  "issued_at": "2026-11-22T12:30:00Z",
+  "signature": {
+    "key_id": "key-admin-primary-2026",
+    "algorithm": "ECDSA-P256-SHA256",
+    "signature_der_base64": "MEYCIQDx...82="
+  }
+}
 ```
 
 ---
 
-## 8. Reference Drivers: LocalFS and MockDistributed Drivers
+## 11. Reference Driver Specifications & Known Limitations
 
-To preserve the **$0.00 cloud spending invariant** while enabling deep, adversarial verification, Milestone G10.4 specifies two fully functional offline drivers:
+### 11.1 `LocalFSDriver` (Cloud-Free Local Workstation / Single-Runner CI)
+- **Mechanism:** Implemented using atomic directory creation (`os.mkdir`) or POSIX `O_CREAT | O_EXCL` flags on `lock.json.tmp` followed by atomic rename (`os.replace`).
+- **Fencing Counter:** Stored in an adjacent `lock.sequence` file guarded by filesystem locking (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows).
+- **Known Limitations:**
+  1. *Host Confinement:* Cannot coordinate across multiple independent virtual machines without a distributed network filesystem.
+  2. *NFS/SMB Anomalies:* Distributed network filesystems (NFSv3/v4, SMB) exhibit close-to-open cache latency and flaky locking leases, risking split-brain if used across physical hosts.
+  3. *Unclean Host Reboot:* An un-graceful host crash leaves stale lock files requiring PID validation or TTL expiration.
 
-### 8.1 `LocalFSDriver` Specification
-Designed for single-runner, local developer workstations, and monolithic CI runners:
-- **Storage Strategy:** Uses atomic directory creation (`os.mkdir(lock_dir)`) or atomic file creation with POSIX `O_CREAT | O_EXCL` flags on `lock_dir / "lock.json"`.
-- **Atomic Compare-And-Swap:** 
-  - Creation: Writing to a temporary file `lock.json.tmp.{uuid}` followed by atomic rename (`os.replace`) ensures readers never observe partial writes.
-  - Fencing Token: Maintained in an adjacent monotonic sequence file `resource.sequence` updated via file locks (`fcntl.flock` on Unix / `msvcrt.locking` on Windows).
-- **Lease Expiration:** Evaluates `expires_at` timestamp. If expired, acquires an internal master mutex, verifies staleness, increments the sequence, and atomically overwrites `lock.json`.
-
-### 8.2 `MockDistributedDriver` Specification
-Designed for multi-threaded, multi-process adversarial test suites (`tests/test_distributed_locking.py`):
-- **Simulated Latency:** Configurable network latency simulation (`min_latency_ms`, `max_latency_ms`).
-- **Simulated Network Partitions:** Capability to partition specific worker IDs, causing simulated heartbeat timeouts and split-brain contention scenarios.
-- **Clock Drift Injection:** Ability to inject artificial clock skew between contenders to prove that the fencing token and driver-side clock boundaries protect state.
+### 11.2 `MockDistributedDriver` (Adversarial In-Memory Test Suite)
+- **Mechanism:** Thread-safe and multiprocessing-safe in-memory key-value store with simulated network delays, partition injection, and clock skew.
+- **Known Limitations:**
+  1. *Process Volatility:* In-memory only; does not survive process restarts unless explicitly persisted to a shared mock ledger file.
 
 ---
 
-## 9. Multi-Cloud Production Driver Contracts (AWS, Azure, GCP)
+## 12. Multi-Cloud Production Driver Contracts
 
-In production multi-tenant environments, InfraFlow delegates distributed locking to cloud data plane services via standardized driver contracts:
+### 12.1 AWS: `DynamoDBLockDriver` & `S3ConditionalLockDriver`
+- **DynamoDB:** Atomic `UpdateItem` with condition `attribute_not_exists(LockKey) OR expires_at < :now`, atomic `ADD fencing_token :one`.
+- **S3 (Native Terraform 1.10+):** `PutObject` with HTTP header `If-None-Match: *` for atomic creation; `If-Match: <ETag>` for renewal and release.
 
-### 9.1 AWS Adapter: `DynamoDBLockDriver` & `S3ConditionalLockDriver`
+### 12.2 Azure: `AzureBlobLeaseDriver`
+- Native 15–60s leases (`AcquireLease`, `RenewLease`, `ReleaseLease`) with metadata-backed fencing tokens.
 
-#### Mechanism A: Amazon DynamoDB Conditional Item Writes
-- **Partition Key:** `LockKey` (String, e.g. `infraflow/locks/v1/...`).
-- **Conditional Expression on Acquire:**
-  ```text
-  attribute_not_exists(LockKey) OR expires_at < :now
-  ```
-- **Update Expression on Acquire:**
-  ```text
-  SET lock_id = :lid, owner_id = :oid, fencing_token = if_not_exists(fencing_token, :zero) + :one, expires_at = :exp
-  ```
-- **Conditional Expression on Release:**
-  ```text
-  attribute_exists(LockKey) AND lock_id = :lid AND fencing_token = :token
-  ```
-
-#### Mechanism B: Amazon S3 Native Conditional Object Writes (Terraform 1.10+)
-- **S3 Object Key:** `s3://<STATE_BUCKET>/locks/<RESOURCE_FINGERPRINT>.lock`
-- **Conditional Acquire:** Uses `PutObject` with HTTP header `If-None-Match: *`.
-- **Conditional Renewal / Release:** Uses `PutObject` with HTTP header `If-Match: <ETag>`.
-
-### 9.2 Azure Adapter: `AzureBlobLeaseDriver` & `CosmosDBLockDriver`
-
-#### Mechanism A: Azure Blob Storage Native Leases
-- **Target Blob:** `https://<ACCOUNT>.blob.core.windows.net/<CONTAINER>/locks/<FINGERPRINT>.json`
-- **Acquire:** `Lease Blob` API with `x-ms-lease-action: acquire`, `x-ms-lease-duration: 15-60`.
-- **Heartbeat:** `Lease Blob` with `x-ms-lease-action: renew`.
-- **Release:** `Lease Blob` with `x-ms-lease-action: release`.
-- **Fencing Protection:** Metadata block updated with incremented fencing token prior to lease release.
-
-### 9.3 GCP Adapter: `GCSPreconditionLockDriver` & `SpannerLockDriver`
-
-#### Mechanism A: Google Cloud Storage Object Preconditions
-- **Target Object:** `gs://<BUCKET>/locks/<FINGERPRINT>.json`
-- **Acquire:** `storage.objects.insert` with query parameter `ifGenerationMatch=0` (guarantees creation only if object does not exist).
-- **Renewal / Release:** `storage.objects.patch` with `ifMetagenerationMatch=<metageneration>`.
+### 12.3 GCP: `GCSPreconditionLockDriver`
+- Object creation precondition `ifGenerationMatch=0`; renewal and release precondition `ifMetagenerationMatch=<gen>`.
 
 ---
 
-## 10. Concurrency, Reentrancy, Idempotency & Crash Recovery
+## 13. STRIDE Threat Model & Security Controls
 
-### 10.1 Non-Reentrancy Invariant
-Distributed locks in InfraFlow are **strictly non-reentrant**.
-- *Rationale:* In infrastructure pipelines, recursive locking typically masks architectural flaws (e.g. an apply job spawning an inner apply job against the same target), leading to hidden deadlocks.
-- *Behavior:* If Owner A requests a lock that Owner A already holds, the manager raises `NonReentrantLockException` unless explicitly requested with `IdempotentReacquisition` parameters.
-
-### 10.2 Crash Recovery & Uncertain Outcome Quarantine
-When an execution worker terminates abruptly (SIGKILL, runner preemption, host panic):
-1. **Lease Decay:** The background heartbeat stops. After `expires_at` lapses, the lock enters `EXPIRED` status.
-2. **Quarantine Check:**
-   - If the expired lock has `purpose == "plan_apply"`, the next caller **CANNOT** immediately execute a new apply.
-   - The system triggers an automatic pre-flight drift scan (`infraflow drift --enforce-zero-drift`).
-   - If state serial or resource drift is observed, the pipeline halts with `STATUS_OUTCOME_UNCERTAIN` and requires human operator verification.
-
-### 10.3 Safe Administrative Unlock Protocol
-Automatic force-unlock is strictly prohibited. If a lock is wedged due to an unrecoverable failure:
-1. Operator generates an administrative unlock request:
-   ```bash
-   infraflow unlock --key "infraflow/locks/v1/..." --reason "Operator manual clearance after VM crash"
-   ```
-2. The command requires presenting an authorized cryptographic signature (`infraflow-admin-unlock-v1`) signed by an authorized platform administrator key.
-3. The driver writes an audit event to structured telemetry (`lock_force_unlocked`) documenting the operator identity, key, and rationale.
+| STRIDE Category | Threat Scenario | Mitigation |
+|---|---|---|
+| **Spoofing** | Attacker crafts a synthetic request claiming to be `runner-042` to release another job's lock. | `owner_id` is bound to cryptographic workflow run claims; release strictly requires matching `lock_id`, `fencing_token`, and `lease_generation`. |
+| **Tampering** | Rogue actor modifies lock metadata on shared storage bucket. | Descriptor is protected by SHA-256 integrity checksums; updates strictly require storage-level CAS matching. |
+| **Repudiation** | Operator denies breaking an active production lock. | Force-unlock requires an asymmetric digital signature logged to immutable telemetry. |
+| **Information Disclosure** | Pipeline stores database password or access token inside lock metadata context. | `SecretSanitizer` scans all metadata before writing; raises fail-closed `SecurityViolationError` if secrets are detected. |
+| **Denial of Service** | Malicious or buggy PR acquires a lock with `ttl = 999999` to deadlock delivery. | Maximum lease duration capped at 3600 seconds; stale owners cannot release newer locks. |
+| **Elevation of Privilege** | Caller passes `--bypass-lock` in workflow inputs. | Workflows reject lock-disabling inputs fail-closed; central governance enforces locks unconditionally. |
 
 ---
 
-## 11. STRIDE Threat Model & Security Invariants
+## 14. Telemetry & Observability Event Catalog
 
-| STRIDE Category | Threat Scenario | Impact | InfraFlow G10.4 Mitigation |
-|---|---|---|---|
-| **Spoofing** | Attacker crafts a synthetic request claiming to be `runner-042` to release another job's lock. | Unauthorized lock release; concurrent apply race. | `owner_id` is bound to cryptographic workflow run claims and verified by the lock driver; release requires matching `lock_id` UUID and `fencing_token`. |
-| **Tampering** | Rogue actor modifies lock metadata on shared filesystem or storage bucket. | Fencing token regression; corrupted lease timestamps. | Lock metadata includes a SHA-256 integrity signature; driver validates checksum before honoring metadata. |
-| **Repudiation** | Operator or pipeline denies breaking an active lock during production deployment. | Lack of accountability for concurrent state corruption. | Administrative force-unlock requires an asymmetric digital signature logged to immutable telemetry. |
-| **Information Disclosure** | Pipeline stores database password or access token inside lock metadata `context`. | Credential leakage in diagnostic logs and PR summaries. | `SecretSanitizer` enforces recursive regex scanning on all context payloads; raises fail-closed exception if secrets are found. |
-| **Denial of Service** | Malicious or buggy PR acquires a lock with `ttl = 999999` and halts, starving all deploys. | Environment delivery deadlocked indefinitely. | Strict maximum lease TTL enforced by platform (`MAX_LEASE_TTL = 3600s`); requests exceeding limit are rejected fail-closed. |
-| **Elevation of Privilege** | Caller passes `force=true` or `--bypass-lock` in workflow dispatch inputs. | Bypasses distributed lock gate, causing uncoordinated changes. | Workflows reject lock-disabling inputs; central governance workflows enforce locking unconditionally. |
-
----
-
-## 12. Telemetry, Observability & Alerting Contracts
-
-Distributed locking operations emit standardized, RFC 5424 / OpenTelemetry-compatible events to the InfraFlow telemetry engine (`scripts/emit-telemetry.py`):
-
-### 12.1 Lock Telemetry Event Catalog
-| Event Name | Severity | Emitted When | Payload Attributes |
-|---|---|---|---|
-| `lock_acquired` | `INFO` | Lock successfully granted to worker | `lock_key`, `lock_id`, `fencing_token`, `lease_duration`, `owner_id` |
-| `lock_renewed` | `INFO` | Lease successfully extended by heartbeat | `lock_key`, `lock_id`, `fencing_token`, `renewal_count`, `new_expires_at` |
-| `lock_released` | `INFO` | Lock cleanly surrendered by worker | `lock_key`, `lock_id`, `fencing_token`, `hold_duration_seconds` |
-| `lock_contention` | `WARN` | Worker failed to acquire lock due to active owner | `lock_key`, `contender_id`, `active_owner_id`, `time_remaining_seconds` |
-| `lock_stale_reclaimed` | `WARN` | Worker claimed lock after lease expiration | `lock_key`, `new_owner_id`, `expired_owner_id`, `stale_duration_seconds` |
-| `lock_lost` | `ERROR` | Heartbeat failed or owner preempted during run | `lock_key`, `lock_id`, `owner_id`, `last_successful_heartbeat` |
-| `lock_fencing_violation` | `CRITICAL` | Stale worker attempted action with outdated token | `lock_key`, `presented_token`, `current_token`, `rejected_action` |
-| `lock_force_unlocked` | `CRITICAL` | Admin broke lock via cryptographic authorization | `lock_key`, `admin_actor`, `reason`, `signature_digest` |
+Emits 8 standardized event types conforming to RFC 5424 / OpenTelemetry Schema v1.0 directly through [`scripts/emit-telemetry.py`](file:///home/tharuka/projects/infraflow/scripts/emit-telemetry.py):
+1. `lock_acquired` (INFO)
+2. `lock_renewed` (INFO)
+3. `lock_released` (INFO)
+4. `lock_contention` (WARN)
+5. `lock_stale_reclaimed` (WARN)
+6. `lock_lost` (ERROR)
+7. `lock_fencing_violation` (CRITICAL)
+8. `lock_force_unlocked` (CRITICAL)
 
 ---
 
-## 13. Design Validation & Identified Engineering Risks
+## 15. Design Validation & Identified Engineering Risks
 
-### 13.1 Design Validation Checklist
-- [x] **Zero Cloud Spend:** Verified purely with offline `LocalFSDriver` and `MockDistributedDriver`.
-- [x] **Zero Native Lock Interference:** Operates strictly above Terraform's `.tflock` / backend lock.
-- [x] **Monotonic Ordering:** Fencing token increments on every state transition.
-- [x] **Crash Resilience:** Time-bounded leases guarantee deadlocks cannot persist past TTL.
-- [x] **Zero Secret Leakage:** Enforced by recursive `SecretSanitizer` in metadata writes.
+### 15.1 Design Validation Checklist
+- [x] **Realistic Fencing Boundaries:** Storage-level and pipeline-level fencing clearly separated from provider-level API limitations.
+- [x] **Backend-Bound Identity:** Lock keys derived from storage location, account/project, state key, and workspace.
+- [x] **Durable Atomic Counters:** Fencing tokens survive lock releases and crashes via persistent high-water mark records.
+- [x] **Time Safety:** Authoritative driver clock required; $\Delta_{\text{skew}}$ safety margins enforced; fast-fail abort on heartbeat loss.
+- [x] **Decoupled Admin Recovery:** `force_break` removed from worker drivers; isolated in `AdministrativeLockRecoveryService`.
+- [x] **Zero Cloud Spend:** Verified offline with `LocalFSDriver` and `MockDistributedDriver`.
+- [x] **Zero Secret Leakage:** Enforced by recursive `SecretSanitizer`.
 
-### 13.2 Identified Risks & Mitigations
-1. **Clock Skew between Distributed Runners:**
-   - *Risk:* If Runner A's clock is 5 minutes behind Runner B, Runner A may consider a lease active while Runner B considers it expired.
-   - *Mitigation:* Lease expiration must be calculated against **storage/driver time**, not client runner time. In cloud drivers, server-side timestamps (DynamoDB server time, S3 Last-Modified, GCS Metageneration) are authoritative.
-2. **Heartbeat Thread Starvation:**
-   - *Risk:* Intense CPU usage during `terraform plan` could starve the Python heartbeat thread, causing accidental lease expiration.
-   - *Mitigation:* Heartbeat interval is set to $\frac{1}{3} \times \text{TTL}$ (e.g. 5 minutes on a 15-minute lease), providing two retry windows before expiration. If heartbeat fails twice, the worker initiates graceful abort.
+### 15.2 Identified Residual Risks & Mitigations
+1. **Cloud API In-Flight Mutations During Split-Brain:**
+   - *Residual Risk:* If a runner freezes for > 15 minutes mid-resource creation and revives before the heartbeat kill signal takes effect, an in-flight cloud API call might succeed while a new runner has acquired the lock.
+   - *Mitigation:* In addition to heartbeat abort, the state backend gate will reject the stale worker's state file upload, triggering an immediate Terraform state consistency error. The new worker will detect the external resource creation during its plan/apply phase as drift or existing resource collision, preventing silent corruption.
+2. **Network Partition During Release:**
+   - *Residual Risk:* A worker successfully completes an apply, but its `release` call times out due to a network glitch.
+   - *Mitigation:* The worker logs the successful apply outcome to telemetry. The lock naturally expires at `expires_at` without leaving the environment in an uncertain state, because the apply was confirmed successful.
 
 ---
 
-## 14. Architecture Document Approval & Sign-Off
+## 16. Sign-Off & Implementation Roadmap
 
 **Approved by:** Principal Distributed Systems Engineer & Senior Platform Architect  
 **Distribution:** Platform Architecture Registry (`docs/architecture/`)  
-**Implementation Milestone:** Milestone G10.4.2 (State Lock Driver Engine & Concurrency Suite)
+**Next Implementation Milestone:** Milestone G10.4.2 (State Lock Driver Engine & Concurrency Suite)

@@ -24,7 +24,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G10.2** | **Self-Service Onboarding & Scaffolding** | Self-service `infraflow init`, multi-cloud templates, schema-validated registration, dry-run safety. | **PASS (Completed)** |
 | **G10.3** | **Consumer Secret Defense & Semantic Destruction** | Mandatory secret scanner, zero raw leakage, multi-cloud critical resource protection, replacement safety, conftest gates. | **PASS (Completed)** |
 | **G10.3.1** | **Security Integration Assurance & Decommission Hardening** | Multi-workflow secret scanning, Conftest all-namespaces evaluation, decommission bypass closure, 16-test suite, 455/455 checks. | **PASS (Completed)** |
-| **G10.4.1** | **Distributed Locking Architecture** | Production distributed locking, lease state machine, monotonic fencing tokens, multi-cloud driver contracts, STRIDE threat model. | **PASS (Completed)** |
+| **G10.4.1** | **Distributed Locking Architecture & Refinement (G10.4.1-R)** | Backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, decoupled admin recovery, STRIDE model. | **PASS (Completed)** |
 
 ---
 
@@ -530,20 +530,20 @@ Milestone G10.3.1 performs independent security integration verification and har
 
 ---
 
-## 34. Milestone G10.4.1 — Acceptance Criteria (Distributed Locking Architecture)
+## 34. Milestone G10.4.1 / G10.4.1-R — Acceptance Criteria (Distributed Locking Architecture & Refinement)
 
-Milestone G10.4.1 establishes the distributed locking, lease management, and fencing protocol architecture for the InfraFlow enterprise platform ([`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md)). It defines the Lock Manager interface, canonical resource key derivation, metadata schema (`infraflow-lock-metadata-v1`), monotonic fencing tokens (Kleppmann split-brain defense), time-bounded leases with heartbeat renewal, crash recovery protocols, and multi-cloud driver contracts ($0.00 cloud spend, zero live credentials).
+Milestone G10.4.1 / G10.4.1-R establishes the refined, production-grade distributed locking, lease management, and fencing protocol architecture for the InfraFlow enterprise platform ([`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md)). It addresses realistic fencing token enforcement boundaries under Terraform cloud provider execution, defines backend-bound canonical lock keys (S3, Azure Blob, GCS, local), resolves the immutable descriptor vs. mutable lease generation dichotomy, specifies durable atomic monotonic token generation, enforces lease time safety margins with fast-fail heartbeats, isolates privileged administrative recovery into an independent cryptographic service, and articulates a complete error taxonomy ($0.00 cloud spend, zero live credentials).
 
 | Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
 |---|---|---|---|---|
-| **AC-G10-29** | Distributed Locking Architecture Document | Formulate and document the distributed locking architecture, state machine, and failure recovery protocols in [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md). | Documentation audit & review | **PASS (Completed)** |
-| **AC-G10-30** | Separation of Concerns & Native Lock Preservation | Enforce strict separation between platform orchestration locking and Terraform native state locking; prohibit replacing or disabling native `.tflock` or backend locks. | Architectural boundary audit | **PASS (Completed)** |
-| **AC-G10-31** | Canonical Resource Key & Metadata Schema | Define 5-tuple canonical lock key derivation (`infraflow/locks/v1/...`) and immutable metadata schema (`infraflow-lock-metadata-v1`) with cryptographic resource fingerprint. | Schema specification audit | **PASS (Completed)** |
-| **AC-G10-32** | Monotonically Increasing Fencing Tokens | Define monotonic fencing counter protocol (`fencing_token = prev + 1`) to eliminate distributed split-brain hazards from GC pauses or network partitions. | Protocol specification audit | **PASS (Completed)** |
-| **AC-G10-33** | Time-Bounded Leases & Heartbeat Daemon | Define lease lifecycle (default 900s TTL, max 3600s), periodic renewal daemon (TTL / 3), and fail-closed termination on renewal failure. | Lifecycle state audit | **PASS (Completed)** |
-| **AC-G10-34** | Multi-Cloud Production Driver Contracts | Specify atomic CAS driver contracts for offline reference (`LocalFSDriver`, `MockDistributedDriver`), AWS (DynamoDB / S3), Azure (Blob Leases), and GCP (Storage Object Preconditions). | Interface contract audit | **PASS (Completed)** |
-| **AC-G10-35** | STRIDE Threat Model & Zero Credential Invariant | Complete STRIDE threat analysis; prohibit storing secrets/credentials in lock metadata; enforce cryptographic admin authorization for manual break. | Threat model audit | **PASS (Completed)** |
-| **AC-G10-36** | Telemetry Event Catalog & Observability | Define 8 standardized lock telemetry event types conforming to RFC 5424 / OpenTelemetry Schema v1.0 and integration with `scripts/emit-telemetry.py`. | Telemetry schema audit | **PASS (Completed)** |
+| **AC-G10-29** | Distributed Locking Architecture Document | Formulate and document the refined distributed locking architecture, state machine, and failure recovery protocols in [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md). | Documentation audit & review | **PASS (Completed)** |
+| **AC-G10-30** | Separation of Concerns & Native Lock Preservation | Enforce strict separation between platform orchestration locking and Terraform native state locking; strictly preserve native `.tflock` / backend storage locks. | Architectural boundary audit | **PASS (Completed)** |
+| **AC-G10-31** | Backend-Bound Canonical Key & Decoupled Schema | Bind canonical lock keys to actual Terraform backend storage targets (account/project, bucket/container, state key, workspace); decouple immutable `LockDescriptor` from versioned `LeaseState`. | Schema specification audit | **PASS (Completed)** |
+| **AC-G10-32** | Realistic Fencing Enforcement & Provider Boundaries | Formally specify fencing token enforcement points (state backend gate, replay ledger, pre/post execution barriers) and document cloud provider API direct-connection limitations. | Protocol analysis audit | **PASS (Completed)** |
+| **AC-G10-33** | Durable Atomic Fencing-Token Generation | Define strict monotonic token increments ($T_{i+1} > T_i$), crash-resilient persistence, and persistent high-water mark records surviving clean lock releases. | Concurrency protocol audit | **PASS (Completed)** |
+| **AC-G10-34** | Lease Time Safety & Fast-Fail Heartbeat | Enforce storage-authoritative clocks, client safety margins ($\text{TTL} - \Delta_{\text{skew}} - \Delta_{\text{rtt}}$), $\frac{1}{3}\text{TTL}$ heartbeats, and $\frac{2}{3}\text{TTL}$ fast-fail child process termination. | Timing protocol audit | **PASS (Completed)** |
+| **AC-G10-35** | Decoupled Administrative Recovery Service | Remove `force_break` from worker driver interface; isolate privileged force-unlock in `AdministrativeLockRecoveryService` requiring signed ECDSA P-256 tokens and telemetry auditing. | Security boundary audit | **PASS (Completed)** |
+| **AC-G10-36** | Multi-Cloud Production Driver Contracts & Taxonomy | Define standardized atomic CAS driver contracts (LocalFS, MockDistributed, AWS DynamoDB/S3, Azure Blob, GCP GCS) and a comprehensive typed error taxonomy (`LockError`). | Interface specification audit | **PASS (Completed)** |
 
 ---
 
