@@ -11,3 +11,22 @@ tests/test_observability_and_compliance.py:jwt:128
 policies/azure/storage_backend_test.rego:generic-api-key:149
 7ab3c1cc104f3ef253b8bf5b21791e8b6d4ea19c:policies/azure/storage_backend_test.rego:generic-api-key:133
 policies/azure/storage_backend_test.rego:generic-api-key:133
+# Synthetic test fixtures for G10.3 / G10.3.1 secret scanner and policy tests
+96cc83ba6c97257e82a3387f020a83fd016177ad:scripts/validate-local.sh:aws-access-token:6074
+scripts/validate-local.sh:aws-access-token:6074
+scripts/validate-local.sh:aws-access-token:6075
+96cc83ba6c97257e82a3387f020a83fd016177ad:scripts/validate-local.sh:aws-access-token:6082
+scripts/validate-local.sh:aws-access-token:6082
+scripts/validate-local.sh:aws-access-token:6083
+96cc83ba6c97257e82a3387f020a83fd016177ad:policies/common/critical_resources_test.rego:generic-api-key:161
+policies/common/critical_resources_test.rego:generic-api-key:161
+96cc83ba6c97257e82a3387f020a83fd016177ad:tests/test_critical_resources.py:generic-api-key:265
+tests/test_critical_resources.py:generic-api-key:265
+02d755a47aa1ac3abb3b86b33964dd8a64d9482c:tests/test_g10_security_integration.py:generic-api-key:145
+tests/test_g10_security_integration.py:generic-api-key:145
+02d755a47aa1ac3abb3b86b33964dd8a64d9482c:tests/test_g10_security_integration.py:aws-access-token:331
+tests/test_g10_security_integration.py:aws-access-token:331
+02d755a47aa1ac3abb3b86b33964dd8a64d9482c:tests/test_g10_security_integration.py:aws-access-token:344
+tests/test_g10_security_integration.py:aws-access-token:344
+96cc83ba6c97257e82a3387f020a83fd016177ad:tests/test_secret_scanner.py:private-key:108
+tests/test_secret_scanner.py:private-key:108

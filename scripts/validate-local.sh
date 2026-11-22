@@ -6098,6 +6098,7 @@ rm -rf "${TMP_SEC_BIN}"
 
 # Test 27.7: Variable reference & placeholder filtering
 TMP_SEC_PH="$(mktemp -d -t sec_ph_XXXXXX)"
+# shellcheck disable=SC2016
 echo 'db_pass = "${var.db_password}"' > "${TMP_SEC_PH}/vars.tf"
 if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_PH}" --json > "${TMP_SEC_PH}/out.json" 2>&1; then
   record_pass "Placeholder Filtering [7/15]: Variable interpolations and placeholders safely ignored"
