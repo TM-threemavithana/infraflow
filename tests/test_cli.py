@@ -274,5 +274,78 @@ class TestCLISecurityAndSanitization(unittest.TestCase):
         self.assertIn("File not found", res.stderr)
 
 
+class TestCLIPackageInstallation(unittest.TestCase):
+    """Verifies packaging metadata, module parity, entry points, and exit code contracts (G10.1.1)."""
+
+    def test_package_import_and_metadata(self):
+        import infraflow
+        self.assertEqual(infraflow.__version__, "0.7.0")
+        self.assertEqual(infraflow.__canonical_ref__, "TM-threemavithana/infraflow")
+        self.assertTrue(len(infraflow.__author__) > 0)
+
+    def test_cli_module_parity(self):
+        from infraflow import cli as pkg_cli
+        self.assertTrue(hasattr(pkg_cli, "main"))
+        self.assertTrue(hasattr(pkg_cli, "build_parser"))
+        self.assertTrue(hasattr(pkg_cli, "PlatformDoctor"))
+        self.assertTrue(hasattr(pkg_cli, "SecretSanitizer"))
+        self.assertTrue(hasattr(pkg_cli, "PathValidator"))
+        self.assertTrue(hasattr(pkg_cli, "CLIHandlers"))
+
+        # scripts/infraflow-cli.py should expose the same public symbols
+        self.assertTrue(hasattr(infraflow_cli, "main"))
+        self.assertTrue(hasattr(infraflow_cli, "build_parser"))
+        self.assertTrue(hasattr(infraflow_cli, "PlatformDoctor"))
+
+    def test_pyproject_toml_configuration(self):
+        pyproject_file = REPO_ROOT / "pyproject.toml"
+        self.assertTrue(pyproject_file.is_file(), "pyproject.toml must exist at repository root")
+        content = pyproject_file.read_text(encoding="utf-8")
+        self.assertIn('[build-system]', content)
+        self.assertIn('requires = ["setuptools>=61.0", "wheel"]', content)
+        self.assertIn('name = "infraflow"', content)
+        self.assertIn('version = "0.7.0"', content)
+        self.assertIn('[project.scripts]', content)
+        self.assertIn('infraflow = "infraflow.cli:main"', content)
+
+    def test_setup_py_shim_exists(self):
+        setup_file = REPO_ROOT / "setup.py"
+        self.assertTrue(setup_file.is_file(), "setup.py shim must exist for legacy compatibility")
+        content = setup_file.read_text(encoding="utf-8")
+        self.assertIn("setup()", content)
+
+    def test_python_module_execution_m_flag(self):
+        res = subprocess.run(
+            [sys.executable, "-m", "infraflow.cli", "--version"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("infraflow version 0.7.0", res.stdout)
+
+    def test_programmatic_invocation_main(self):
+        from infraflow.cli import main
+        # No arguments prints help and returns EXIT_OK (0)
+        rc = main([])
+        self.assertEqual(rc, 0)
+
+        # --version raises SystemExit(0)
+        with self.assertRaises(SystemExit) as cm:
+            main(["--version"])
+        self.assertEqual(cm.exception.code, 0)
+
+        # Unknown argument raises SystemExit(2)
+        with self.assertRaises(SystemExit) as cm:
+            main(["--invalid-argument-xyz"])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_exit_code_contract_constants(self):
+        from infraflow.cli import EXIT_OK, EXIT_ERROR, EXIT_SECURITY
+        self.assertEqual(EXIT_OK, 0)
+        self.assertEqual(EXIT_ERROR, 1)
+        self.assertEqual(EXIT_SECURITY, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

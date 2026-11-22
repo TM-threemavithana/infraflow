@@ -180,10 +180,60 @@ Developers onboarding to InfraFlow frequently struggle to determine:
 
 ---
 
-## 6. Verification and Acceptance Criteria
+## 6. Python Packaging Architecture & Executable Entry Points (Milestone G10.1.1)
 
-Milestone G10.1 is verified by:
-1. **Dedicated Unit Test Suite:** `tests/test_cli.py` (19 automated tests covering version, doctor, validation, error enhancement, drift, upgrade, secret redaction, and symlink defenses).
-2. **Platform Test Suite Integrity:** All 554 platform unit tests across G01–G10 pass with zero failures.
-3. **Validation Harness Integration:** Section 26 of `scripts/validate-local.sh` (13 quality checks) completing with 100% pass rate.
-4. **Static Analysis & Security Auditing:** Zero warnings from `shellcheck` across `validate-local.sh`.
+Milestone G10.1.1 elevates the CLI from a standalone utility script to a professionally packaged Python developer tool compliant with modern Python packaging standards (PEP 517, PEP 621, PEP 561):
+
+### 6.1 Package Layout & Single-Source Implementation
+```
+infraflow/
+├── pyproject.toml              # PEP 517 / 621 build specification & entrypoint mapping
+├── setup.py                    # Backwards-compatible setuptools shim
+├── infraflow/
+│   ├── __init__.py             # Exports __version__ ("0.7.0"), __author__, __canonical_ref__
+│   ├── py.typed                # PEP 561 typing marker
+│   └── cli.py                  # Canonical implementation of Unified Platform CLI
+└── scripts/
+    └── infraflow-cli.py        # Lightweight backwards-compatible executable shim
+```
+
+### 6.2 Executable Entry Point Mechanics (`[project.scripts]`)
+The `pyproject.toml` configuration defines:
+```toml
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "infraflow"
+version = "0.7.0"
+...
+dependencies = [
+    "pyyaml>=6.0",
+    "cryptography>=41.0.0",
+]
+
+[project.scripts]
+infraflow = "infraflow.cli:main"
+```
+
+When installed via `pip install .` or `pip install -e .`:
+1. **Linux / macOS / WSL2:** `pip` writes a tiny Python launcher wrapper to `$VIRTUAL_ENV/bin/infraflow` (or `~/.local/bin/infraflow`), setting execution permissions (`chmod +x`).
+2. **Windows 11:** `pip` generates a native Windows executable launcher (`.venv\Scripts\infraflow.exe`) compiled against the active Python interpreter.
+
+### 6.3 Zero-Duplication Architecture
+To prevent divergence between the packaged `infraflow` CLI and the historical `scripts/infraflow-cli.py`:
+- `infraflow/cli.py` contains the authoritative, canonical business logic, diagnostic engine, path sanitizer, and error enhancement systems.
+- `scripts/infraflow-cli.py` imports and re-exports all public symbols directly from `infraflow.cli` and delegates execution to `infraflow.cli.main()`.
+- Both invocation pathways execute the exact same codebase, ensuring 100% behavioral parity.
+
+---
+
+## 7. Verification and Acceptance Criteria
+
+Milestone G10.1 and G10.1.1 are verified by:
+1. **Dedicated Unit Test Suite:** `tests/test_cli.py` (26 automated tests covering packaging metadata, module parity, programmatic invocation, version, doctor, validation, error enhancement, drift, upgrade, secret redaction, and symlink defenses).
+2. **Platform Test Suite Integrity:** All 561 platform unit tests across G01–G10 pass with zero failures.
+3. **Packaging Invariants:** Successful installation via `pip install -e .` and `pip install .` in isolated virtual environments across Linux/WSL and Windows, with clean uninstallation.
+4. **Validation Harness Integration:** Section 26 of `scripts/validate-local.sh` (16 quality checks) completing with 100% pass rate.
+5. **Static Analysis & Security Auditing:** Zero warnings from `shellcheck` across `validate-local.sh`.

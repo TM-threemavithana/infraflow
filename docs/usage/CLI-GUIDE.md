@@ -4,24 +4,79 @@ Welcome to the **InfraFlow Unified CLI (`infraflow`)** developer guide. This gui
 
 ---
 
-## 1. Quick Start & Basic Usage
+## 1. Installation & Environment Setup
 
-The InfraFlow CLI is located at `scripts/infraflow-cli.py`. For developer convenience, ensure it is executable and optionally symlink or alias it to `infraflow`:
+InfraFlow adheres to modern Python packaging standards (PEP 517 / PEP 621) via `pyproject.toml`. It provides an executable console entry point (`infraflow`) that operates seamlessly across Linux, WSL2 (Ubuntu), macOS, and Windows 11.
+
+### 1.1 Recommended Installation: Editable Development Mode
+
+For platform engineers and active contributors, editable installation links directly to the local source tree without copying files:
 
 ```bash
-# Verify execution permissions
-chmod +x scripts/infraflow-cli.py
+# Optional: create and activate an isolated virtual environment
+python3 -m venv .venv
+source .venv/bin/activate       # Linux / macOS / WSL2
+# On Windows PowerShell: .\.venv\Scripts\Activate.ps1
 
-# Optional shell alias
-alias infraflow="$(pwd)/scripts/infraflow-cli.py"
+# Install InfraFlow in editable development mode
+pip install -e .
 
-# Verify CLI version
-./scripts/infraflow-cli.py --version
+# Verify the console entrypoint is available in your PATH
+which infraflow                 # Linux/WSL: outputs /path/to/.venv/bin/infraflow
+infraflow --version
 ```
 
-### Global Flags
+### 1.2 Standard Installation
 
-All commands support standard flags:
+To install InfraFlow as a standard package:
+
+```bash
+pip install .
+
+# Test invocation
+infraflow --version
+```
+
+### 1.3 Windows 11 Native Installation
+
+On native Windows 11 (PowerShell or Command Prompt):
+```powershell
+# Create and activate virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# Install in editable mode
+pip install -e .
+
+# Pip automatically compiles/generates the launcher binary:
+# .\.venv\Scripts\infraflow.exe
+infraflow --version
+```
+
+### 1.4 Zero-Install Standalone Execution (Backwards-Compatible)
+
+If you prefer not to install the package into your Python environment, you can run the direct wrapper script or invoke the module directly:
+
+```bash
+# Option A: Direct script invocation
+./scripts/infraflow-cli.py --version
+
+# Option B: Python module invocation
+python3 -m infraflow.cli --version
+```
+
+### 1.5 Clean Uninstallation
+
+To remove InfraFlow completely:
+```bash
+pip uninstall -y infraflow
+```
+
+---
+
+## 2. Global Flags & Usage Patterns
+
+All `infraflow` commands support standardized global flags:
 
 | Flag | Description |
 |---|---|
@@ -32,7 +87,7 @@ All commands support standard flags:
 
 ---
 
-## 2. Command Reference
+## 3. Command Reference
 
 ### 2.1 `infraflow doctor` — Environment Diagnostics
 

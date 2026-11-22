@@ -3,8 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#19-local-development-and-zero-cost-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
-[![Quality Gates](https://img.shields.io/badge/Quality_Gates-407%2F407_PASS-brightgreen.svg)](#21-testing-and-verification)
-[![Python Tests](https://img.shields.io/badge/Python_Tests-535_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![Quality Gates](https://img.shields.io/badge/Quality_Gates-423%2F423_PASS-brightgreen.svg)](#21-testing-and-verification)
+[![Python Tests](https://img.shields.io/badge/Python_Tests-561_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![OPA Rego](https://img.shields.io/badge/OPA_Policies-194_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
@@ -393,25 +393,34 @@ git clone https://github.com/TM-threemavithana/infraflow.git
 cd infraflow
 ```
 
-### 2. Run Local Quality Verification Suite
+### 2. Install the Unified Platform CLI
 ```bash
-# Execute full quality gate suite (407 checks)
+# Install in editable mode for local development
+pip install -e .
+
+# Verify installation & run platform health diagnostics
+infraflow --version
+infraflow doctor
+```
+
+### 3. Run Everyday Operations via `infraflow`
+```bash
+# Validate consumer repository configuration
+infraflow validate --config fixtures/consumers/networking/infraflow.config.yaml
+
+# Continuous state drift detection simulation ($0.00 cloud spend)
+infraflow drift \
+  -e fixtures/drift/aws/clean/expected.json \
+  -o fixtures/drift/aws/clean/observed.json
+
+# Generate fleet upgrade campaign dry-run plan
+infraflow upgrade -m config/fleet-manifest.yaml --plan
+```
+
+### 4. Run Local Quality Verification Suite
+```bash
+# Execute full quality gate suite
 ./scripts/validate-local.sh
-```
-
-### 3. Run Operational Maturity Verification
-```bash
-# Execute consolidated operational verification across all 4 pillars
-python3 scripts/verify-operational-maturity.py \
-  --manifest config/fleet-manifest.yaml \
-  --fleet-root fixtures/consumers \
-  --output-json /tmp/operational_report.json \
-  --output-markdown /tmp/operational_report.md
-```
-
-### 4. Inspect Generated Governance Evidence
-```bash
-cat /tmp/operational_report.md
 ```
 
 ---
@@ -421,7 +430,7 @@ cat /tmp/operational_report.md
 InfraFlow is engineered from first principles to be 100% testable on local developer workstations and in standard GitHub Actions runners with **zero cloud billing**:
 
 ```bash
-# Run 535 Python unit and adversarial tests
+# Run 561 Python unit and adversarial tests
 python3 -m unittest discover -s tests -p 'test_*.py'
 
 # Run 194 OPA / Rego policy unit tests
@@ -486,9 +495,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **535 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, plan integrity, secret scrubbing | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **561 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, plan integrity, unified CLI packaging, secret scrubbing | **PASS (100%)** |
 | **OPA / Rego Conftest Suite** | **194 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **407 Checks** | End-to-end integration across all 25 platform quality sections | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **423 Checks** | End-to-end integration across all 26 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
 | **Secret Scanning (`gitleaks`)** | **0 Leaks** | Complete repository commit history verified clean of sensitive credentials | **PASS (100%)** |
 
@@ -515,10 +524,15 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── architecture/           # System architecture, milestones, requirements
 │   ├── security/               # Threat models, drift detection security specs
 │   ├── operations/             # Upgrade campaigns, operational verification guides
+│   ├── usage/                  # Unified CLI and developer operational guides
 │   └── evidence/               # Cryptographically signed milestone audit reports
 ├── fixtures/
 │   ├── consumers/              # Reference multi-cloud consumer workloads
 │   └── drift/                  # Multi-cloud state drift fixtures (AWS, Azure, GCP)
+├── infraflow/                  # Canonical InfraFlow platform Python package
+│   ├── __init__.py             # Platform package metadata and version 0.7.0
+│   ├── py.typed                # PEP 561 typing compliance marker
+│   └── cli.py                  # Unified CLI & diagnostic engine canonical implementation
 ├── policies/
 │   └── rego/                   # OPA / Rego policy definitions & unit tests
 ├── scripts/                    # Platform CLI utilities & verification engines
@@ -527,6 +541,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── audit-consumer-fleet.py
 │   ├── emit-telemetry.py
 │   ├── generate-compliance-dashboard.py
+│   ├── infraflow-cli.py        # CLI backwards-compatible executable wrapper
 │   ├── kms-envelope.py
 │   ├── orchestrate-campaign.py
 │   ├── plan-fleet-upgrade.py
@@ -537,10 +552,13 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── verify-plan-integrity.py
 │   └── verify-plan-lifecycle.py
 ├── tests/                      # Dedicated Python unit & adversarial test suites
+│   ├── test_cli.py
 │   ├── test_drift_detection.py
 │   ├── test_operational_maturity.py
 │   ├── test_telemetry.py
 │   └── test_upgrade_campaigns.py
+├── pyproject.toml              # PEP 517 / 621 packaging and console entrypoint definition
+├── setup.py                    # Backwards-compatible packaging shim
 ├── CONTRIBUTING.md             # Contribution guidelines & safety principles
 ├── LICENSE                     # Apache License 2.0
 └── README.md                   # Platform landing page & documentation
