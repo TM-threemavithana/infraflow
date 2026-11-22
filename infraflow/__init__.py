@@ -10,3 +10,19 @@ __version__ = "0.7.0"
 __author__ = "InfraFlow Platform Engineering Team"
 __canonical_ref__ = "TM-threemavithana/infraflow"
 __license__ = "Apache-2.0"
+
+from infraflow.scaffold import ConsumerScaffolder, ScaffoldingError, ScaffoldingSecurityError
+from infraflow.registrar import ConsumerRegistrar, RegistrationError, RegistrationSecurityError
+
+__all__ = [
+    "__version__",
+    "__author__",
+    "__canonical_ref__",
+    "__license__",
+    "ConsumerScaffolder",
+    "ScaffoldingError",
+    "ScaffoldingSecurityError",
+    "ConsumerRegistrar",
+    "RegistrationError",
+    "RegistrationSecurityError",
+]

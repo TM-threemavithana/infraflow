@@ -229,11 +229,77 @@ To prevent divergence between the packaged `infraflow` CLI and the historical `s
 
 ---
 
-## 7. Verification and Acceptance Criteria
+## 7. Self-Service Consumer Scaffolding & Registration Architecture (Milestone G10.2)
 
-Milestone G10.1 and G10.1.1 are verified by:
-1. **Dedicated Unit Test Suite:** `tests/test_cli.py` (26 automated tests covering packaging metadata, module parity, programmatic invocation, version, doctor, validation, error enhancement, drift, upgrade, secret redaction, and symlink defenses).
-2. **Platform Test Suite Integrity:** All 561 platform unit tests across G01–G10 pass with zero failures.
-3. **Packaging Invariants:** Successful installation via `pip install -e .` and `pip install .` in isolated virtual environments across Linux/WSL and Windows, with clean uninstallation.
-4. **Validation Harness Integration:** Section 26 of `scripts/validate-local.sh` (16 quality checks) completing with 100% pass rate.
-5. **Static Analysis & Security Auditing:** Zero warnings from `shellcheck` across `validate-local.sh`.
+Milestone G10.2 introduces decentralized developer self-service onboarding through two integrated primitives:
+- `infraflow init`: Generates production-ready, security-governed, cloud-free testable infrastructure repositories across AWS, Azure, GCP, and provider-neutral adapters.
+- `infraflow register`: Validates and atomically registers new consumer repositories into the central fleet manifest (`config/fleet-manifest.yaml`).
+
+### 7.1 Architecture & Component Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       Developer Workstation / CI Runner                     │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                      1. infraflow init --adapter aws ...
+                                       │
+                                       ▼
+                      ┌─────────────────────────────────┐
+                      │    ConsumerScaffolder Engine    │
+                      └────────────────┬────────────────┘
+                                       │
+               ┌───────────────────────┼───────────────────────┐
+               ▼                       ▼                       ▼
+    ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+    │ infraflow.config.yaml│ │ .github/workflows/  │ │     terraform/      │
+    │  (Schema v1.0, SHA) │ │  (Immutable Pinning)│ │  (100% Cloud-Free)  │
+    └─────────────────────┘ └─────────────────────┘ └─────────────────────┘
+                                       │
+                      2. infraflow validate --config ...
+                                       │
+                                       ▼
+                      ┌─────────────────────────────────┐
+                      │ Consumer Governance Gate (G08.3)│
+                      └────────────────┬────────────────┘
+                                       │ (Passes cleanly)
+                                       │
+                 3. infraflow register --config ... [--dry-run]
+                                       │
+                                       ▼
+                      ┌─────────────────────────────────┐
+                      │    ConsumerRegistrar Engine     │
+                      ├─────────────────────────────────┤
+                      │ • Check unique consumer ID      │
+                      │ • Check unique repo identity    │
+                      │ • Verify authorized org prefix  │
+                      │ • Schema pre-commit check       │
+                      │ • NamedTempFile + os.replace    │
+                      └────────────────┬────────────────┘
+                                       │
+                                       ▼
+                      ┌─────────────────────────────────┐
+                      │   config/fleet-manifest.yaml    │
+                      │   (Atomically Updated & Sealed) │
+                      └─────────────────────────────────┘
+```
+
+### 7.2 Safety & Security Invariants
+1. **Immutable Platform Reference:** All generated GitHub Actions workflows strictly pin immutable 40-character hexadecimal commit SHAs (`@be51718f...`). Mutable branch references (`@main`, `@master`, `@latest`) are rejected fail-closed.
+2. **Directory Overwrite Protection:** `ConsumerScaffolder` strictly checks if the destination directory contains existing files. If non-empty, execution halts immediately with a security exit code (2) unless the `--force` flag is explicitly provided.
+3. **Pre-Flight Validation Enforcement:** `ConsumerRegistrar` executes the complete G08.3 consumer validation engine prior to modifying central state. If any validation or policy violation is detected, registration fails closed without touching the manifest.
+4. **Global Uniqueness Invariants:** Both `consumer_id` and `repository` identities are checked against all existing fleet manifest registrations to prevent namespace collisions or configuration hijacking.
+5. **Atomic File Modification:** Registration writes to an ephemeral `.tmp` file in the same directory, flushes and syncs to disk (`os.fsync`), validates the temporary file against the strict fleet manifest schema, and executes an atomic POSIX rename (`os.replace`). Any failure cleans up the temporary file, ensuring zero manifest corruption.
+
+---
+
+## 8. Verification and Acceptance Criteria
+
+Milestones G10.1, G10.1.1, and G10.2 are verified by:
+1. **Dedicated Test Suites:**
+   - `tests/test_cli.py`: 26 automated tests covering packaging, diagnostics, error enhancement, and exit codes.
+   - `tests/test_scaffolding.py`: 18 automated tests covering scaffolding, overwrite defenses, path traversal, symlink attacks, registration previews, atomic updates, and duplicate rejections.
+2. **Platform Test Suite Integrity:** All 579 platform unit tests across G01–G10 pass with 100% success rate.
+3. **Workflow Security & Schema Auditing:** All generated consumer workflows pass `actionlint` and `zizmor` with zero findings.
+4. **Offline Terraform Testing:** Scaffolded Terraform configurations initialize and pass `terraform test` with zero cloud billing ($0.00 spend).
+5. **Validation Harness Integration:** Section 26 of `scripts/validate-local.sh` (20 quality checks) completing with 100% pass rate.

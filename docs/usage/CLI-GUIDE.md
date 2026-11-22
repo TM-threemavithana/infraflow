@@ -89,7 +89,7 @@ All `infraflow` commands support standardized global flags:
 
 ## 3. Command Reference
 
-### 2.1 `infraflow doctor` — Environment Diagnostics
+### 3.1 `infraflow doctor` — Environment Diagnostics
 
 Performs a comprehensive, **purely non-destructive** assessment of your local system across 12 critical platform dimensions:
 
@@ -120,7 +120,7 @@ infraflow doctor --strict
 
 ---
 
-### 2.2 `infraflow validate` — Governance & Policy Engine
+### 3.2 `infraflow validate` — Governance & Policy Engine
 
 Validates consumer onboarding contracts, fleet manifests, or evaluates OPA policies with intelligent error enhancement.
 
@@ -156,7 +156,7 @@ When a policy failure occurs, `infraflow validate` automatically:
 
 ---
 
-### 2.3 `infraflow drift` — Continuous State & Speculative Drift Detection
+### 3.3 `infraflow drift` — Continuous State & Speculative Drift Detection
 
 Simulates infrastructure drift between expected and observed state snapshots without making live cloud API calls ($0.00 cloud spend guarantee).
 
@@ -184,7 +184,7 @@ infraflow drift \
 
 ---
 
-### 2.4 `infraflow upgrade` — Fleet Upgrade Campaigns
+### 3.4 `infraflow upgrade` — Fleet Upgrade Campaigns
 
 Plans, applies, or rolls back platform reusable workflow upgrades across registered consumer repositories.
 
@@ -204,7 +204,73 @@ infraflow upgrade -m config/fleet-manifest.yaml --rollback
 
 ---
 
-## 3. Exit Codes & CI/CD Integration
+### 3.5 `infraflow init` — Self-Service Consumer Scaffolding (G10.2)
+
+Scaffolds a production-ready, security-governed, cloud-free testable infrastructure repository for application teams.
+
+#### Interactive Mode:
+```bash
+infraflow init --interactive
+```
+
+#### Non-Interactive CLI Mode:
+```bash
+# Scaffold an AWS-backed consumer project
+infraflow init \
+  --name payment-gateway \
+  --adapter aws \
+  --environment dev \
+  --workload-type application \
+  --team payments-team \
+  --output-dir ./payment-gateway
+
+# Scaffold an Azure-backed consumer project
+infraflow init \
+  --name identity-service \
+  --adapter azure \
+  --environment dev \
+  --output-dir ./identity-service
+
+# Force overwrite of an existing non-empty directory
+infraflow init --name payment-gateway --adapter aws --force
+```
+
+#### Generated Components:
+1. `infraflow.config.yaml`: Schema v1.0 configuration with immutable SHA pinning.
+2. `.github/workflows/infraflow-ci.yml`: Standardized workflow invoking approved reusable platform workflows (`@be51718f...`).
+3. `terraform/`: Complete cloud-free testable Terraform module with `terraform_data` and native tests (`unit.tftest.hcl`).
+4. `policies/local_governance.rego`: Consumer-local Rego policy contract.
+5. `README.md` and `.infraflow-metadata.json`: Documentation and scaffolding provenance metadata.
+
+---
+
+### 3.6 `infraflow register` — Fleet Manifest Registration (G10.2)
+
+Validates and atomically registers an onboarding consumer repository into the central fleet manifest (`config/fleet-manifest.yaml`).
+
+#### Preview / Dry-Run Mode:
+```bash
+# Verify onboarding compliance and preview manifest addition without writing to disk
+infraflow register --config ./payment-gateway/infraflow.config.yaml --dry-run
+```
+
+#### Commit Registration:
+```bash
+# Atomically register consumer under Progressive rollout role
+infraflow register \
+  --config ./payment-gateway/infraflow.config.yaml \
+  --stage progressive
+
+# Register designated Canary workload with custom status
+infraflow register \
+  --config ./payment-gateway/infraflow.config.yaml \
+  --stage canary \
+  --status fleet-verified
+```
+
+---
+
+## 4. Exit Codes & CI/CD Integration
 
 | Exit Code | Meaning | Typical Scenario |
 |---|---|---|
@@ -225,7 +291,7 @@ infraflow upgrade -m config/fleet-manifest.yaml --rollback
 
 ---
 
-## 4. Security & Safety Invariants
+## 5. Security & Safety Invariants
 
 - **$0.00 Cloud Spending:** All commands execute locally and offline without contacting cloud APIs.
 - **Fail-Closed Symlink Rejection:** The CLI strictly rejects symbolic links (`os.path.islink`) across input parameters to prevent file-descriptor hijacking.

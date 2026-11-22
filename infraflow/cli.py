@@ -49,6 +49,20 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_SECURITY = 2
 
+from infraflow.scaffold import (
+    ConsumerScaffolder,
+    ScaffoldingError,
+    ScaffoldingSecurityError,
+    SUPPORTED_ADAPTERS as SCAFFOLD_ADAPTERS,
+    SUPPORTED_ENVIRONMENTS as SCAFFOLD_ENVIRONMENTS,
+    SUPPORTED_WORKLOAD_TYPES as SCAFFOLD_WORKLOAD_TYPES,
+)
+from infraflow.registrar import (
+    ConsumerRegistrar,
+    RegistrationError,
+    RegistrationSecurityError,
+)
+
 
 # ==============================================================================
 # Path & Repository Discovery (Cross-Platform)
@@ -1454,6 +1468,175 @@ class CLIHandlers:
             print("==============================================================================")
         return EXIT_OK
 
+    @staticmethod
+    def handle_init(args: argparse.Namespace) -> int:
+        """Scaffolds a new self-service consumer infrastructure repository (G10.2)."""
+        consumer_id = args.consumer_id
+        adapter = args.adapter
+        environment = args.environment
+        workload_type = args.workload_type
+        team = args.team
+        output_dir = args.output_dir
+
+        # Interactive mode prompt
+        is_interactive = getattr(args, "interactive", False) or (not consumer_id and sys.stdin.isatty())
+        if is_interactive:
+            print("==============================================================================")
+            print(" InfraFlow Consumer Repository Onboarding & Scaffolding Wizard")
+            print("==============================================================================")
+            if not consumer_id:
+                default_id = "consumer-app"
+                inp = input(f"Enter consumer identifier [{default_id}]: ").strip()
+                consumer_id = inp or default_id
+
+            if not adapter:
+                print("\nSupported Cloud Adapters:")
+                print("  1. aws              — Amazon Web Services (reusable-tf-aws.yml)")
+                print("  2. azure            — Microsoft Azure (reusable-tf-azure.yml)")
+                print("  3. gcp              — Google Cloud Platform (reusable-tf-gcp.yml)")
+                print("  4. provider-neutral — Generic validation (reusable-tf-validate.yml)")
+                sel = input("Select adapter (1-4 or name) [4]: ").strip().lower()
+                adapter_map = {"1": "aws", "2": "azure", "3": "gcp", "4": "provider-neutral"}
+                adapter = adapter_map.get(sel, sel if sel in adapter_map.values() else "provider-neutral")
+
+            inp_env = input(f"Target deployment environment (dev/staging/prod) [{environment}]: ").strip().lower()
+            if inp_env:
+                environment = inp_env
+
+            inp_team = input(f"Owning engineering team [{team}]: ").strip()
+            if inp_team:
+                team = inp_team
+
+            inp_workload = input(f"Workload category (application/networking/data-platform/general) [{workload_type}]: ").strip().lower()
+            if inp_workload:
+                workload_type = inp_workload
+
+            if not output_dir:
+                default_dir = f"./{consumer_id}"
+                inp_dir = input(f"Destination directory [{default_dir}]: ").strip()
+                output_dir = Path(inp_dir) if inp_dir else Path(default_dir)
+
+        if not consumer_id:
+            print("✖ Missing required argument '--name' / '--consumer-id'. Run with --help or --interactive.", file=sys.stderr)
+            return EXIT_ERROR
+
+        if not adapter:
+            adapter = "provider-neutral"
+
+        if not output_dir:
+            output_dir = Path.cwd() / consumer_id
+
+        try:
+            scaffolder = ConsumerScaffolder(
+                consumer_id=consumer_id,
+                adapter=adapter,
+                environment=environment,
+                workload_type=workload_type,
+                team=team,
+                repository=args.repository,
+                output_dir=output_dir,
+                platform_sha=args.platform_sha,
+                terraform_version=args.terraform_version,
+                force=args.force,
+            )
+            res = scaffolder.scaffold()
+
+            if args.json:
+                print(json.dumps(SecretSanitizer.sanitize_obj(res), indent=2))
+            elif not args.quiet:
+                print("==============================================================================")
+                print(f"✔ Consumer Project Scaffolding Successful: {Color.bold(consumer_id)}")
+                print("==============================================================================")
+                print(f"Destination:     {Color.cyan(str(res['output_dir']))}")
+                print(f"Cloud Adapter:   {Color.bold(res['adapter'])}")
+                print(f"Environment:     {res['environment']}")
+                print(f"Repository:      {res['repository']}")
+                print(f"Platform SHA:    {res['platform_sha'][:8]}... ({res['platform_sha']})")
+                print("------------------------------------------------------------------------------")
+                print("Generated Components:")
+                for f in res["files_created"]:
+                    print(f"  • {f}")
+                print("==============================================================================")
+                print("Next Steps:")
+                print(f"  1. Review configuration:  cat {output_dir}/infraflow.config.yaml")
+                print(f"  2. Validate onboarding:   infraflow validate --config {output_dir}/infraflow.config.yaml")
+                print(f"  3. Register in fleet:     infraflow register --config {output_dir}/infraflow.config.yaml")
+                print("==============================================================================")
+            return EXIT_OK
+
+        except (ScaffoldingSecurityError, SecurityValidationError) as sse:
+            print(f"[SECURITY ERROR] {sse}", file=sys.stderr)
+            return EXIT_SECURITY
+        except ScaffoldingError as se:
+            print(f"[ERROR] {se}", file=sys.stderr)
+            return EXIT_ERROR
+
+    @staticmethod
+    def handle_register(args: argparse.Namespace) -> int:
+        """Validates and atomically registers consumer into fleet-manifest.yaml (G10.2)."""
+        config_path = args.config
+        if not config_path:
+            candidate_cfg = Path.cwd() / "infraflow.config.yaml"
+            if candidate_cfg.is_file():
+                config_path = candidate_cfg
+            else:
+                print("✖ Missing consumer configuration. Specify --config /path/to/infraflow.config.yaml.", file=sys.stderr)
+                return EXIT_ERROR
+
+        try:
+            registrar = ConsumerRegistrar(
+                config_path=config_path,
+                manifest_path=args.manifest,
+                stage=args.stage,
+                status=args.status,
+                max_allowed_deletions=args.max_allowed_deletions,
+                caller_workflow=args.caller_workflow,
+                repository_override=args.repository,
+            )
+            res = registrar.register(dry_run=args.dry_run)
+
+            if args.json:
+                print(json.dumps(SecretSanitizer.sanitize_obj(res), indent=2))
+            elif not args.quiet:
+                if res.get("dry_run"):
+                    entry = res["proposed_entry"]
+                    print("==============================================================================")
+                    print(f" InfraFlow Fleet Registration Preview ({Color.yellow('Dry-Run')})")
+                    print("==============================================================================")
+                    print(f"Target Manifest:          {res['manifest_path']}")
+                    print(f"Consumer Identifier:      {Color.bold(entry['consumer_id'])}")
+                    print(f"Repository Identity:      {Color.cyan(entry['repository'])}")
+                    print(f"Target Adapter:           {entry['adapter']}")
+                    print(f"Rollout Role:             {entry['upgrade_role']}")
+                    print(f"Target Candidate SHA:     {entry['target_sha'][:8]}...")
+                    print(f"Rollback Reference SHA:   {entry['rollback_sha'][:8]}...")
+                    print(f"Max Allowed Deletions:    {entry['max_allowed_deletions']}")
+                    print(f"Caller Workflow:          {entry['caller_workflow']}")
+                    print("------------------------------------------------------------------------------")
+                    print(f"Existing Consumers:       {res['existing_consumer_count']}")
+                    print(f"Projected Total:          {res['projected_consumer_count']}")
+                    print("==============================================================================")
+                    print(f"[{Color.yellow('PREVIEW')}] Validation passed. Zero disk modifications made. Omit --dry-run to commit.")
+                    print("==============================================================================")
+                else:
+                    print("==============================================================================")
+                    print(f"✔ Consumer Registration Committed: {Color.bold(res['consumer_id'])}")
+                    print("==============================================================================")
+                    print(f"Target Manifest:          {res['manifest_path']}")
+                    print(f"Registered Repository:    {Color.cyan(res['repository'])}")
+                    print(f"Rollout Role:             {res['upgrade_role']}")
+                    print(f"Status:                   {res['status']}")
+                    print(f"Fleet Consumers Total:    {res['new_count']} (previously {res['previous_count']})")
+                    print("==============================================================================")
+            return EXIT_OK
+
+        except (RegistrationSecurityError, SecurityValidationError) as rse:
+            print(f"[SECURITY ERROR] {rse}", file=sys.stderr)
+            return EXIT_SECURITY
+        except RegistrationError as re:
+            print(f"[ERROR] {re}", file=sys.stderr)
+            return EXIT_ERROR
+
 
 # ==============================================================================
 # Argument Parsing & CLI Dispatcher
@@ -1475,6 +1658,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-color",
         action="store_true",
         help="Disable ANSI terminal color output.",
+    )
+    common_parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress verbose and non-essential output.",
     )
 
     parser = argparse.ArgumentParser(
@@ -1514,7 +1702,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("-i", "--input-file", type=Path, help="Path to input HCL, JSON, or YAML file to evaluate.")
     p_val.add_argument("-n", "--namespace", type=str, help="OPA policy namespace to evaluate against.")
     p_val.add_argument("--export-governance-payload", type=Path, help="Export normalized governance JSON payload.")
-    p_val.add_argument("-q", "--quiet", action="store_true", help="Suppress verbose passing check messages.")
 
     # Command: drift
     p_drift = subparsers.add_parser(
@@ -1556,6 +1743,39 @@ def build_parser() -> argparse.ArgumentParser:
     p_up.add_argument("--dry-run", action="store_true", help="Dry run campaign stage execution.")
     p_up.add_argument("--emit-telemetry", action="store_true", help="Emit upgrade telemetry event.")
 
+    # Command: init
+    p_init = subparsers.add_parser(
+        "init",
+        help="Scaffold a new self-service consumer infrastructure repository.",
+        parents=[common_parser],
+    )
+    p_init.add_argument("-n", "--name", "--consumer-id", dest="consumer_id", type=str, help="Consumer identifier (lowercase alphanumeric with hyphens).")
+    p_init.add_argument("-r", "--repo", "--repository", dest="repository", type=str, help="Repository identity (e.g. TM-threemavithana/infraflow-consumer-app).")
+    p_init.add_argument("-a", "--adapter", "--provider", dest="adapter", choices=sorted(list(SCAFFOLD_ADAPTERS)), help="Target cloud provider adapter.")
+    p_init.add_argument("-e", "--environment", "--env", dest="environment", default="dev", choices=sorted(list(SCAFFOLD_ENVIRONMENTS)), help="Target deployment environment (default: dev).")
+    p_init.add_argument("-w", "--workload-type", dest="workload_type", default="general", choices=sorted(list(SCAFFOLD_WORKLOAD_TYPES)), help="Workload category (default: general).")
+    p_init.add_argument("-t", "--team", dest="team", default="platform-engineering", help="Owning engineering team (default: platform-engineering).")
+    p_init.add_argument("-o", "--output-dir", dest="output_dir", type=Path, help="Destination directory (default: ./<consumer-id>).")
+    p_init.add_argument("--platform-sha", dest="platform_sha", type=str, help="Platform commit SHA to pin (40-char hex).")
+    p_init.add_argument("--terraform-version", dest="terraform_version", default="1.10.4", help="Terraform CLI version constraint.")
+    p_init.add_argument("-f", "--force", action="store_true", help="Allow scaffolding into an existing non-empty directory.")
+    p_init.add_argument("-i", "--interactive", action="store_true", help="Prompt interactively for onboarding parameters.")
+
+    # Command: register
+    p_reg = subparsers.add_parser(
+        "register",
+        help="Validate and register a consumer repository in the central fleet manifest.",
+        parents=[common_parser],
+    )
+    p_reg.add_argument("-c", "--config", type=Path, help="Path to consumer infraflow.config.yaml or consumer root directory.")
+    p_reg.add_argument("-m", "--manifest", type=Path, help="Path to central fleet-manifest.yaml (default: auto-discovered).")
+    p_reg.add_argument("-r", "--repo", "--repository", dest="repository", type=str, help="Override repository identity in fleet manifest.")
+    p_reg.add_argument("--stage", choices=["canary", "progressive"], default="progressive", help="Rollout upgrade stage (default: progressive).")
+    p_reg.add_argument("--status", default="registered", help="Initial consumer lifecycle status (default: registered).")
+    p_reg.add_argument("--max-allowed-deletions", type=int, help="Override maximum permitted resource deletions (0-25).")
+    p_reg.add_argument("--caller-workflow", type=str, default=".github/workflows/infraflow-ci.yml", help="Path to caller workflow within consumer repository.")
+    p_reg.add_argument("--dry-run", "--preview", dest="dry_run", action="store_true", help="Preview proposed manifest changes without modifying disk.")
+
     return parser
 
 
@@ -1579,12 +1799,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             return CLIHandlers.handle_drift(args)
         elif args.command == "upgrade":
             return CLIHandlers.handle_upgrade(args)
+        elif args.command == "init":
+            return CLIHandlers.handle_init(args)
+        elif args.command == "register":
+            return CLIHandlers.handle_register(args)
         else:
             parser.print_help()
             return EXIT_OK
-    except SecurityValidationError as sve:
+    except (SecurityValidationError, ScaffoldingSecurityError, RegistrationSecurityError) as sve:
         print(f"[SECURITY ERROR] {sve}", file=sys.stderr)
         return EXIT_SECURITY
+    except (ScaffoldingError, RegistrationError) as oe:
+        print(f"[ERROR] {oe}", file=sys.stderr)
+        return EXIT_ERROR
     except Exception as e:
         if args.verbose:
             import traceback

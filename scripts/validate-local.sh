@@ -5845,32 +5845,32 @@ log_header "26. Unified Platform Developer Experience, CLI & Diagnostic Engine (
 
 # Test 26.1: scripts/infraflow-cli.py exists and is executable
 if [[ -f "${REPO_ROOT}/scripts/infraflow-cli.py" && -x "${REPO_ROOT}/scripts/infraflow-cli.py" ]]; then
-  record_pass "Unified Platform CLI [1/16]: scripts/infraflow-cli.py exists and is executable"
+  record_pass "Unified Platform CLI [1/20]: scripts/infraflow-cli.py exists and is executable"
 else
-  record_fail "Unified Platform CLI [1/16]: CLI check" "scripts/infraflow-cli.py missing or not executable"
+  record_fail "Unified Platform CLI [1/20]: CLI check" "scripts/infraflow-cli.py missing or not executable"
 fi
 
 # Test 26.2: Version command reports 0.7.0 and canonical reference
 CLI_VER_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --version 2>&1)"
 if [[ "${CLI_VER_OUT}" == *"infraflow version 0.7.0"* && "${CLI_VER_OUT}" == *"TM-threemavithana/infraflow"* ]]; then
-  record_pass "Platform Version Flag [2/16]: --version returns platform version 0.7.0 and canonical reference"
+  record_pass "Platform Version Flag [2/20]: --version returns platform version 0.7.0 and canonical reference"
 else
-  record_fail "Platform Version Flag [2/16]: Version check" "Expected version 0.7.0, got: ${CLI_VER_OUT}"
+  record_fail "Platform Version Flag [2/20]: Version check" "Expected version 0.7.0, got: ${CLI_VER_OUT}"
 fi
 
 # Test 26.3: Help command enumerates all required subcommands
 CLI_HELP_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --help 2>&1)"
-if [[ "${CLI_HELP_OUT}" == *"doctor"* && "${CLI_HELP_OUT}" == *"validate"* && "${CLI_HELP_OUT}" == *"drift"* && "${CLI_HELP_OUT}" == *"upgrade"* ]]; then
-  record_pass "Platform Help & Discovery [3/16]: --help lists doctor, validate, drift, and upgrade subcommands"
+if [[ "${CLI_HELP_OUT}" == *"doctor"* && "${CLI_HELP_OUT}" == *"validate"* && "${CLI_HELP_OUT}" == *"drift"* && "${CLI_HELP_OUT}" == *"upgrade"* && "${CLI_HELP_OUT}" == *"init"* && "${CLI_HELP_OUT}" == *"register"* ]]; then
+  record_pass "Platform Help & Discovery [3/20]: --help lists doctor, validate, drift, upgrade, init, and register"
 else
-  record_fail "Platform Help & Discovery [3/16]: Help check" "Help output missing required subcommands"
+  record_fail "Platform Help & Discovery [3/20]: Help check" "Help output missing required subcommands"
 fi
 
 # Test 26.4: Platform Doctor non-destructive execution passes cleanly
 if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" doctor >/dev/null 2>&1; then
-  record_pass "Platform Doctor Engine [4/16]: doctor executes and reports healthy platform state (exit code 0)"
+  record_pass "Platform Doctor Engine [4/20]: doctor executes and reports healthy platform state (exit code 0)"
 else
-  record_fail "Platform Doctor Engine [4/16]: Doctor check" "Platform doctor returned unexpected failure"
+  record_fail "Platform Doctor Engine [4/20]: Doctor check" "Platform doctor returned unexpected failure"
 fi
 
 # Test 26.5: Platform Doctor JSON emission contains all 12 diagnostic checks
@@ -5882,9 +5882,9 @@ if [[ -s "${TMP_DOC_JSON}" ]] && \
    grep -q '"DOC-02-TERRAFORM"' "${TMP_DOC_JSON}" && \
    grep -q '"DOC-06-CONFTEST"' "${TMP_DOC_JSON}" && \
    grep -q '"DOC-12-GITSTATE"' "${TMP_DOC_JSON}"; then
-  record_pass "Platform Doctor JSON API [5/16]: doctor --json produces structured 12-check diagnostic payload"
+  record_pass "Platform Doctor JSON API [5/20]: doctor --json produces structured 12-check diagnostic payload"
 else
-  record_fail "Platform Doctor JSON API [5/16]: JSON check" "Doctor JSON missing expected diagnostic checks"
+  record_fail "Platform Doctor JSON API [5/20]: JSON check" "Doctor JSON missing expected diagnostic checks"
 fi
 rm -f "${TMP_DOC_JSON}"
 
@@ -5892,17 +5892,17 @@ rm -f "${TMP_DOC_JSON}"
 if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
     --config "${REPO_ROOT}/fixtures/consumers/networking/infraflow.config.yaml" \
     --quiet >/dev/null 2>&1; then
-  record_pass "Consumer Config Validator [6/16]: validate --config succeeds on valid consumer fixture"
+  record_pass "Consumer Config Validator [6/20]: validate --config succeeds on valid consumer fixture"
 else
-  record_fail "Consumer Config Validator [6/16]: Config check" "validate --config failed on compliant consumer config"
+  record_fail "Consumer Config Validator [6/20]: Config check" "validate --config failed on compliant consumer config"
 fi
 
 # Test 26.7: Fleet manifest validation via unified CLI
 TMP_VAL_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate -m "${REPO_ROOT}/config/fleet-manifest.yaml" 2>&1)"
 if [[ "${TMP_VAL_OUT}" == *"Fleet Manifest Valid"* && "${TMP_VAL_OUT}" == *"be51718f06a2662099500a710e93e6e8201b4f1c"* ]]; then
-  record_pass "Fleet Manifest Validator [7/16]: validate -m verifies fleet manifest schema and candidate SHA"
+  record_pass "Fleet Manifest Validator [7/20]: validate -m verifies fleet manifest schema and candidate SHA"
 else
-  record_fail "Fleet Manifest Validator [7/16]: Manifest check" "validate -m failed on config/fleet-manifest.yaml"
+  record_fail "Fleet Manifest Validator [7/20]: Manifest check" "validate -m failed on config/fleet-manifest.yaml"
 fi
 
 # Test 26.8: OPA policy evaluation with policy error enhancement
@@ -5915,9 +5915,9 @@ if [[ "${TMP_POL_OUT}" == *"AWS-SEC-S3-ACL-001"* && \
       "${TMP_POL_OUT}" == *"aws_s3_bucket.bad_acl_bucket"* && \
       "${TMP_POL_OUT}" == *"main.tf:5"* && \
       "${TMP_POL_OUT}" == *"Remediation:"* ]]; then
-  record_pass "Policy Error Enhancement [8/16]: Enhanced policy diagnostics map violation ID, line, and remediation"
+  record_pass "Policy Error Enhancement [8/20]: Enhanced policy diagnostics map violation ID, line, and remediation"
 else
-  record_fail "Policy Error Enhancement [8/16]: Diagnostic check" "Enhanced policy output missing mapped fields: ${TMP_POL_OUT}"
+  record_fail "Policy Error Enhancement [8/20]: Diagnostic check" "Enhanced policy output missing mapped fields: ${TMP_POL_OUT}"
 fi
 
 # Test 26.9: Drift detection simulation (clean state -> NO_DRIFT)
@@ -5925,9 +5925,9 @@ TMP_DRIFT_CLEAN="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" drift \
     -e "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
     -o "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" 2>&1)"
 if [[ "${TMP_DRIFT_CLEAN}" == *"Verdict: NO_DRIFT"* ]]; then
-  record_pass "Drift Detection Simulator [9/16]: drift reports NO_DRIFT on clean state snapshots"
+  record_pass "Drift Detection Simulator [9/20]: drift reports NO_DRIFT on clean state snapshots"
 else
-  record_fail "Drift Detection Simulator [9/16]: Clean drift check" "Expected NO_DRIFT, got: ${TMP_DRIFT_CLEAN}"
+  record_fail "Drift Detection Simulator [9/20]: Clean drift check" "Expected NO_DRIFT, got: ${TMP_DRIFT_CLEAN}"
 fi
 
 # Test 26.10: Zero-drift enforcement gate fails closed on drift
@@ -5935,9 +5935,9 @@ if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" drift \
     -e "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
     -o "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
     --enforce-zero-drift >/dev/null 2>&1; then
-  record_pass "Zero-Drift Enforcement Gate [10/16]: --enforce-zero-drift exits with code 1 on detected drift"
+  record_pass "Zero-Drift Enforcement Gate [10/20]: --enforce-zero-drift exits with code 1 on detected drift"
 else
-  record_fail "Zero-Drift Enforcement Gate [10/16]: Gate check" "Drift gate unexpectedly passed on drifted state"
+  record_fail "Zero-Drift Enforcement Gate [10/20]: Gate check" "Drift gate unexpectedly passed on drifted state"
 fi
 
 # Test 26.11: Fleet upgrade planning dry-run via unified CLI
@@ -5947,9 +5947,9 @@ TMP_UP_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" upgrade \
 if [[ "${TMP_UP_OUT}" == *"InfraFlow Fleet Upgrade Plan (Dry-Run)"* && \
       "${TMP_UP_OUT}" == *"Stage 1 — Canary Rollout"* && \
       "${TMP_UP_OUT}" == *"Stage 2 — Progressive Rollout"* ]]; then
-  record_pass "Fleet Upgrade Planner [11/16]: upgrade --plan generates staged canary/progressive rollout plan"
+  record_pass "Fleet Upgrade Planner [11/20]: upgrade --plan generates staged canary/progressive rollout plan"
 else
-  record_fail "Fleet Upgrade Planner [11/16]: Upgrade check" "Upgrade plan output missing expected stages: ${TMP_UP_OUT}"
+  record_fail "Fleet Upgrade Planner [11/20]: Upgrade check" "Upgrade plan output missing expected stages: ${TMP_UP_OUT}"
 fi
 
 # Test 26.12: Security controls: symlink rejection & secret sanitization
@@ -5957,9 +5957,9 @@ TMP_SYM_DIR="$(mktemp -d -t sym_dir_XXXXXX)"
 ln -s "${REPO_ROOT}/config/fleet-manifest.yaml" "${TMP_SYM_DIR}/sym_manifest.yaml"
 if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
     -m "${TMP_SYM_DIR}/sym_manifest.yaml" >/dev/null 2>&1; then
-  record_pass "Fail-Closed Security Invariant [12/16]: Symlink input paths rejected with security exit code"
+  record_pass "Fail-Closed Security Invariant [12/20]: Symlink input paths rejected with security exit code"
 else
-  record_fail "Fail-Closed Security Invariant [12/16]: Symlink check" "Symlinked manifest unexpectedly accepted by CLI"
+  record_fail "Fail-Closed Security Invariant [12/20]: Symlink check" "Symlinked manifest unexpectedly accepted by CLI"
 fi
 rm -rf "${TMP_SYM_DIR}"
 
@@ -5967,31 +5967,77 @@ rm -rf "${TMP_SYM_DIR}"
 if [[ -f "${REPO_ROOT}/pyproject.toml" && -f "${REPO_ROOT}/setup.py" ]] && \
    grep -q 'name = "infraflow"' "${REPO_ROOT}/pyproject.toml" && \
    grep -q 'infraflow = "infraflow.cli:main"' "${REPO_ROOT}/pyproject.toml"; then
-  record_pass "Python Packaging Specification [13/16]: pyproject.toml defines PEP 517/621 build and [project.scripts] entry point"
+  record_pass "Python Packaging Specification [13/20]: pyproject.toml defines PEP 517/621 build and [project.scripts] entry point"
 else
-  record_fail "Python Packaging Specification [13/16]: Packaging check" "pyproject.toml or setup.py missing or misconfigured"
+  record_fail "Python Packaging Specification [13/20]: Packaging check" "pyproject.toml or setup.py missing or misconfigured"
 fi
 
 # Test 26.14: Python module execution parity (-m infraflow.cli)
 TMP_MOD_OUT="$(python3 -m infraflow.cli --version 2>&1 || true)"
 if [[ "${TMP_MOD_OUT}" == *"infraflow version 0.7.0"* ]]; then
-  record_pass "Module Invocation Parity [14/16]: python3 -m infraflow.cli --version succeeds with platform version"
+  record_pass "Module Invocation Parity [14/20]: python3 -m infraflow.cli --version succeeds with platform version"
 else
-  record_fail "Module Invocation Parity [14/16]: Module execution" "python3 -m infraflow.cli failed or wrong version: ${TMP_MOD_OUT}"
+  record_fail "Module Invocation Parity [14/20]: Module execution" "python3 -m infraflow.cli failed or wrong version: ${TMP_MOD_OUT}"
 fi
 
 # Test 26.15: Package import and runtime metadata validation
 if python3 -c 'import infraflow; assert infraflow.__version__ == "0.7.0"; assert "infraflow" in infraflow.__canonical_ref__' >/dev/null 2>&1; then
-  record_pass "Package Import & Metadata [15/16]: Package infraflow imports cleanly and exposes canonical __version__"
+  record_pass "Package Import & Metadata [15/20]: Package infraflow imports cleanly and exposes canonical __version__"
 else
-  record_fail "Package Import & Metadata [15/16]: Metadata check" "import infraflow failed or invalid metadata"
+  record_fail "Package Import & Metadata [15/20]: Metadata check" "import infraflow failed or invalid metadata"
 fi
 
 # Test 26.16: Dedicated 26-test unified CLI test suite
 if python3 -m unittest "${REPO_ROOT}/tests/test_cli.py" >/dev/null 2>&1; then
-  record_pass "Unified CLI Test Suite [16/16]: Dedicated 26-test suite passed (test_cli.py)"
+  record_pass "Unified CLI Test Suite [16/20]: Dedicated 26-test suite passed (test_cli.py)"
 else
-  record_fail "Unified CLI Test Suite [16/16]: Test suite" "One or more tests in test_cli.py failed"
+  record_fail "Unified CLI Test Suite [16/20]: Test suite" "One or more tests in test_cli.py failed"
+fi
+
+# Test 26.17: Self-service consumer project scaffolding (infraflow init)
+TMP_SCAF_DIR="$(mktemp -d -t scaf_XXXXXX)"
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" init \
+    -n "val-scaf-consumer" \
+    -a "azure" \
+    -o "${TMP_SCAF_DIR}/consumer" \
+    --quiet >/dev/null 2>&1 && \
+   [[ -f "${TMP_SCAF_DIR}/consumer/infraflow.config.yaml" && \
+      -f "${TMP_SCAF_DIR}/consumer/.github/workflows/infraflow-ci.yml" && \
+      -f "${TMP_SCAF_DIR}/consumer/terraform/main.tf" ]]; then
+  record_pass "Consumer Project Scaffolding [17/20]: infraflow init generates complete compliant consumer project"
+else
+  record_fail "Consumer Project Scaffolding [17/20]: Scaffolding check" "infraflow init failed or generated incomplete project"
+fi
+
+# Test 26.18: Overwrite safeguard on non-empty directory
+if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" init \
+    -n "val-scaf-consumer" \
+    -a "azure" \
+    -o "${TMP_SCAF_DIR}/consumer" >/dev/null 2>&1; then
+  record_pass "Overwrite Safeguard Invariant [18/20]: Scaffolding into non-empty directory rejected without --force"
+else
+  record_fail "Overwrite Safeguard Invariant [18/20]: Overwrite check" "Scaffolding unexpectedly overwrote non-empty directory"
+fi
+
+# Test 26.19: Consumer fleet registration preview & dry-run
+TMP_REG_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" register \
+    -c "${TMP_SCAF_DIR}/consumer/infraflow.config.yaml" \
+    -m "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --dry-run 2>&1 || true)"
+if [[ "${TMP_REG_OUT}" == *"InfraFlow Fleet Registration Preview"* && \
+      "${TMP_REG_OUT}" == *"val-scaf-consumer"* && \
+      "${TMP_REG_OUT}" == *"Zero disk modifications made"* ]]; then
+  record_pass "Consumer Registration Preview [19/20]: infraflow register --dry-run generates safe preview diff"
+else
+  record_fail "Consumer Registration Preview [19/20]: Registration check" "register --dry-run failed: ${TMP_REG_OUT}"
+fi
+rm -rf "${TMP_SCAF_DIR}"
+
+# Test 26.20: Dedicated 18-test scaffolding & registration test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_scaffolding.py" >/dev/null 2>&1; then
+  record_pass "Scaffolding Test Suite [20/20]: Dedicated 18-test suite passed (test_scaffolding.py)"
+else
+  record_fail "Scaffolding Test Suite [20/20]: Test suite" "One or more tests in test_scaffolding.py failed"
 fi
 
 # --- Summary Report ---

@@ -3,8 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#19-local-development-and-zero-cost-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
-[![Quality Gates](https://img.shields.io/badge/Quality_Gates-423%2F423_PASS-brightgreen.svg)](#21-testing-and-verification)
-[![Python Tests](https://img.shields.io/badge/Python_Tests-561_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![Quality Gates](https://img.shields.io/badge/Quality_Gates-427%2F427_PASS-brightgreen.svg)](#21-testing-and-verification)
+[![Python Tests](https://img.shields.io/badge/Python_Tests-579_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![OPA Rego](https://img.shields.io/badge/OPA_Policies-194_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
@@ -405,8 +405,15 @@ infraflow doctor
 
 ### 3. Run Everyday Operations via `infraflow`
 ```bash
+# Scaffold a new consumer repository (G10.2)
+infraflow init --name my-app --adapter aws --env dev -o ./my-app
+
 # Validate consumer repository configuration
-infraflow validate --config fixtures/consumers/networking/infraflow.config.yaml
+infraflow validate --config ./my-app/infraflow.config.yaml
+
+# Preview and register consumer in central fleet manifest
+infraflow register --config ./my-app/infraflow.config.yaml --dry-run
+infraflow register --config ./my-app/infraflow.config.yaml
 
 # Continuous state drift detection simulation ($0.00 cloud spend)
 infraflow drift \
@@ -430,7 +437,7 @@ infraflow upgrade -m config/fleet-manifest.yaml --plan
 InfraFlow is engineered from first principles to be 100% testable on local developer workstations and in standard GitHub Actions runners with **zero cloud billing**:
 
 ```bash
-# Run 561 Python unit and adversarial tests
+# Run 579 Python unit and adversarial tests
 python3 -m unittest discover -s tests -p 'test_*.py'
 
 # Run 194 OPA / Rego policy unit tests
@@ -495,9 +502,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **561 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, plan integrity, unified CLI packaging, secret scrubbing | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **579 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scrubbing | **PASS (100%)** |
 | **OPA / Rego Conftest Suite** | **194 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **423 Checks** | End-to-end integration across all 26 platform quality sections | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **427 Checks** | End-to-end integration across all 26 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
 | **Secret Scanning (`gitleaks`)** | **0 Leaks** | Complete repository commit history verified clean of sensitive credentials | **PASS (100%)** |
 
@@ -532,7 +539,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 ├── infraflow/                  # Canonical InfraFlow platform Python package
 │   ├── __init__.py             # Platform package metadata and version 0.7.0
 │   ├── py.typed                # PEP 561 typing compliance marker
-│   └── cli.py                  # Unified CLI & diagnostic engine canonical implementation
+│   ├── cli.py                  # Unified CLI & diagnostic engine canonical implementation
+│   ├── scaffold.py             # Self-service consumer project scaffolding engine (G10.2)
+│   └── registrar.py            # Atomic fleet manifest registration engine (G10.2)
 ├── policies/
 │   └── rego/                   # OPA / Rego policy definitions & unit tests
 ├── scripts/                    # Platform CLI utilities & verification engines
@@ -555,6 +564,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── test_cli.py
 │   ├── test_drift_detection.py
 │   ├── test_operational_maturity.py
+│   ├── test_scaffolding.py
 │   ├── test_telemetry.py
 │   └── test_upgrade_campaigns.py
 ├── pyproject.toml              # PEP 517 / 621 packaging and console entrypoint definition
@@ -571,6 +581,11 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 | Document | Category | Description |
 |---|---|---|
 | [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) | Architecture | End-to-end platform design and tier breakdowns. |
+| [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G09.4. |
+| [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
+| [`docs/architecture/G10-CLI-ARCHITECTURE.md`](docs/architecture/G10-CLI-ARCHITECTURE.md) | Architecture | Unified platform CLI, diagnostic engine, packaging, and onboarding architecture. |
+| [`docs/usage/CLI-GUIDE.md`](docs/usage/CLI-GUIDE.md) | Operations | Developer guide covering all 6 CLI commands (`init`, `register`, `validate`, `doctor`, `drift`, `upgrade`). |
+| [`docs/usage/CONSUMER-ONBOARDING.md`](docs/usage/CONSUMER-ONBOARDING.md) | Onboarding | Comprehensive step-by-step consumer onboarding tutorial and security guardrails. |
 | [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G09.4. |
 | [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
 | [`docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md`](docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md) | Architecture | 4-pillar operational maturity framework. |

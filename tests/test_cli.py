@@ -51,9 +51,11 @@ class TestCLIHelpAndVersion(unittest.TestCase):
         self.assertIn("validate", res.stdout)
         self.assertIn("drift", res.stdout)
         self.assertIn("upgrade", res.stdout)
+        self.assertIn("init", res.stdout)
+        self.assertIn("register", res.stdout)
 
     def test_subcommand_helps(self):
-        for subcmd in ["doctor", "validate", "drift", "upgrade"]:
+        for subcmd in ["doctor", "validate", "drift", "upgrade", "init", "register"]:
             res = subprocess.run([sys.executable, str(CLI_PATH), subcmd, "--help"], capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
             self.assertIn(f"usage: infraflow {subcmd}", res.stdout)
