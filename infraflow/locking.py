@@ -1445,18 +1445,21 @@ class LockManager:
 
         try:
             repo_root = Path(__file__).resolve().parent.parent
-            scripts_dir = repo_root / "scripts"
-            if str(scripts_dir) not in sys.path:
-                sys.path.insert(0, str(scripts_dir))
-            import emit_telemetry  # type: ignore
-            emit_telemetry.create_telemetry_event(
-                event_type=event_type,
-                consumer_id=payload.get("consumer_id", "platform-locking"),
-                repository=payload.get("repository", "TM-threemavithana/infraflow"),
-                status=status,
-                metrics={"duration_ms": 0},
-                verdict_reasons=[str(payload)],
-            )
+            emit_path = repo_root / "scripts" / "emit-telemetry.py"
+            if emit_path.is_file():
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("infraflow_telemetry", str(emit_path))
+                if spec and spec.loader:
+                    telemetry_mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(telemetry_mod)
+                    telemetry_mod.create_telemetry_event(
+                        event_type=event_type,
+                        consumer_id=payload.get("consumer_id", "platform-locking"),
+                        repository=payload.get("repository", "TM-threemavithana/infraflow"),
+                        status=status,
+                        metrics={"duration_ms": 0},
+                        verdict_reasons=[str(payload)],
+                    )
         except Exception:
             pass
 

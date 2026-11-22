@@ -26,6 +26,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G10.3.1** | **Security Integration Assurance & Decommission Hardening** | Multi-workflow secret scanning, Conftest all-namespaces evaluation, decommission bypass closure, 16-test suite, 455/455 checks. | **PASS (Completed)** |
 | **G10.4.1** | **Distributed Locking Architecture & Refinement (G10.4.1-R)** | Backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, decoupled admin recovery, STRIDE model. | **PASS (Completed)** |
 | **G10.4.2** | **Core Locking Engine & LocalFS Driver** | DistributedLockDriver, LocalFSDriver, MockDistributedDriver, LockManager, durable HWM fencing tokens, secret defense, 18 unit tests. | **PASS (Completed)** |
+| **G10.4.3** | **Locking Integration & Adversarial Validation** | Multiprocessing concurrency, failure recovery, filesystem security, CLI lock inspect, Section 29 (465 checks), 673 tests. | **PASS (Completed)** |
 
 ---
 
@@ -565,14 +566,31 @@ Milestone G10.4.2 implements the reference core distributed locking engine and s
 
 ---
 
-## 36. Quality Gate Definitions
+## 36. Milestone G10.4.3 — Acceptance Criteria (Locking Integration & Adversarial Validation)
+
+Milestone G10.4.3 delivers rigorous, independent adversarial validation and platform integration of the G10.4 distributed state locking engine. It proves true multi-process kernel concurrency across distinct OS address spaces, hard process termination (`SIGKILL`) recovery, machine reboot state preservation, network partition timeouts, symlink attack defenses, path traversal defenses, cryptographic payload integrity verification, CLI inspection (`infraflow lock inspect`), and structured RFC 5424 telemetry emission with secret scrubbing ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-45** | Multiprocessing Kernel Concurrency | Prove that independent OS processes (`multiprocessing.Process`) cannot acquire the same lock simultaneously; verify 8-process barrier contention yields exactly 1 owner; verify independent lock key isolation. | Multiprocessing test suite | **PASS (Completed)** |
+| **AC-G10-46** | Monotonic Fencing Token Monotonicity | Prove that high-water mark fencing tokens remain strictly monotonic ($T_{k+1} > T_k$) across concurrent process acquisitions, node crashes, and clean lock releases. | Concurrency & sequence audit | **PASS (Completed)** |
+| **AC-G10-47** | Stale Owner & Expired Ownership Interception | Prove that stale owners cannot release or renew newer leases; prove that expired owners are unconditionally rejected when attempting lease renewal or state release. | Adversarial concurrency tests | **PASS (Completed)** |
+| **AC-G10-48** | Hard Process Termination & Lease Recovery | Prove that abruptly terminating a lock owner (`SIGKILL`) releases the kernel advisory lock (`fcntl.flock`), leaves the durable lock metadata intact until TTL expiration, and allows a subsequent process to acquire the lock upon expiry. | Kill simulation & recovery tests | **PASS (Completed)** |
+| **AC-G10-49** | Node Reboot & Storage Crash State Preservation | Prove that re-instantiating the driver after simulated node shutdown preserves high-water mark counters and active locks without state corruption or counter resets. | Driver reinitialization tests | **PASS (Completed)** |
+| **AC-G10-50** | Filesystem Security & Symlink Attack Defense | Prove that symlink attack targets are rejected with `SecurityViolationError`; verify path traversal sequences are rejected; verify malformed or tampered metadata fails closed with `MetadataCorruptionError`. | Adversarial filesystem tests | **PASS (Completed)** |
+| **AC-G10-51** | CLI Diagnostic Lock Inspection Engine | Implement `infraflow lock inspect <key>` with human-readable summary, `--json` export, HWM sequence query, and path traversal validation. | CLI unit & functional tests | **PASS (Completed)** |
+| **AC-G10-52** | Telemetry RFC 5424 Audit & Zero Credential Leakage | Verify all 8 locking events emit structured RFC 5424 telemetry; prove zero sensitive credentials appear in event payloads or log streams. | Telemetry test verification | **PASS (Completed)** |
+
+---
+
+## 37. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (455/455 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (465/465 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

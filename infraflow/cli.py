@@ -62,6 +62,13 @@ from infraflow.registrar import (
     RegistrationError,
     RegistrationSecurityError,
 )
+from infraflow.locking import (
+    LocalFSDriver,
+    LockRecord,
+    LockError,
+    ResourceIdentityError,
+    SecurityViolationError,
+)
 
 
 # ==============================================================================
@@ -1637,6 +1644,90 @@ class CLIHandlers:
             print(f"[ERROR] {re}", file=sys.stderr)
             return EXIT_ERROR
 
+    @staticmethod
+    def handle_lock(args: argparse.Namespace) -> int:
+        """Inspects state locks across platform targets."""
+        if getattr(args, "lock_action", None) != "inspect":
+            print("[ERROR] Subcommand 'infraflow lock' requires an action (e.g. 'inspect'). Run 'infraflow lock --help'.", file=sys.stderr)
+            return EXIT_ERROR
+
+        key = args.key
+        lock_dir = Path(args.lock_dir).resolve() if args.lock_dir else (get_repo_root() / ".infraflow" / "locks")
+
+        try:
+            driver = LocalFSDriver(base_dir=lock_dir)
+            record = driver.inspect(key)
+            hwm = driver.get_high_water_mark(key)
+
+            if record is None:
+                if args.json:
+                    print(json.dumps({
+                        "status": "UNLOCKED",
+                        "key": key,
+                        "high_water_mark": hwm,
+                        "record": None,
+                    }, indent=2))
+                elif not args.quiet:
+                    print("==============================================================================")
+                    print(" InfraFlow Distributed State Lock Inspector")
+                    print("==============================================================================")
+                    print(f"Target Key:               {Color.cyan(key)}")
+                    print(f"Status:                   {Color.green('UNLOCKED')} (No active lock held)")
+                    print(f"Storage Directory:        {lock_dir}")
+                    print(f"Durable High-Water Mark:  {hwm}")
+                    print("==============================================================================")
+                return EXIT_OK
+
+            # Lock is held or expired
+            is_expired = record.is_expired()
+            desc = record.descriptor
+            lease = record.lease
+            owner_runner = desc.owner_identity.get("runner_id") or desc.owner_identity.get("actor") or "unknown"
+            workflow_name = desc.owner_identity.get("workflow_name") or "manual"
+
+            status_str = "EXPIRED" if is_expired else "ACTIVE"
+            status_colored = Color.yellow("EXPIRED") if is_expired else Color.red("ACTIVE (LOCKED)")
+
+            if args.json:
+                out_dict = record.to_dict()
+                out_dict["status"] = status_str
+                out_dict["is_expired"] = is_expired
+                out_dict["high_water_mark"] = hwm
+                print(json.dumps(out_dict, indent=2))
+            elif not args.quiet:
+                print("==============================================================================")
+                print(" InfraFlow Distributed State Lock Inspector")
+                print("==============================================================================")
+                print(f"Target Key:               {Color.cyan(key)}")
+                print(f"Resource Fingerprint:     {desc.resource_fingerprint}")
+                print(f"Status:                   {status_colored}")
+                print(f"Lock ID:                  {desc.lock_id}")
+                print(f"Fencing Token:            {Color.bold(str(lease.fencing_token))}")
+                print(f"Lease Generation:         {lease.lease_generation}")
+                print(f"Current Owner:            {Color.bold(owner_runner)} (workflow: {workflow_name})")
+                print(f"Purpose:                  {desc.purpose}")
+                provider = desc.backend_target.get("provider", "local")
+                storage_loc = desc.backend_target.get("storage_location", "local")
+                state_key = desc.backend_target.get("state_key", "default")
+                print(f"Backend Target:           {provider}://{storage_loc}/{state_key}")
+                print(f"Acquired At:              {lease.acquired_at}")
+                print(f"Expires At:               {lease.expires_at}")
+                print(f"Renewal Count:            {lease.renewal_count}")
+                print(f"Durable High-Water Mark:  {hwm}")
+                print(f"Payload Integrity SHA256: {record.payload_sha256[:16]}... (VALID)")
+                print("==============================================================================")
+            return EXIT_OK
+
+        except (SecurityViolationError, ResourceIdentityError) as se:
+            print(f"[SECURITY ERROR] {se}", file=sys.stderr)
+            return EXIT_SECURITY
+        except LockError as le:
+            print(f"[LOCK ERROR] {le}", file=sys.stderr)
+            return EXIT_ERROR
+        except Exception as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            return EXIT_ERROR
+
 
 # ==============================================================================
 # Argument Parsing & CLI Dispatcher
@@ -1776,6 +1867,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_reg.add_argument("--caller-workflow", type=str, default=".github/workflows/infraflow-ci.yml", help="Path to caller workflow within consumer repository.")
     p_reg.add_argument("--dry-run", "--preview", dest="dry_run", action="store_true", help="Preview proposed manifest changes without modifying disk.")
 
+    # Command: lock
+    p_lock = subparsers.add_parser(
+        "lock",
+        help="Inspect and query distributed infrastructure state locks.",
+        parents=[common_parser],
+    )
+    lock_subparsers = p_lock.add_subparsers(dest="lock_action", help="Lock actions")
+    p_lock_inspect = lock_subparsers.add_parser(
+        "inspect",
+        help="Inspect an authoritative lock record.",
+        parents=[common_parser],
+    )
+    p_lock_inspect.add_argument("key", type=str, help="Canonical lock key or 64-char fingerprint.")
+    p_lock_inspect.add_argument("-d", "--lock-dir", type=Path, help="Storage directory for LocalFS locks.")
+
     return parser
 
 
@@ -1803,6 +1909,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return CLIHandlers.handle_init(args)
         elif args.command == "register":
             return CLIHandlers.handle_register(args)
+        elif args.command == "lock":
+            return CLIHandlers.handle_lock(args)
         else:
             parser.print_help()
             return EXIT_OK

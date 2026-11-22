@@ -55,7 +55,7 @@ class TestCLIHelpAndVersion(unittest.TestCase):
         self.assertIn("register", res.stdout)
 
     def test_subcommand_helps(self):
-        for subcmd in ["doctor", "validate", "drift", "upgrade", "init", "register"]:
+        for subcmd in ["doctor", "validate", "drift", "upgrade", "init", "register", "lock"]:
             res = subprocess.run([sys.executable, str(CLI_PATH), subcmd, "--help"], capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
             self.assertIn(f"usage: infraflow {subcmd}", res.stdout)
@@ -347,6 +347,57 @@ class TestCLIPackageInstallation(unittest.TestCase):
         self.assertEqual(EXIT_OK, 0)
         self.assertEqual(EXIT_ERROR, 1)
         self.assertEqual(EXIT_SECURITY, 2)
+
+
+class TestCLILock(unittest.TestCase):
+    """Verifies infraflow lock inspect CLI commands."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp(prefix="infraflow-cli-lock-")
+        self.lock_dir = Path(self.tmp_dir)
+        self.key = "infraflow/locks/v1/local/workstation/test/state.tfstate/default.lock"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_lock_inspect_unlocked(self):
+        cmd = [sys.executable, str(CLI_PATH), "lock", "inspect", self.key, "-d", str(self.lock_dir)]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("UNLOCKED", res.stdout)
+        self.assertIn(self.key, res.stdout)
+
+    def test_lock_inspect_active(self):
+        from infraflow.locking import LocalFSDriver
+        driver = LocalFSDriver(base_dir=self.lock_dir)
+        acq = driver.acquire(self.key, {"runner_id": "cli-test-runner"}, 900, "apply")
+        self.assertTrue(acq.success)
+
+        cmd = [sys.executable, str(CLI_PATH), "lock", "inspect", self.key, "-d", str(self.lock_dir)]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("ACTIVE", res.stdout)
+        self.assertIn("cli-test-runner", res.stdout)
+        self.assertIn("Fencing Token:", res.stdout)
+
+    def test_lock_inspect_json(self):
+        from infraflow.locking import LocalFSDriver
+        driver = LocalFSDriver(base_dir=self.lock_dir)
+        driver.acquire(self.key, {"runner_id": "json-runner"}, 900, "apply")
+
+        cmd = [sys.executable, str(CLI_PATH), "lock", "inspect", self.key, "-d", str(self.lock_dir), "--json"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        data = json.loads(res.stdout)
+        self.assertEqual(data["status"], "ACTIVE")
+        self.assertEqual(data["descriptor"]["owner_identity"]["runner_id"], "json-runner")
+        self.assertEqual(data["lease"]["fencing_token"], 1)
+
+    def test_lock_inspect_path_traversal_rejected(self):
+        cmd = [sys.executable, str(CLI_PATH), "lock", "inspect", "../bad/key", "-d", str(self.lock_dir)]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)  # EXIT_SECURITY
+        self.assertIn("SECURITY ERROR", res.stderr)
 
 
 if __name__ == "__main__":

@@ -309,3 +309,28 @@ Standard worker drivers (`DistributedLockDriver`) are explicitly prohibited from
 - **Cryptographic Gate:** Requires an authenticated asymmetric digital signature (`infraflow-admin-unlock-v1`) matching the platform trust root key.
 - **Zombie Worker Protection:** Reclaiming a wedged lock atomically increments the durable fencing token so any resurrected zombie worker is permanently fenced from committing state.
 - **Immutable Audit Logging:** Emits a `lock_force_unlocked` event to structured telemetry recording the operator identity, ticket reference, and signature digest.
+
+### 8.4 Independent Adversarial Concurrency & Filesystem Hardening (G10.4.3)
+
+In milestone G10.4.3, the distributed locking architecture was subjected to comprehensive multi-process concurrency and adversarial failure testing:
+
+1. **Kernel Multiprocessing Concurrency:**
+   - Evaluated using independent OS processes via `multiprocessing.Process` across synchronized barriers (`multiprocessing.Barrier`).
+   - Proved that under 8-process contention, exactly 1 process acquires the lock while all 7 competing processes fail closed.
+   - Proved that concurrent acquisition across distinct lock keys operates with full independence and zero lock contention.
+
+2. **Hard Process Termination (`SIGKILL`) & Lease Recovery:**
+   - Tested abnormal process termination via `os.kill(pid, signal.SIGKILL)` while actively holding a state lock.
+   - Kernel automatically reclaims the file descriptor and advisory lock (`fcntl.flock`), but the metadata state file remains locked until lease TTL expiration ($T_{\text{expires\_at}}$).
+   - Once expired, subsequent runners successfully acquire the lock and atomically generate a higher fencing token ($T_2 > T_1$).
+
+3. **Storage Crash & Reboot Simulation:**
+   - Re-instantiating driver instances against pre-existing storage directories verified that high-water mark sequence counters (`.hwm`) are durably preserved across runner reboots, preventing duplicate or decremented fencing tokens.
+
+4. **Filesystem Adversarial Hardening:**
+   - **Symlink Defense:** If a lock path or mutex file resolves to a symbolic link, `LocalFSDriver` detects the link via `os.path.islink()` and aborts with `SecurityViolationError`, preventing symlink hijacking attacks against system files.
+   - **Path Traversal Defense:** Canonical identity derivation strictly forbids relative traversal sequences (`..`), leading slashes, and illegal path characters.
+   - **Tamper Resistance:** Modifying or corrupting lock metadata JSON or its SHA-256 integrity payload immediately raises `MetadataCorruptionError` fail-closed.
+
+5. **Diagnostic CLI Inspection Security:**
+   - `infraflow lock inspect <key>` operates in read-only diagnostic mode, verifying path traversal safety and returning structured status without altering or invalidating active leases.

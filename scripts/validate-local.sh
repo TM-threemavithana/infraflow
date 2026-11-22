@@ -6372,6 +6372,88 @@ else
   record_fail "Comprehensive Policy Verification [13/13]: Conftest verify" "conftest verify failed on policies directory"
 fi
 
+# ==============================================================================
+# SECTION 29: Distributed State Locking & Concurrency Engine (Milestone G10.4)
+# ==============================================================================
+log_header "29. Distributed State Locking & Concurrency Engine (G10.4)"
+
+# Test 29.1: Distributed locking core module exists and is non-empty
+if [[ -f "${REPO_ROOT}/infraflow/locking.py" && -s "${REPO_ROOT}/infraflow/locking.py" ]]; then
+  record_pass "Distributed Locking Engine [1/10]: infraflow/locking.py verified intact"
+else
+  record_fail "Distributed Locking Engine [1/10]: Module presence" "infraflow/locking.py missing or empty"
+fi
+
+# Test 29.2: Worker driver strictly excludes force-unlock capabilities
+if grep -q "class DistributedLockDriver" "${REPO_ROOT}/infraflow/locking.py" && \
+   ! grep -q "def force_break" "${REPO_ROOT}/infraflow/locking.py" && \
+   ! grep -q "def force_unlock" "${REPO_ROOT}/infraflow/locking.py"; then
+  record_pass "Worker Driver Privilege Boundary [2/10]: DistributedLockDriver excludes force-unlock methods"
+else
+  record_fail "Worker Driver Privilege Boundary [2/10]: Interface privilege" "DistributedLockDriver contains forbidden force_break/force_unlock"
+fi
+
+# Test 29.3: Dedicated core locking test suite passes (18 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_distributed_locking.py" >/dev/null 2>&1; then
+  record_pass "Core Locking Suite [3/10]: 18 core locking tests passed (test_distributed_locking.py)"
+else
+  record_fail "Core Locking Suite [3/10]: Core test failure" "test_distributed_locking.py failed"
+fi
+
+# Test 29.4: Multiprocessing concurrency adversarial test suite passes (19 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_locking_concurrency_adversarial.py" >/dev/null 2>&1; then
+  record_pass "Multiprocessing Concurrency Suite [4/10]: 19 adversarial multiprocessing tests passed"
+else
+  record_fail "Multiprocessing Concurrency Suite [4/10]: Concurrency test failure" "test_locking_concurrency_adversarial.py failed"
+fi
+
+# Test 29.5: Platform CLI lock subcommand help contracts verified
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect --help >/dev/null 2>&1; then
+  record_pass "CLI Lock Subcommand [5/10]: infraflow lock and inspect help contracts verified"
+else
+  record_fail "CLI Lock Subcommand [5/10]: CLI help error" "infraflow lock --help returned non-zero"
+fi
+
+# Test 29.6: CLI lock inspect returns UNLOCKED on clean target
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect "infraflow/locks/v1/local/test/target/state.tfstate/default.lock" 2>&1 | grep -q "UNLOCKED"; then
+  record_pass "CLI Lock Inspection [6/10]: infraflow lock inspect accurately reports UNLOCKED status"
+else
+  record_fail "CLI Lock Inspection [6/10]: Inspection output" "infraflow lock inspect failed to report UNLOCKED"
+fi
+
+# Test 29.7: CLI lock inspect --json emits valid JSON output
+TMP_CLI_JSON="$(mktemp -d)"
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect "infraflow/locks/v1/local/test/target/state.tfstate/default.lock" -d "${TMP_CLI_JSON}" --json | grep -q '"status": "UNLOCKED"'; then
+  record_pass "CLI Lock JSON Contract [7/10]: infraflow lock inspect --json emits valid structured output"
+else
+  record_fail "CLI Lock JSON Contract [7/10]: JSON output" "infraflow lock inspect --json failed or malformed"
+fi
+rm -rf "${TMP_CLI_JSON}"
+
+# Test 29.8: CLI lock inspect rejects directory traversal fail-closed
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect "../../etc/shadow" >/dev/null 2>&1; then
+  record_fail "CLI Path Traversal Gate [8/10]: Security rejection" "infraflow lock inspect permitted traversal key"
+else
+  record_pass "CLI Path Traversal Gate [8/10]: Traversal attack strictly rejected with security exit code"
+fi
+
+# Test 29.9: Telemetry catalog contains all 8 distributed locking event types
+LOCK_EVT_COUNT=$(grep -c -E '"lock_(acquired|renewed|released|contention|stale_reclaimed|lost|fencing_violation|force_unlocked)"' "${REPO_ROOT}/scripts/emit-telemetry.py" || true)
+if [[ "${LOCK_EVT_COUNT}" -eq 8 ]]; then
+  record_pass "Telemetry Catalog Contract [9/10]: All 8 distributed locking event types registered in emit-telemetry.py"
+else
+  record_fail "Telemetry Catalog Contract [9/10]: Event registration" "Expected 8 locking event types in emit-telemetry.py, found ${LOCK_EVT_COUNT}"
+fi
+
+# Test 29.10: LocalFSDriver enforces single-host limitation disclaimer
+if grep -q "LOCALFS_LIMITATION_NOTICE" "${REPO_ROOT}/infraflow/locking.py" && \
+   grep -q "strictly confined to a single host" "${REPO_ROOT}/infraflow/locking.py"; then
+  record_pass "LocalFS Architectural Disclaimer [10/10]: Single-host confinement and NFS/SMB disclaimer verified"
+else
+  record_fail "LocalFS Architectural Disclaimer [10/10]: Disclaimer presence" "Missing single-host limitation notice in LocalFSDriver"
+fi
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 

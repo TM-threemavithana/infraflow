@@ -563,9 +563,15 @@ class AdministrativeLockRecoveryService:
 
 ## 11. Reference Driver Specifications & Known Limitations
 
+> [!IMPORTANT]
+> **Definitive Architectural Separation & Operational Boundaries (G10.4.3):**
+> 1. **`LocalFSDriver` (Single-Host Only):** Confined strictly to single-host developer workstations and single-runner CI environments. It utilizes OS-level advisory locking (`fcntl.flock`) and atomic file replacement (`os.replace`). It **does NOT provide multi-host distributed guarantees** and must never be used across shared network filesystems (NFS, SMB, CIFS).
+> 2. **`MockDistributedDriver` (Simulated Fault Injection):** In-memory test driver with simulated network partitions, clock drift, and corruption injection for automated unit and integration tests. It is volatile and does not persist across process lifecycles.
+> 3. **Actual Distributed Cloud Drivers (Not Yet Implemented):** Multi-host production locking across distributed runner fleets requires cloud-native backend drivers (`DynamoDBLockDriver`, `AzureBlobLeaseDriver`, `GCSPreconditionLockDriver`) which interface with authoritative cloud storage CAS APIs. These cloud drivers are fully specified in Section 12 but are deferred to subsequent milestone implementation ($0.00 cloud spend constraint).
+
 ### 11.1 `LocalFSDriver` (Cloud-Free Local Workstation / Single-Runner CI)
 - **Mechanism:** Implemented using atomic directory creation (`os.mkdir`) or POSIX `O_CREAT | O_EXCL` flags on `lock.json.tmp` followed by atomic rename (`os.replace`).
-- **Fencing Counter:** Stored in an adjacent `lock.sequence` file guarded by filesystem locking (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows).
+- **Fencing Counter:** Stored in an adjacent `lock.hwm` sequence file guarded by filesystem locking (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows).
 - **Known Limitations:**
   1. *Host Confinement:* Cannot coordinate across multiple independent virtual machines without a distributed network filesystem.
   2. *NFS/SMB Anomalies:* Distributed network filesystems (NFSv3/v4, SMB) exhibit close-to-open cache latency and flaky locking leases, risking split-brain if used across physical hosts.
@@ -644,4 +650,5 @@ Emits 8 standardized event types conforming to RFC 5424 / OpenTelemetry Schema v
 
 **Approved by:** Principal Distributed Systems Engineer & Senior Platform Architect  
 **Distribution:** Platform Architecture Registry (`docs/architecture/`)  
-**Next Implementation Milestone:** Milestone G10.4.2 (State Lock Driver Engine & Concurrency Suite)
+**Completed Implementation:** Milestone G10.4.2 (Core Locking Engine & LocalFS Driver) & Milestone G10.4.3 (Adversarial Multiprocessing Concurrency & CLI Integration)  
+**Next Implementation Milestone:** Milestone G10.4.4 (Multi-Cloud State Lock Drivers / Alerting Sinks)
