@@ -3175,7 +3175,7 @@ else
 fi
 
 # Test 16.2: G06 Cryptographic unit test suite (20 tests)
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" >/dev/null 2>&1; then
+if python3 -m unittest "${REPO_ROOT}/tests/test_kms_envelope.py" >/dev/null 2>&1; then
   record_pass "G06 Cryptographic Suite [2/24]: All 20 unit tests passed (test_kms_envelope.py)"
 else
   record_fail "G06 Cryptographic Suite [2/24]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
@@ -6038,6 +6038,198 @@ if python3 -m unittest "${REPO_ROOT}/tests/test_scaffolding.py" >/dev/null 2>&1;
   record_pass "Scaffolding Test Suite [20/20]: Dedicated 18-test suite passed (test_scaffolding.py)"
 else
   record_fail "Scaffolding Test Suite [20/20]: Test suite" "One or more tests in test_scaffolding.py failed"
+fi
+
+# ==============================================================================
+# 27. Consumer Secret Defense & Semantic Destruction Protection (G10.3)
+# ==============================================================================
+log_header "27. Consumer Secret Defense & Semantic Destruction Protection (G10.3)"
+
+# Test 27.1: Secret scanner script exists and is executable
+if [[ -x "${REPO_ROOT}/scripts/scan-secrets.py" ]]; then
+  record_pass "Secret Scanning Tooling [1/15]: scripts/scan-secrets.py exists and is executable"
+else
+  record_fail "Secret Scanning Tooling [1/15]: Executable check" "scripts/scan-secrets.py missing or not executable"
+fi
+
+# Test 27.2: Secret scanner CLI help
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --help >/dev/null 2>&1; then
+  record_pass "Secret Scanner CLI Help [2/15]: scan-secrets.py --help executes successfully"
+else
+  record_fail "Secret Scanner CLI Help [2/15]: Help check" "scan-secrets.py --help returned non-zero code"
+fi
+
+# Test 27.3: Clean repository scan passes
+TMP_SEC_CLEAN="$(mktemp -d -t sec_clean_XXXXXX)"
+echo 'resource "terraform_data" "clean" {}' > "${TMP_SEC_CLEAN}/main.tf"
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_CLEAN}" --json > "${TMP_SEC_CLEAN}/out.json" 2>&1; then
+  record_pass "Clean Directory Scan [3/15]: Clean repository passes secret scan with status PASS"
+else
+  record_fail "Clean Directory Scan [3/15]: Clean scan" "scan-secrets.py unexpectedly failed on clean directory"
+fi
+rm -rf "${TMP_SEC_CLEAN}"
+
+# Test 27.4: Credential detection gate (fail-closed on secrets)
+TMP_SEC_DIRTY="$(mktemp -d -t sec_dirty_XXXXXX)"
+echo 'aws_key = "AKIAIOSFODNN7MINEKEY"' > "${TMP_SEC_DIRTY}/creds.tf"
+if ! python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_DIRTY}" --strict --json > "${TMP_SEC_DIRTY}/out.json" 2>&1; then
+  record_pass "Credential Detection Gate [4/15]: Exposed AWS access key rejected with non-zero exit code"
+else
+  record_fail "Credential Detection Gate [4/15]: Detection check" "scan-secrets.py failed to reject exposed AWS key"
+fi
+
+# Test 27.5: Zero raw secret leakage in output / report
+if ! grep -q "AKIAIOSFODNN7MINEKEY" "${TMP_SEC_DIRTY}/out.json" && grep -q "AKIA" "${TMP_SEC_DIRTY}/out.json"; then
+  record_pass "Zero-Leakage Invariant [5/15]: Raw credential redacted with zero secret exposure in reports"
+else
+  record_fail "Zero-Leakage Invariant [5/15]: Redaction check" "Raw credential found unredacted in scan report"
+fi
+rm -rf "${TMP_SEC_DIRTY}"
+
+# Test 27.6: Binary plan file exclusion
+TMP_SEC_BIN="$(mktemp -d -t sec_bin_XXXXXX)"
+printf '\x00\x01\x02TFPLAN_BINARY_AKIAIOSFODNN7MINEKEY\x00' > "${TMP_SEC_BIN}/tfplan.binary"
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_BIN}" --json > "${TMP_SEC_BIN}/out.json" 2>&1; then
+  record_pass "Binary File Exclusion [6/15]: Binary Terraform plan files skipped without false-positive detection"
+else
+  record_fail "Binary File Exclusion [6/15]: Binary check" "scan-secrets.py failed or falsely flagged binary plan"
+fi
+rm -rf "${TMP_SEC_BIN}"
+
+# Test 27.7: Variable reference & placeholder filtering
+TMP_SEC_PH="$(mktemp -d -t sec_ph_XXXXXX)"
+echo 'db_pass = "${var.db_password}"' > "${TMP_SEC_PH}/vars.tf"
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_PH}" --json > "${TMP_SEC_PH}/out.json" 2>&1; then
+  record_pass "Placeholder Filtering [7/15]: Variable interpolations and placeholders safely ignored"
+else
+  record_fail "Placeholder Filtering [7/15]: Placeholder check" "scan-secrets.py falsely flagged variable reference"
+fi
+rm -rf "${TMP_SEC_PH}"
+
+# Test 27.8: Dedicated 18-test secret scanner test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_secret_scanner.py" >/dev/null 2>&1; then
+  record_pass "Secret Scanner Test Suite [8/15]: Dedicated 18-test suite passed (test_secret_scanner.py)"
+else
+  record_fail "Secret Scanner Test Suite [8/15]: Test suite" "One or more tests in test_secret_scanner.py failed"
+fi
+
+# Test 27.9: Semantic critical resources policy file exists
+if [[ -f "${REPO_ROOT}/policies/common/critical_resources.rego" && -f "${REPO_ROOT}/policies/common/critical_resources_test.rego" ]]; then
+  record_pass "Semantic Policy Presence [9/15]: policies/common/critical_resources.rego verified intact"
+else
+  record_fail "Semantic Policy Presence [9/15]: Policy check" "critical_resources.rego or test missing"
+fi
+
+# Test 27.10: Conftest policy verification
+if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies/common" >/dev/null 2>&1; then
+  record_pass "Policy Verification [10/15]: conftest verify passed all 64 unit tests in policies/common"
+else
+  record_fail "Policy Verification [10/15]: Conftest verify" "conftest verify failed on policies/common"
+fi
+
+# Test 27.11: Semantic critical resource deletion gate
+TMP_PLAN_DEL="$(mktemp -d -t plan_del_XXXXXX)"
+cat << 'EOF' > "${TMP_PLAN_DEL}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.primary",
+      "type": "aws_db_instance",
+      "change": {"actions": ["delete"]}
+    }
+  ]
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_PLAN_DEL}/plan.json" --no-color > "${TMP_PLAN_DEL}/out.txt" 2>&1 && \
+   grep -q "Direct deletion of critical resource 'aws_db_instance.primary'" "${TMP_PLAN_DEL}/out.txt"; then
+  record_pass "Critical Deletion Gate [11/15]: Direct database deletion strictly blocked by semantic policy"
+else
+  record_fail "Critical Deletion Gate [11/15]: Deletion gate" "conftest failed to block database deletion: $(cat "${TMP_PLAN_DEL}/out.txt")"
+fi
+rm -rf "${TMP_PLAN_DEL}"
+
+# Test 27.12: Semantic replacement gate (destroy-before-create)
+TMP_PLAN_REP="$(mktemp -d -t plan_rep_XXXXXX)"
+cat << 'EOF' > "${TMP_PLAN_REP}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_kms_key.master",
+      "type": "aws_kms_key",
+      "change": {"actions": ["delete", "create"]}
+    }
+  ]
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_PLAN_REP}/plan.json" --no-color > "${TMP_PLAN_REP}/out.txt" 2>&1 && \
+   grep -q "Dangerous destroy-before-create replacement" "${TMP_PLAN_REP}/out.txt"; then
+  record_pass "Critical Replacement Gate [12/15]: Destroy-before-create KMS replacement strictly blocked"
+else
+  record_fail "Critical Replacement Gate [12/15]: Replacement gate" "conftest failed to block KMS replacement: $(cat "${TMP_PLAN_REP}/out.txt")"
+fi
+rm -rf "${TMP_PLAN_REP}"
+
+# Test 27.13: Generic confirmation token rejection
+TMP_PLAN_GEN="$(mktemp -d -t plan_gen_XXXXXX)"
+cat << 'EOF' > "${TMP_PLAN_GEN}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "azurerm_key_vault.secrets",
+      "type": "azurerm_key_vault",
+      "change": {"actions": ["delete"]}
+    }
+  ],
+  "infraflow_authorization": {
+    "authorized": true,
+    "token": "confirm"
+  }
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_PLAN_GEN}/plan.json" --no-color > "${TMP_PLAN_GEN}/out.txt" 2>&1 && \
+   grep -q "Generic confirmation token 'confirm' is rejected" "${TMP_PLAN_GEN}/out.txt"; then
+  record_pass "Generic Token Gate [13/15]: Generic approval token 'confirm' strictly rejected"
+else
+  record_fail "Generic Token Gate [13/15]: Token check" "conftest failed to reject generic token: $(cat "${TMP_PLAN_GEN}/out.txt")"
+fi
+rm -rf "${TMP_PLAN_GEN}"
+
+# Test 27.14: Consumer governance enforcement: disabling mandatory scanners rejected
+TMP_GOV_BAD="$(mktemp -d -t gov_bad_XXXXXX)"
+cat << 'EOF' > "${TMP_GOV_BAD}/infraflow.config.yaml"
+version: "1.0"
+consumer_id: "val-gov-bad"
+team: "platform"
+workload_type: "general"
+terraform_dir: "terraform"
+environment: "dev"
+adapter: "aws"
+platform_ref: "TM-threemavithana/infraflow"
+platform_sha: "8fd761bb42165435e1162f37ee39df15d5532b09"
+terraform_version: "1.10.4"
+security_controls:
+  enforce_mandatory_scanners: false
+  fail_on_destructive: true
+  max_allowed_deletions: 5
+EOF
+mkdir -p "${TMP_GOV_BAD}/terraform"
+echo 'resource "terraform_data" "x" {}' > "${TMP_GOV_BAD}/terraform/main.tf"
+if ! python3 "${REPO_ROOT}/scripts/validate-consumer.py" --config "${TMP_GOV_BAD}/infraflow.config.yaml" --repo-dir "${TMP_GOV_BAD}" > "${TMP_GOV_BAD}/out.txt" 2>&1 && \
+   grep -q "enforce_mandatory_scanners must be strictly" "${TMP_GOV_BAD}/out.txt"; then
+  record_pass "Governance Enforcement [14/15]: Consumer attempting enforce_mandatory_scanners: false rejected"
+else
+  record_fail "Governance Enforcement [14/15]: Governance check" "validate-consumer.py accepted disabled scanners"
+fi
+rm -rf "${TMP_GOV_BAD}"
+
+# Test 27.15: Dedicated 19-test semantic destruction test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_critical_resources.py" >/dev/null 2>&1; then
+  record_pass "Semantic Destruction Test Suite [15/15]: Dedicated 19-test suite passed (test_critical_resources.py)"
+else
+  record_fail "Semantic Destruction Test Suite [15/15]: Test suite" "One or more tests in test_critical_resources.py failed"
 fi
 
 # --- Summary Report ---

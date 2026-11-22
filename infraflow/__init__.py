@@ -13,6 +13,7 @@ __license__ = "Apache-2.0"
 
 from infraflow.scaffold import ConsumerScaffolder, ScaffoldingError, ScaffoldingSecurityError
 from infraflow.registrar import ConsumerRegistrar, RegistrationError, RegistrationSecurityError
+from infraflow.scanner import SecretScanner, SecretScanError, SecretDetectionError, SecretFinding
 
 __all__ = [
     "__version__",
@@ -25,4 +26,8 @@ __all__ = [
     "ConsumerRegistrar",
     "RegistrationError",
     "RegistrationSecurityError",
+    "SecretScanner",
+    "SecretScanError",
+    "SecretDetectionError",
+    "SecretFinding",
 ]

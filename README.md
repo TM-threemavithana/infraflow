@@ -3,9 +3,9 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#19-local-development-and-zero-cost-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
-[![Quality Gates](https://img.shields.io/badge/Quality_Gates-427%2F427_PASS-brightgreen.svg)](#21-testing-and-verification)
-[![Python Tests](https://img.shields.io/badge/Python_Tests-579_Passing-brightgreen.svg)](#21-testing-and-verification)
-[![OPA Rego](https://img.shields.io/badge/OPA_Policies-194_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![Quality Gates](https://img.shields.io/badge/Quality_Gates-442%2F442_PASS-brightgreen.svg)](#21-testing-and-verification)
+[![Python Tests](https://img.shields.io/badge/Python_Tests-616_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![OPA Rego](https://img.shields.io/badge/OPA_Policies-211_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
 ---
@@ -502,11 +502,11 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **579 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scrubbing | **PASS (100%)** |
-| **OPA / Rego Conftest Suite** | **194 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **427 Checks** | End-to-end integration across all 26 platform quality sections | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **616 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing | **PASS (100%)** |
+| **OPA / Rego Conftest Suite** | **211 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **442 Checks** | End-to-end integration across all 27 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
-| **Secret Scanning (`gitleaks`)** | **0 Leaks** | Complete repository commit history verified clean of sensitive credentials | **PASS (100%)** |
+| **Secret Scanning (`SecretScanner` & `gitleaks`)** | **0 Leaks** | Mandatory consumer secret scanner & complete repository commit history clean | **PASS (100%)** |
 
 ---
 
@@ -541,8 +541,12 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── py.typed                # PEP 561 typing compliance marker
 │   ├── cli.py                  # Unified CLI & diagnostic engine canonical implementation
 │   ├── scaffold.py             # Self-service consumer project scaffolding engine (G10.2)
-│   └── registrar.py            # Atomic fleet manifest registration engine (G10.2)
+│   ├── registrar.py            # Atomic fleet manifest registration engine (G10.2)
+│   └── scanner.py              # Mandatory consumer secret scanning engine (G10.3)
 ├── policies/
+│   ├── common/                 # Common OPA policies (plan, tag, critical resources)
+│   │   ├── critical_resources.rego # Semantic critical resource destruction policy (G10.3)
+│   │   └── critical_resources_test.rego
 │   └── rego/                   # OPA / Rego policy definitions & unit tests
 ├── scripts/                    # Platform CLI utilities & verification engines
 │   ├── analyze-plan.py
@@ -554,6 +558,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── kms-envelope.py
 │   ├── orchestrate-campaign.py
 │   ├── plan-fleet-upgrade.py
+│   ├── scan-secrets.py         # Standalone consumer secret scanner CLI (G10.3)
 │   ├── simulate-drift.py
 │   ├── validate-consumer.py
 │   ├── validate-local.sh
@@ -562,9 +567,11 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   └── verify-plan-lifecycle.py
 ├── tests/                      # Dedicated Python unit & adversarial test suites
 │   ├── test_cli.py
+│   ├── test_critical_resources.py # Semantic destruction test suite (G10.3)
 │   ├── test_drift_detection.py
 │   ├── test_operational_maturity.py
 │   ├── test_scaffolding.py
+│   ├── test_secret_scanner.py   # Consumer secret scanner test suite (G10.3)
 │   ├── test_telemetry.py
 │   └── test_upgrade_campaigns.py
 ├── pyproject.toml              # PEP 517 / 621 packaging and console entrypoint definition
@@ -581,13 +588,12 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 | Document | Category | Description |
 |---|---|---|
 | [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) | Architecture | End-to-end platform design and tier breakdowns. |
-| [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G09.4. |
+| [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G10.3. |
 | [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
 | [`docs/architecture/G10-CLI-ARCHITECTURE.md`](docs/architecture/G10-CLI-ARCHITECTURE.md) | Architecture | Unified platform CLI, diagnostic engine, packaging, and onboarding architecture. |
 | [`docs/usage/CLI-GUIDE.md`](docs/usage/CLI-GUIDE.md) | Operations | Developer guide covering all 6 CLI commands (`init`, `register`, `validate`, `doctor`, `drift`, `upgrade`). |
 | [`docs/usage/CONSUMER-ONBOARDING.md`](docs/usage/CONSUMER-ONBOARDING.md) | Onboarding | Comprehensive step-by-step consumer onboarding tutorial and security guardrails. |
-| [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G09.4. |
-| [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
+| [`docs/security/G10-CONSUMER-SECURITY.md`](docs/security/G10-CONSUMER-SECURITY.md) | Security | Consumer secret defense, regex rules, semantic destruction protection, and critical resource catalog. |
 | [`docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md`](docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md) | Architecture | 4-pillar operational maturity framework. |
 | [`docs/security/security-architecture.md`](docs/security/security-architecture.md) | Security | Cryptographic attestation, envelope encryption, and threat models. |
 | [`docs/security/G09-DRIFT-DETECTION.md`](docs/security/G09-DRIFT-DETECTION.md) | Security | Multi-cloud state drift classification and STRIDE mitigations. |

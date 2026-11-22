@@ -270,6 +270,56 @@ infraflow register \
 
 ---
 
+### 3.6 Secret Defense Scanning (`scripts/scan-secrets.py`)
+
+Mandatory consumer-side credential scanner executed prior to speculative planning:
+
+```bash
+# Scan a consumer repository directory (standard output)
+python3 scripts/scan-secrets.py --target-dir ./my-service
+
+# Strict mode: fail with exit code 1 if any secret is detected
+python3 scripts/scan-secrets.py --target-dir ./my-service --strict
+
+# Emit structured JSON report (ideal for CI/CD pipeline integration)
+python3 scripts/scan-secrets.py --target-dir ./my-service --strict --json > secret-scan-report.json
+
+# Check optional Gitleaks integration (if binary is available on PATH)
+python3 scripts/scan-secrets.py --target-dir ./my-service --check-gitleaks
+```
+
+Key Invariants:
+- **Zero Raw Secret Exposure:** Hardcoded credentials are automatically masked (`AKIA********************`).
+- **Binary Exclusion:** Automatically skips `.tfplan`, `*.tfplan.binary`, and encrypted envelopes (`*.enc.json`).
+- **Placeholder Filtering:** Automatically filters safe Terraform variable interpolations (`${var.*}`) and dummy values.
+
+---
+
+### 3.7 Semantic Destruction & Policy Evaluation
+
+Enforce multi-cloud semantic critical resource protection across AWS, Azure, and GCP:
+
+```bash
+# Evaluate speculative plan against semantic critical resource policy
+conftest test \
+  --namespace common.critical_resources \
+  --policy policies/common/critical_resources.rego \
+  plan.json
+
+# Assess plan blast-radius and deletion limits with assess-destruction.py
+python3 scripts/assess-destruction.py \
+  --plan plan.json \
+  --max-deletions 5 \
+  --fail-on-destructive
+```
+
+Key Invariants:
+- **Multi-Cloud Asset Protection:** Intercepts deletions of databases, KMS keys, storage accounts, IAM roles, and firewalls.
+- **Replacement Safety:** Blocks both destroy-before-create (`["delete", "create"]`) and create-before-destroy (`["create", "delete"]`) replacements.
+- **Generic Token Rejection:** Rejects trivial tokens (`confirm`, `true`, `force`); requires cryptographically signed authorization payloads bound to plan SHA-256.
+
+---
+
 ## 4. Exit Codes & CI/CD Integration
 
 | Exit Code | Meaning | Typical Scenario |

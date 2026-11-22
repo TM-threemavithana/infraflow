@@ -19,7 +19,10 @@ InfraFlow is structured into progressive delivery milestones:
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, centralized governance, fleet upgrade orchestration, and release v0.6.0. | **PASS (Completed)** |
-| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1, G09.2 & G09.3 Implemented) |
+| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns, and release v0.7.0. | **PASS (Completed)** |
+| **G10.1** | **Unified Platform CLI & Diagnostics** | Unified `infraflow` CLI, environment doctor (12 dimensions), drift runner, upgrade manager, policy error enrichment. | **PASS (Completed)** |
+| **G10.2** | **Self-Service Onboarding & Scaffolding** | Self-service `infraflow init`, multi-cloud templates, schema-validated registration, dry-run safety. | **PASS (Completed)** |
+| **G10.3** | **Consumer Secret Defense & Semantic Destruction** | Mandatory secret scanner, zero raw leakage, multi-cloud critical resource protection, replacement safety, conftest gates. | **PASS (Completed)** |
 
 ---
 
@@ -478,14 +481,46 @@ Milestone G10.1 establishes the unified developer experience (DevEx) for the Inf
 
 ---
 
-## 31. Quality Gate Definitions
+## 31. Milestone G10.2 — Acceptance Criteria (Self-Service Consumer Onboarding & Scaffolding)
+
+Milestone G10.2 introduces automated, self-service consumer repository onboarding and scaffolding via `infraflow init` (`infraflow/scaffold.py`) and registration engine (`infraflow/registrar.py`). It enables application teams to rapidly bootstrap production-grade infrastructure repositories with pre-configured cloud adapters (AWS, Azure, GCP), standard GitHub Actions CI/CD workflows, valid `infraflow.config.yaml` contracts, and automated fleet manifest registration ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-09** | Consumer Scaffolding Engine | Implement `ConsumerScaffolder` generating Terraform project structures, GitHub Actions workflow caller configs, and contract schemas for AWS, Azure, and GCP. | Unit tests & directory output audit | **PASS (Completed)** |
+| **AC-G10-10** | Central Fleet Registration | Implement `ConsumerRegistrar` validating existing contracts, preventing duplicate IDs, and deterministically inserting consumer entries into `fleet.manifest.yaml`. | Adversarial registration tests | **PASS (Completed)** |
+| **AC-G10-11** | Interactive & Non-Interactive CLI | Implement `infraflow init` supporting interactive prompts and full CLI flags (`--name`, `--repo`, `--adapter`, `--env`, `--workload`, `--register`). | CLI execution tests | **PASS (Completed)** |
+| **AC-G10-12** | Fail-Closed Security Guards | Enforce strict path traversal checks (`..`), directory containment checks, and duplicate consumer ID rejections. | Adversarial path traversal tests | **PASS (Completed)** |
+| **AC-G10-13** | Dedicated Scaffolding Test Suite & Section 26.2 | Author `tests/test_scaffolding.py` (20 tests) and expand `scripts/validate-local.sh` (20 checks, raising total quality checks to 427). | `validate-local.sh` (427/427 passed) | **PASS (Completed)** |
+
+---
+
+## 32. Milestone G10.3 — Acceptance Criteria (Consumer Secret Defense & Semantic Destruction Protection)
+
+Milestone G10.3 implements deep security defense mechanisms protecting enterprise consumers from credential leaks and catastrophic semantic destruction of persistent infrastructure resources. It introduces a mandatory consumer-side secret scanning engine (`infraflow/scanner.py`, `scripts/scan-secrets.py`), centralized reusable workflow integration, and a centralized semantic OPA policy (`policies/common/critical_resources.rego`) evaluating deletion, replacement orderings, malformed plans, and generic confirmation tokens ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-14** | Consumer Secret Scanning Engine | Implement `SecretScanner` scanning consumer repositories before plan generation for AWS keys, GitHub tokens, PEM private keys, passwords, GCP keys, Slack tokens, and Bearer tokens. | `tests/test_secret_scanner.py` (18 tests) | **PASS (Completed)** |
+| **AC-G10-15** | Zero Raw Secret Exposure Invariant | Enforce multi-tier masking and redaction (`SecretSanitizer`) ensuring zero raw credentials leak in logs, step summaries, or JSON outputs. | Redaction assertions & report checks | **PASS (Completed)** |
+| **AC-G10-16** | Binary & Placeholder Filtering | Explicitly exclude binary plan artifacts (`tfplan`, `*.tfplan.binary`) and filter legitimate Terraform variable interpolations (`${var.*}`) from false-positive detection. | Fixture scans & test assertions | **PASS (Completed)** |
+| **AC-G10-17** | Mandatory Central Governance Gate | Embed secret scanner in `.github/workflows/reusable-tf-governance.yml`; reject consumer attempts to disable scanners via `enforce_mandatory_scanners: false`. | `validate-consumer.py` & actionlint/zizmor | **PASS (Completed)** |
+| **AC-G10-18** | Multi-Cloud Critical Resource Protection | Implement `policies/common/critical_resources.rego` protecting databases, KMS keys, storage accounts, IAM roles, and network security perimeters across AWS, Azure, and GCP. | `conftest verify` (64/64 passed) | **PASS (Completed)** |
+| **AC-G10-19** | Semantic Action Differentiation | Evaluate direct deletions (`["delete"]`), destroy-before-create (`["delete", "create"]`), and create-before-destroy (`["create", "delete"]`) replacements; reject malformed actions. | `tests/test_critical_resources.py` (19 tests) | **PASS (Completed)** |
+| **AC-G10-20** | Generic Token Rejection & Cryptographic Gate | Strictly reject generic approval tokens (`confirm`, `true`, `force`, `approved`); enforce cryptographic confirmation token binding (`infraflow-destruction-confirmation-v1`). | Conftest unit tests & adversarial plans | **PASS (Completed)** |
+| **AC-G10-21** | External Consumer Adversarial Matrix | Update `infraflow-consumer-test` with synthetic secret fixtures, critical destruction fixtures, and automated verification script (5/5 checks passing). | Consumer test script execution | **PASS (Completed)** |
+| **AC-G10-22** | Dedicated Test Suites & Local Harness Section 27 | Author `test_secret_scanner.py` (18 tests), `test_critical_resources.py` (19 tests), and Section 27 in `scripts/validate-local.sh` (15 checks, raising quality checks to 442). | `validate-local.sh` (442/442 passed) | **PASS (Completed)** |
+
+---
+
+## 33. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (420/420 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (442/442 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

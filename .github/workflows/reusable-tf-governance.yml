@@ -59,6 +59,9 @@ on:
       platform-sha:
         description: "Validated platform commit SHA"
         value: ${{ jobs.evaluate-governance.outputs.platform-sha }}
+      secret-scan-status:
+        description: "Outcome of mandatory consumer secret scanning (success or failure)"
+        value: ${{ jobs.evaluate-governance.outputs.secret-scan-status }}
 
 permissions:
   contents: read
@@ -75,6 +78,7 @@ jobs:
       consumer-id: ${{ steps.aggregate.outputs.consumer-id }}
       adapter: ${{ steps.aggregate.outputs.adapter }}
       platform-sha: ${{ steps.aggregate.outputs.platform-sha }}
+      secret-scan-status: ${{ steps.aggregate.outputs.secret-scan-status }}
 
     steps:
       - name: "Checkout Consumer Repository"
@@ -155,6 +159,24 @@ jobs:
           cat .infraflow-temp/val-result.json
           echo "::endgroup::"
 
+      - name: "Execute Mandatory Consumer Secret Scanner"
+        id: secret_scanner
+        env:
+          REPO_DIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Executing Mandatory Consumer Secret Defense Scanner (G10.3)"
+
+          mkdir -p .infraflow-temp
+          python3 .infraflow-platform/scripts/scan-secrets.py \
+            --target-dir "${REPO_DIR}" \
+            --strict \
+            --output-json .infraflow-temp/secrets-result.json \
+            --json > .infraflow-temp/secrets-summary.json
+
+          echo "Mandatory secret defense scan passed cleanly with 0 exposed credentials."
+          echo "::endgroup::"
+
       - name: "Setup Conftest Policy Engine"
         if: inputs.enforce-rego-policy
         run: |
@@ -189,6 +211,7 @@ jobs:
         if: always()
         env:
           VALIDATOR_OUTCOME: ${{ steps.validator.outcome }}
+          SECRET_OUTCOME: ${{ steps.secret_scanner.outcome }}
           CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
           ENFORCE_POLICY: ${{ inputs.enforce-rego-policy }}
           PLATFORM_SHA: ${{ inputs.platform-sha }}
@@ -199,13 +222,18 @@ jobs:
           GOV_STATUS="failed"
           CONSUMER_ID="unknown"
           ADAPTER="unknown"
+          SECRET_STATUS="failed"
+
+          if [[ "${SECRET_OUTCOME}" == "success" ]]; then
+            SECRET_STATUS="success"
+          fi
 
           if [[ -f .infraflow-temp/gov-payload.json ]]; then
             CONSUMER_ID=$(python3 -c "import json; d=json.load(open('.infraflow-temp/gov-payload.json')); print(d.get('consumer_id', 'unknown'))")
             ADAPTER=$(python3 -c "import json; d=json.load(open('.infraflow-temp/gov-payload.json')); print(d.get('adapter', 'unknown'))")
           fi
 
-          if [[ "${VALIDATOR_OUTCOME}" == "success" ]]; then
+          if [[ "${VALIDATOR_OUTCOME}" == "success" && "${SECRET_OUTCOME}" == "success" ]]; then
             if [[ "${ENFORCE_POLICY}" != "true" || "${CONFTEST_OUTCOME}" == "success" ]]; then
               GOV_STATUS="success"
             fi
@@ -216,6 +244,7 @@ jobs:
             echo "consumer-id=${CONSUMER_ID}"
             echo "adapter=${ADAPTER}"
             echo "platform-sha=${PLATFORM_SHA}"
+            echo "secret-scan-status=${SECRET_STATUS}"
           } >> "${GITHUB_OUTPUT}"
 
           echo "=============================================================================="
@@ -225,6 +254,7 @@ jobs:
           echo "Adapter:           ${ADAPTER}"
           echo "Platform SHA:      ${PLATFORM_SHA}"
           echo "Validator Outcome: ${VALIDATOR_OUTCOME}"
+          echo "Secret Scanner:    ${SECRET_OUTCOME}"
           echo "Policy Outcome:    ${CONFTEST_OUTCOME}"
           echo "Final Status:      ${GOV_STATUS}"
           echo "=============================================================================="

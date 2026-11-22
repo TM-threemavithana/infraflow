@@ -67,6 +67,14 @@ GENERIC_CONFIRMATION_BLOCKLIST = {
 
 # Security-critical resource types that cannot be deleted without special authorization
 SECURITY_CRITICAL_RESOURCE_TYPES: Set[str] = {
+    # AWS Databases & Caches
+    "aws_db_instance",
+    "aws_rds_cluster",
+    "aws_rds_cluster_instance",
+    "aws_dynamodb_table",
+    "aws_elasticache_cluster",
+    "aws_elasticache_replication_group",
+    "aws_redshift_cluster",
     # AWS IAM & Access Control
     "aws_iam_role",
     "aws_iam_policy",
@@ -77,6 +85,7 @@ SECURITY_CRITICAL_RESOURCE_TYPES: Set[str] = {
     # AWS Key Management & Encryption
     "aws_kms_key",
     "aws_kms_alias",
+    "aws_kms_replica_key",
     # AWS Storage & Network Perimeter
     "aws_s3_bucket_public_access_block",
     "aws_s3_bucket_policy",
@@ -85,16 +94,49 @@ SECURITY_CRITICAL_RESOURCE_TYPES: Set[str] = {
     "aws_security_group_rule",
     "aws_vpc",
     "aws_route_table",
-    # Azure
+    "aws_network_acl",
+    "aws_internet_gateway",
+    # Azure Databases & Caches
+    "azurerm_postgresql_server",
+    "azurerm_postgresql_flexible_server",
+    "azurerm_mssql_server",
+    "azurerm_mssql_database",
+    "azurerm_cosmosdb_account",
+    "azurerm_mariadb_server",
+    "azurerm_redis_cache",
+    # Azure Key Vault & Security
     "azurerm_key_vault",
     "azurerm_key_vault_key",
+    "azurerm_key_vault_secret",
+    "azurerm_key_vault_managed_hardware_security_module",
     "azurerm_storage_account_network_rules",
+    "azurerm_role_definition",
     "azurerm_role_assignment",
-    # GCP
+    "azurerm_user_assigned_identity",
+    "azurerm_network_security_group",
+    "azurerm_network_security_rule",
+    "azurerm_virtual_network",
+    "azurerm_firewall",
+    # GCP Databases & Caches
+    "google_sql_database_instance",
+    "google_spanner_instance",
+    "google_spanner_database",
+    "google_bigtable_instance",
+    "google_redis_instance",
+    # GCP KMS, Storage Controls & IAM
     "google_kms_crypto_key",
     "google_kms_key_ring",
+    "google_kms_crypto_key_version",
     "google_storage_bucket_iam_binding",
+    "google_storage_bucket_iam_member",
+    "google_service_account",
     "google_project_iam_binding",
+    "google_project_iam_member",
+    "google_organization_iam_binding",
+    "google_compute_firewall",
+    "google_compute_network",
+    "google_compute_subnetwork",
+    "google_compute_router",
 }
 
 # Supported Canonical Action Sets
