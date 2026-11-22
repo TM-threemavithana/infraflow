@@ -733,3 +733,51 @@ Pipeline Run ───▶ [1. InfraFlow Orchestration Lock] ───▶ [2. Ter
    - **Built-in First-Class LocalFS & Mock Drivers:** Preserve `LocalFSDriver` and `MockDistributedDriver` as core platform components for deterministic testing, offline developer experience, and container runners sharing persistent volumes.
    - **Decoupled Cloud Drivers as Optional Extensions:** Treat AWS DynamoDB, Azure Blob, and GCP Cloud Storage drivers as optional pluggable adapters. The core platform remains $0.00 spend, zero credential dependency, and strictly fail-closed.
 
+---
+
+## 18. Plan Lifecycle State Machine & State Correctness (Milestone G10.5.1)
+
+Milestone G10.5.1 resolves the critical reliability gaps identified in the G10.5 Independent Audit (AUDIT-G10-01, AUDIT-G10-03, AUDIT-G10-05) by hardening the transactional plan lifecycle state machine, wiring orchestration locking into `reusable-tf-apply.yml`, and establishing deterministic failure recovery traps.
+
+### 18.1 Lifecycle State Transition Matrix
+
+The table below specifies the definitive state machine governing every execution plan tracked by InfraFlow:
+
+| Current State | Trigger / Action | Target State | Guards & Invariants Enforced | Violation Response |
+|---|---|---|---|---|
+| `Unrecorded` | `reserve_plan` | `RESERVED` | Verified envelope, digest SHA-256 valid, not expired, state serial/lineage match, monotonic fencing token ($T_{\text{candidate}} > T_{\text{max}}$) | `PlanReplayError(DUPLICATE_RESERVATION, ALREADY_CONSUMED, STALE_FENCING_TOKEN)` |
+| `RESERVED` | `consume_plan` | `CONSUMED` | Matching `lock_id`, matching `fencing_token`, not superseded by higher token on canonical key | `PlanReplayError(LOCK_OWNER_MISMATCH, FENCING_TOKEN_MISMATCH, STALE_FENCING_TOKEN)` |
+| `RESERVED` | `consume_plan` (Duplicate, same owner) | `CONSUMED` (Idempotent PASS) | Matching `lock_id` and `fencing_token` matching the reservation. Safe no-op. | None (Success) |
+| `RESERVED` | `fail_plan(interrupted=True)` | `INTERRUPTED` | Matching `lock_id`, matching `fencing_token`. Plan permanently quarantined. | `PlanReplayError(LOCK_OWNER_MISMATCH, FENCING_TOKEN_MISMATCH)` |
+| `RESERVED` | `fail_plan(uncertain=True)` | `OUTCOME_UNCERTAIN` | Matching `lock_id`, matching `fencing_token`. Plan permanently quarantined. | `PlanReplayError(LOCK_OWNER_MISMATCH, FENCING_TOKEN_MISMATCH)` |
+| `RESERVED` | `fail_plan(default)` | `FAILED` | Matching `lock_id`, matching `fencing_token`. Plan permanently quarantined. | `PlanReplayError(LOCK_OWNER_MISMATCH, FENCING_TOKEN_MISMATCH)` |
+| `CONSUMED` | Any transition | Terminal | Plan has already been applied/simulated. Re-execution strictly blocked. | `PlanReplayError(ALREADY_CONSUMED)` |
+| `FAILED` | Any transition | Quarantined | Re-execution strictly blocked without manual investigation. | `PlanReplayError(UNCERTAIN_EXECUTION_STATE)` |
+| `INTERRUPTED` | Any transition | Quarantined | Re-execution strictly blocked without manual investigation. | `PlanReplayError(UNCERTAIN_EXECUTION_STATE)` |
+| `OUTCOME_UNCERTAIN` | Any transition | Quarantined | Re-execution strictly blocked without manual investigation. | `PlanReplayError(UNCERTAIN_EXECUTION_STATE)` |
+
+### 18.2 Atomic Database Transactions & The Release-After-Persistence Invariant
+
+A fundamental flaw in distributed systems arises when resource releases precede state persistence: if a worker releases its lock before committing its terminal state, another worker can acquire the lock and observe stale state.
+
+InfraFlow enforces the **Release-After-Persistence Invariant**:
+1. **Durable Persistence First:** In `consume_plan()` and `fail_plan()`, the SQLite database update (`UPDATE plan_executions SET status = ?, consumed_at = ? WHERE plan_id = ?`) executes inside an explicit transaction (`with self._conn:`) and commits to the WAL journal before any lock release call is made.
+2. **Lock Release Second:** Only after durable commit does `PlanLifecycleVerifier` invoke `mgr.release_lock(handle)`.
+3. **Failure Isolation:** If lock release raises a transient error or timeout, the plan state in the ledger remains durably committed as `CONSUMED` (or `FAILED`/`INTERRUPTED`). Re-running verification will observe the terminal state and fail closed rather than re-executing.
+
+### 18.3 Idempotency Semantics on Duplicate Completion
+
+In cloud CI/CD pipelines, network blips, GitHub step retries, or consumer automation can result in duplicate completion calls.
+- If `consume_plan()` is called on a plan that is already in `CONSUMED` or `SIMULATION_COMPLETED` status:
+  - If the caller supplies the same `lock_id` and `fencing_token` that originally consumed it, the engine recognizes the re-invocation as **idempotent success** and returns cleanly without error.
+  - If a different owner or stale token attempts to consume it, the engine fails closed with `PlanReplayError("ALREADY_CONSUMED")`.
+
+### 18.4 Workflow Integration in `reusable-tf-apply.yml`
+
+In Milestone G10.5.1, `reusable-tf-apply.yml` integrates the locking lifecycle into the consumer execution pipeline:
+- **Inputs:** Exposes `enable-lock` (boolean, default false), `lock-dir` (string, default `.infraflow/locks`), and `lock-ttl-seconds` (number, default 900s).
+- **Verification & Reservation:** When `enable-lock: true`, passes `--enable-lock`, `--lock-dir`, and `--lock-ttl-seconds` to `verify-plan-lifecycle.py verify`. The verifier derives the backend-bound canonical lock identity, acquires the lease, records the reservation in the ledger, and returns `lock_id` and `fencing_token`.
+- **Simulation Completion Step:** Following successful pre-execution authorization and blast-radius assessment, a dedicated step calls `verify-plan-lifecycle.py lock-consume` (or `ledger-consume` if locking is disabled), durably marking the plan as `CONSUMED` and releasing the orchestration lock.
+- **Failure Trap Step:** If pre-execution verification or blast-radius assessment fails after lock acquisition, a failure handler calls `verify-plan-lifecycle.py lock-fail`, marking the plan as `FAILED` and releasing the lock.
+- **Cancellation Trap Step:** If the workflow run is cancelled (`if: cancelled()`), a cancellation handler invokes `verify-plan-lifecycle.py lock-fail --interrupted`, recording `STATUS_INTERRUPTED` and releasing the lock so subsequent runs are quarantined until manual triage.
+

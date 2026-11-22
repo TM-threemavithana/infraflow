@@ -108,6 +108,21 @@ on:
         required: false
         default: ""
         type: string
+      enable-lock:
+        description: "Whether to acquire and enforce orchestration distributed locking (default false)"
+        required: false
+        default: false
+        type: boolean
+      lock-dir:
+        description: "Relative path to localfs lock storage directory (default '.infraflow/locks')"
+        required: false
+        default: ".infraflow/locks"
+        type: string
+      lock-ttl-seconds:
+        description: "Orchestration lock lease TTL in seconds (default 900s = 15m)"
+        required: false
+        default: 900
+        type: number
 
     outputs:
       plan-verification-status:
@@ -134,6 +149,12 @@ on:
       simulation-status:
         description: "Execution mode status (simulated-only)"
         value: ${{ jobs.summary.outputs.simulation-status }}
+      lock-id:
+        description: "Distributed lock UUID if orchestration locking was active"
+        value: ${{ jobs.summary.outputs.lock-id }}
+      fencing-token:
+        description: "Monotonically increasing fencing token if locking was active"
+        value: ${{ jobs.summary.outputs.fencing-token }}
 
 permissions:
   contents: read
@@ -168,6 +189,9 @@ jobs:
           INPUT_MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
           INPUT_PLAN_JSON: ${{ inputs.plan-json-file }}
           INPUT_TRUSTED_AUTHORIZERS: ${{ inputs.trusted-authorizers }}
+          INPUT_ENABLE_LOCK: ${{ inputs.enable-lock }}
+          INPUT_LOCK_DIR: ${{ inputs.lock-dir }}
+          INPUT_LOCK_TTL: ${{ inputs.lock-ttl-seconds }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_REF: ${{ github.ref }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
@@ -342,6 +366,30 @@ jobs:
             exit 1
           fi
 
+          # 13. Validate Distributed Locking Inputs
+          if [[ "${INPUT_ENABLE_LOCK}" == "true" ]]; then
+            if [[ -z "${INPUT_LOCK_DIR}" ]]; then
+              echo "::error::Security Violation: lock-dir cannot be empty when enable-lock is true."
+              exit 1
+            fi
+            if [[ "${INPUT_LOCK_DIR}" =~ ^/ ]] || [[ "${INPUT_LOCK_DIR}" =~ ^~ ]] || [[ "${INPUT_LOCK_DIR}" =~ \.\. ]]; then
+              echo "::error::Security Violation: Path traversal or absolute paths prohibited in lock-dir: '${INPUT_LOCK_DIR}'."
+              exit 1
+            fi
+            if [[ ! "${INPUT_LOCK_DIR}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+              echo "::error::Security Violation: lock-dir contains forbidden characters: '${INPUT_LOCK_DIR}'."
+              exit 1
+            fi
+            if [[ -L "${INPUT_LOCK_DIR}" ]]; then
+              echo "::error::Security Violation: Symbolic links are strictly prohibited: '${INPUT_LOCK_DIR}'."
+              exit 1
+            fi
+            if [[ -n "${INPUT_LOCK_TTL}" && ! "${INPUT_LOCK_TTL}" =~ ^[0-9]+$ ]]; then
+              echo "::error::Security Violation: lock-ttl-seconds must be a positive integer: '${INPUT_LOCK_TTL}'."
+              exit 1
+            fi
+          fi
+
           echo "Input sanitization and trust boundary checks passed successfully."
           echo "::endgroup::"
 
@@ -362,6 +410,9 @@ jobs:
       destruction-summary: ${{ steps.lifecycle.outputs.destruction-summary }}
       authorization-status: ${{ steps.lifecycle.outputs.authorization-status }}
       plan-digest: ${{ steps.lifecycle.outputs.plan-digest }}
+      lock-id: ${{ steps.lifecycle.outputs.lock-id }}
+      fencing-token: ${{ steps.lifecycle.outputs.fencing-token }}
+      canonical-lock-key: ${{ steps.lifecycle.outputs.canonical-lock-key }}
 
     steps:
       - name: "Checkout Calling Repository (Artifacts)"
@@ -410,6 +461,9 @@ jobs:
           MAX_REPLACEMENTS: ${{ inputs.max-replacements }}
           PLAN_JSON_FILE: ${{ inputs.plan-json-file }}
           TRUSTED_AUTHORIZERS: ${{ inputs.trusted-authorizers }}
+          ENABLE_LOCK: ${{ inputs.enable-lock }}
+          LOCK_DIR: ${{ inputs.lock-dir }}
+          LOCK_TTL: ${{ inputs.lock-ttl-seconds }}
           INPUT_EXPECTED_COMMIT: ${{ inputs.expected-commit }}
           REPO_NAME: ${{ github.repository }}
           RAW_COMMIT_SHA: ${{ github.sha }}
@@ -523,6 +577,14 @@ jobs:
             VERIFY_ARGS+=("--initial-state")
           fi
 
+          if [[ "${ENABLE_LOCK}" == "true" ]]; then
+            VERIFY_ARGS+=(
+              "--enable-lock"
+              "--lock-dir" "${LOCK_DIR}"
+              "--lock-ttl-seconds" "${LOCK_TTL}"
+            )
+          fi
+
           # 5. Execute python verifier
           VERIFIER_PY=".infraflow-platform/scripts/verify-plan-lifecycle.py"
           echo "Executing: python3 ${VERIFIER_PY} verify ..."
@@ -534,6 +596,9 @@ jobs:
           DECISION_CODE=$(echo "${VERIFY_OUTPUT}" | jq -r '.decision_code // "UNKNOWN"')
           PLAN_DIGEST=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.plan_digest_sha256 // ""')
           REPLAY_STATUS=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.replay_status // "failed"')
+          LOCK_ID=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.lock_id // empty')
+          FENCING_TOKEN=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.fencing_token // empty')
+          CANONICAL_KEY=$(echo "${VERIFY_OUTPUT}" | jq -r '.contract.canonical_lock_key // empty')
 
           # 6. Destructive Change Assessment & Blast-Radius Evaluation (Milestone G06.4)
           DESTRUCT_STATUS="not-applicable"
@@ -620,6 +685,9 @@ jobs:
               echo "destruction-summary=${DESTRUCT_SUMMARY}"
               echo "authorization-status=AUTHORIZED_FOR_SIMULATION"
               echo "plan-digest=${PLAN_DIGEST}"
+              echo "lock-id=${LOCK_ID}"
+              echo "fencing-token=${FENCING_TOKEN}"
+              echo "canonical-lock-key=${CANONICAL_KEY}"
             } >> "$GITHUB_OUTPUT"
             echo "Pre-execution verification succeeded: AUTHORIZED_FOR_SIMULATION"
           else
@@ -632,9 +700,104 @@ jobs:
               echo "destruction-summary=${DESTRUCT_SUMMARY}"
               echo "authorization-status=REJECTED"
               echo "plan-digest="
+              echo "lock-id=${LOCK_ID}"
+              echo "fencing-token=${FENCING_TOKEN}"
+              echo "canonical-lock-key=${CANONICAL_KEY}"
             } >> "$GITHUB_OUTPUT"
+            if [[ -n "${LOCK_ID}" ]]; then
+              echo "Releasing lock following authorization rejection..."
+              python3 "${VERIFIER_PY}" lock-fail \
+                --plan-id "${PLAN_ID}" \
+                --ledger-db "${LEDGER_PATH}" \
+                --lock-dir "${LOCK_DIR}" \
+                --lock-id "${LOCK_ID}" \
+                --fencing-token "${FENCING_TOKEN}" \
+                --idempotent || true
+            fi
             echo "::error::Pre-execution authorization rejected: ${DECISION_CODE}"
             exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: "Complete Simulation & Consume Plan in Replay Ledger"
+        id: consume
+        if: success() && steps.lifecycle.outputs.authorization-status == 'AUTHORIZED_FOR_SIMULATION'
+        env:
+          PLAN_ID: ${{ inputs.plan-id }}
+          LEDGER_PATH: ${{ inputs.ledger-db-path }}
+          LOCK_DIR: ${{ inputs.lock-dir }}
+          LOCK_ID: ${{ steps.lifecycle.outputs.lock-id }}
+          FENCING_TOKEN: ${{ steps.lifecycle.outputs.fencing-token }}
+        run: |
+          set -euo pipefail
+          echo "::group::Durable Plan Consumption & Lock Release"
+          VERIFIER_PY=".infraflow-platform/scripts/verify-plan-lifecycle.py"
+          if [[ -n "${LOCK_ID}" ]]; then
+            echo "Consuming plan '${PLAN_ID}' with lock '${LOCK_ID}' (token: ${FENCING_TOKEN})..."
+            python3 "${VERIFIER_PY}" lock-consume \
+              --plan-id "${PLAN_ID}" \
+              --ledger-db "${LEDGER_PATH}" \
+              --lock-dir "${LOCK_DIR}" \
+              --lock-id "${LOCK_ID}" \
+              --fencing-token "${FENCING_TOKEN}" \
+              --idempotent
+          else
+            echo "Consuming plan '${PLAN_ID}' in replay ledger (lock disabled)..."
+            python3 "${VERIFIER_PY}" ledger-consume \
+              --plan-id "${PLAN_ID}" \
+              --ledger-db "${LEDGER_PATH}"
+          fi
+          echo "Plan successfully transitioned to CONSUMED."
+          echo "::endgroup::"
+
+      - name: "Handle Failure & Mark Plan Failed"
+        id: fail-handler
+        if: failure() && steps.lifecycle.outcome == 'success'
+        env:
+          PLAN_ID: ${{ inputs.plan-id }}
+          LEDGER_PATH: ${{ inputs.ledger-db-path }}
+          LOCK_DIR: ${{ inputs.lock-dir }}
+          LOCK_ID: ${{ steps.lifecycle.outputs.lock-id }}
+          FENCING_TOKEN: ${{ steps.lifecycle.outputs.fencing-token }}
+        run: |
+          set -euo pipefail
+          echo "::group::Failure Recovery & Lock Release"
+          VERIFIER_PY=".infraflow-platform/scripts/verify-plan-lifecycle.py"
+          if [[ -n "${LOCK_ID}" ]]; then
+            echo "Transitioning plan '${PLAN_ID}' to FAILED and releasing lock..."
+            python3 "${VERIFIER_PY}" lock-fail \
+              --plan-id "${PLAN_ID}" \
+              --ledger-db "${LEDGER_PATH}" \
+              --lock-dir "${LOCK_DIR}" \
+              --lock-id "${LOCK_ID}" \
+              --fencing-token "${FENCING_TOKEN}" \
+              --idempotent || true
+          fi
+          echo "::endgroup::"
+
+      - name: "Handle Cancellation & Mark Interrupted"
+        id: cancel-handler
+        if: cancelled()
+        env:
+          PLAN_ID: ${{ inputs.plan-id }}
+          LEDGER_PATH: ${{ inputs.ledger-db-path }}
+          LOCK_DIR: ${{ inputs.lock-dir }}
+          LOCK_ID: ${{ steps.lifecycle.outputs.lock-id }}
+          FENCING_TOKEN: ${{ steps.lifecycle.outputs.fencing-token }}
+        run: |
+          set -euo pipefail
+          echo "::group::Cancellation Handling & Interrupted State Recording"
+          VERIFIER_PY=".infraflow-platform/scripts/verify-plan-lifecycle.py"
+          if [[ -n "${LOCK_ID}" ]]; then
+            echo "Transitioning plan '${PLAN_ID}' to INTERRUPTED and releasing lock..."
+            python3 "${VERIFIER_PY}" lock-fail \
+              --plan-id "${PLAN_ID}" \
+              --interrupted \
+              --ledger-db "${LEDGER_PATH}" \
+              --lock-dir "${LOCK_DIR}" \
+              --lock-id "${LOCK_ID}" \
+              --fencing-token "${FENCING_TOKEN}" \
+              --idempotent || true
           fi
           echo "::endgroup::"
 
@@ -655,6 +818,8 @@ jobs:
       destruction-summary: ${{ steps.eval.outputs.destruction-summary }}
       authorization-status: ${{ steps.eval.outputs.authorization-status }}
       simulation-status: "simulated-only"
+      lock-id: ${{ steps.eval.outputs.lock-id }}
+      fencing-token: ${{ steps.eval.outputs.fencing-token }}
 
     steps:
       - name: "Evaluate Final Simulation Authorization"
@@ -670,6 +835,8 @@ jobs:
           DESTRUCT_SUMMARY: ${{ needs.verify-plan.outputs.destruction-summary }}
           AUTH_STATUS: ${{ needs.verify-plan.outputs.authorization-status }}
           PLAN_DIGEST: ${{ needs.verify-plan.outputs.plan-digest }}
+          LOCK_ID: ${{ needs.verify-plan.outputs.lock-id }}
+          FENCING_TOKEN: ${{ needs.verify-plan.outputs.fencing-token }}
           PLAN_ID: ${{ inputs.plan-id }}
           TARGET_ENV: ${{ inputs.environment }}
           TARGET_LINEAGE: ${{ inputs.expected-lineage }}
@@ -687,15 +854,22 @@ jobs:
             FINAL_AUTH="REJECTED"
           fi
 
+          FINAL_REPLAY_STATUS="${REPLAY_STATUS:-failed}"
+          if [[ "${FINAL_AUTH}" == "AUTHORIZED_FOR_SIMULATION" ]]; then
+            FINAL_REPLAY_STATUS="consumed"
+          fi
+
           {
             echo "plan-verification-status=${PLAN_VERIFY_STATUS:-failure}"
             echo "provenance-status=${PROV_STATUS:-unverified}"
             echo "state-consistency-status=${STATE_STATUS:-failure}"
-            echo "replay-status=${REPLAY_STATUS:-failed}"
+            echo "replay-status=${FINAL_REPLAY_STATUS}"
             echo "destruction-status=${DESTRUCT_STATUS:-not-applicable}"
             echo "destruction-summary=${DESTRUCT_SUMMARY:-{}}"
             echo "authorization-status=${FINAL_AUTH}"
             echo "simulation-status=${FINAL_SIMULATION}"
+            echo "lock-id=${LOCK_ID:-none}"
+            echo "fencing-token=${FENCING_TOKEN:-none}"
           } >> "$GITHUB_OUTPUT"
 
           # Render GitHub Step Summary
@@ -712,7 +886,9 @@ jobs:
             echo "| **Envelope Verification** | \`${PLAN_VERIFY_STATUS:-failure}\` |"
             echo "| **Provenance Attestation** | \`${PROV_STATUS:-unverified}\` |"
             echo "| **State Consistency** | \`${STATE_STATUS:-failure}\` |"
-            echo "| **Replay Ledger Reservation** | \`${REPLAY_STATUS:-failed}\` |"
+            echo "| **Replay Ledger Status** | \`${FINAL_REPLAY_STATUS}\` |"
+            echo "| **Distributed Lock ID** | \`${LOCK_ID:-none}\` |"
+            echo "| **Fencing Token** | \`${FENCING_TOKEN:-none}\` |"
             echo "| **Destruction Assessment** | \`${DESTRUCT_STATUS:-not-applicable}\` |"
             echo "| **Destruction Metrics** | \`${DESTRUCT_SUMMARY:-{}}\` |"
             echo "| **Execution Mode** | \`simulated-only\` (No infrastructure changes) |"
@@ -721,6 +897,7 @@ jobs:
             if [[ "${FINAL_AUTH}" == "AUTHORIZED_FOR_SIMULATION" ]]; then
               echo "### ✅ Plan Authorized for Simulation"
               echo "The Terraform execution plan successfully satisfied all pre-execution cryptographic integrity, expiration, state consistency, replay reservation, and blast-radius destruction checks."
+              echo "The plan was safely simulated and durably transitioned to \`CONSUMED\` in the replay protection ledger."
               echo ""
               echo "> [!NOTE]"
               echo "> This workflow executes in simulation-only mode ($0.00 cloud spend, zero cloud credentials). No state-modifying execution (application or destruction) occurred."

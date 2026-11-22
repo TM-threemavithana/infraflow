@@ -3,8 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#19-local-development-and-zero-cost-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
-[![Quality Gates](https://img.shields.io/badge/Quality_Gates-455%2F455_PASS-brightgreen.svg)](#21-testing-and-verification)
-[![Python Tests](https://img.shields.io/badge/Python_Tests-632_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![Quality Gates](https://img.shields.io/badge/Quality_Gates-485%2F485_PASS-brightgreen.svg)](#21-testing-and-verification)
+[![Python Tests](https://img.shields.io/badge/Python_Tests-707_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![OPA Rego](https://img.shields.io/badge/OPA_Policies-213_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
@@ -502,9 +502,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **684 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance, distributed state locking & concurrency (G10.4.2), multiprocessing & adversarial failure validation (G10.4.3), plan lifecycle lock authority validation (G10.4.4) | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **707 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance, distributed state locking & concurrency (G10.4.2), multiprocessing & adversarial failure validation (G10.4.3), plan lifecycle lock authority validation (G10.4.4), plan lifecycle state correctness & workflow integration (G10.5.1) | **PASS (100%)** |
 | **OPA / Rego Conftest Suite** | **213 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **475 Checks** | End-to-end integration across all 30 platform quality sections | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **485 Checks** | End-to-end integration across all 31 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
 | **Secret Scanning (`SecretScanner` & `gitleaks`)** | **0 Leaks** | Mandatory consumer secret scanner & complete repository commit history clean | **PASS (100%)** |
 
@@ -573,6 +573,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── test_drift_detection.py
 │   ├── test_g10_security_integration.py # Security integration assurance test suite (G10.3.1)
 │   ├── test_lifecycle_locking.py # Plan lifecycle lock authority integration test suite (G10.4.4)
+│   ├── test_lifecycle_state_correctness.py # Plan lifecycle state correctness & adversarial test suite (G10.5.1)
 │   ├── test_locking_concurrency_adversarial.py # Adversarial multiprocessing concurrency test suite (G10.4.3)
 │   ├── test_operational_maturity.py
 │   ├── test_scaffolding.py
@@ -616,8 +617,8 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 - **Current Published Release**: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0)
 - **Active Development Branch**: `feature/g10-unified-cli`
-- **Completed Phases**: G01 through G10.4.4 (Foundation through Lifecycle Integration & Lock Authority Validation)
-- **Quality Gates**: 475/475 automated validation checks passing locally and in CI.
+- **Completed Phases**: G01 through G10.5.1 (Foundation through Plan Lifecycle State Correctness)
+- **Quality Gates**: 485/485 automated validation checks passing locally and in CI.
 
 ---
 

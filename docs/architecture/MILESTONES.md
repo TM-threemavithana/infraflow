@@ -601,14 +601,31 @@ Milestone G10.4.4 integrates the completed G10.4 distributed state locking engin
 
 ---
 
-## 38. Quality Gate Definitions
+## 38. Milestone G10.5.1 — Acceptance Criteria (Plan Lifecycle State Correctness & Workflow Integration)
+
+Milestone G10.5.1 remediates the audit findings identified during the G10.5 Independent Reliability Audit (AUDIT-G10-01, AUDIT-G10-03, AUDIT-G10-05). It hardens the transactional plan lifecycle state machine, enforces atomic SQLite transitions with the release-after-persistence invariant, enables idempotent duplicate completion, wires orchestration distributed locking into `reusable-tf-apply.yml`, guarantees post-simulation plan consumption, establishes deterministic failure and cancellation traps, and implements a comprehensive 13-test adversarial suite ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-61** | Lifecycle State Machine & Transition Matrix | Specify explicit state machine transitions, invariants, and error responses across all states (`AVAILABLE`, `RESERVED`, `CONSUMED`, `FAILED`, `INTERRUPTED`, `OUTCOME_UNCERTAIN`) in [`G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md). | Documentation inspection | **PASS (Completed)** |
+| **AC-G10-62** | Release-After-Persistence Invariant | Enforce that SQLite ledger status commits durably inside transactions before lock handles are released, ensuring failure during lock release preserves `CONSUMED` state. | Unit tests (`test_13`) & code inspection | **PASS (Completed)** |
+| **AC-G10-63** | Idempotent Duplicate Completion | Support safe, idempotent duplicate `consume_plan()` and `record_outcome()` calls when presented with matching `lock_id` and `fencing_token`, while failing closed against different owners. | Unit tests (`test_02`, `test_12`) & Section 31 | **PASS (Completed)** |
+| **AC-G10-64** | Apply Workflow Locking Wiring | Add `enable-lock`, `lock-dir`, and `lock-ttl-seconds` inputs to `reusable-tf-apply.yml`, pass arguments to `verify-plan-lifecycle.py verify`, and expose `lock-id` and `fencing-token` outputs. | Actionlint, Zizmor, & workflow audit | **PASS (Completed)** |
+| **AC-G10-65** | Durable Plan Consumption Step | Add dedicated post-simulation step to `reusable-tf-apply.yml` calling `lock-consume` (or `ledger-consume`) upon authorized simulation, transitioning the plan to `CONSUMED`. | Workflow execution inspection | **PASS (Completed)** |
+| **AC-G10-66** | Workflow Failure & Cancellation Traps | Add failure handler step calling `lock-fail` and cancellation trap (`if: cancelled()`) calling `lock-fail --interrupted`, preventing unreleased locks or unresolved ledger states. | Workflow trap inspection | **PASS (Completed)** |
+| **AC-G10-67** | Dedicated Adversarial Test Suite (13 Tests) | Implement `tests/test_lifecycle_state_correctness.py` covering reservation, consumption, idempotency, stale tokens, renewal process abort, interruption, and recovery. | `unittest` (13/13 passed) | **PASS (Completed)** |
+| **AC-G10-68** | Local Validation Runner Expansion (Section 31) | Expand `scripts/validate-local.sh` with Section 31 (10 automated checks), raising platform quality gates to 485/485 passing checks. | `validate-local.sh` (485/485 passed) | **PASS (Completed)** |
+
+---
+
+## 39. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (475/475 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (485/485 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

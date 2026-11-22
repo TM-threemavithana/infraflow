@@ -733,16 +733,23 @@ class PlanReplayLedger:
                     raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{plan_id}' does not exist in ledger")
 
                 current_status = row["status"]
+                res_lock_id = row["lock_id"]
+                res_token = row["fencing_token"]
+                res_key = row["canonical_lock_key"]
+
+                # Idempotency check: duplicate consumption by the same owner
                 if current_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                    if lock_id is not None and res_lock_id is not None and lock_id == res_lock_id:
+                        if fencing_token is None or res_token is None or fencing_token == res_token:
+                            return  # Idempotent success
+                    elif lock_id is None and res_lock_id is None:
+                        return  # Idempotent success for non-locked plan
                     raise PlanReplayError(f"ALREADY_CONSUMED: Plan '{plan_id}' has already been consumed")
+
                 if current_status != STATUS_RESERVED:
                     raise PlanReplayError(
                         f"INVALID_STATE_TRANSITION: Cannot consume plan in '{current_status}' state; must be '{STATUS_RESERVED}'"
                     )
-
-                res_lock_id = row["lock_id"]
-                res_token = row["fencing_token"]
-                res_key = row["canonical_lock_key"]
 
                 # Validate lock_id if supplied or recorded
                 if lock_id is not None and res_lock_id is not None and lock_id != res_lock_id:
@@ -826,12 +833,24 @@ class PlanReplayLedger:
                     raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{plan_id}' does not exist in ledger")
 
                 current_status = row["status"]
-                if current_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
-                    raise PlanReplayError(f"ALREADY_CONSUMED: Plan '{plan_id}' has already been consumed")
-
                 res_lock_id = row["lock_id"]
                 res_token = row["fencing_token"]
                 res_key = row["canonical_lock_key"]
+
+                # Idempotency check: if already in the target outcome status
+                if current_status == status:
+                    if lock_id is not None and res_lock_id is not None and lock_id != res_lock_id:
+                        raise PlanReplayError(
+                            f"LOCK_OWNER_MISMATCH: Provided lock_id '{lock_id}' does not match reservation lock_id '{res_lock_id}'"
+                        )
+                    return  # Idempotent re-invocation
+
+                if current_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                    if status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                        if lock_id is not None and res_lock_id is not None and lock_id == res_lock_id:
+                            if fencing_token is None or res_token is None or fencing_token == res_token:
+                                return  # Idempotent re-invocation
+                    raise PlanReplayError(f"ALREADY_CONSUMED: Plan '{plan_id}' has already been consumed")
 
                 if lock_id is not None and res_lock_id is not None and lock_id != res_lock_id:
                     raise PlanReplayError(
@@ -928,6 +947,7 @@ class PlanLifecycleVerifier:
         clock_skew_seconds: int = DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS,
         reserve_in_ledger: bool = True,
         require_lock: bool = False,
+        enable_lock: Optional[bool] = None,
         lock_manager: Optional[Any] = None,
         lock_driver: Optional[Any] = None,
         lock_dir: Optional[str] = None,
@@ -939,6 +959,8 @@ class PlanLifecycleVerifier:
         Returns AuthorizationDecision with status AUTHORIZED_FOR_SIMULATION or REJECTED.
         """
         reasons: List[str] = []
+        if enable_lock is not None:
+            require_lock = enable_lock
         now = get_current_utc_time(current_time)
 
         # 1. Envelope Schema & Static Structure Check
@@ -1349,6 +1371,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_lc.add_argument("--lock-id", help="Lock ID holding reservation")
     p_lc.add_argument("--fencing-token", type=int, help="Fencing token holding reservation")
     p_lc.add_argument("--lock-dir", default=".infraflow/locks", help="Path to lock storage directory")
+    p_lc.add_argument("--idempotent", action="store_true", help="Allow idempotent re-consumption by same owner")
 
     # lock-fail subcommand
     p_lf = subparsers.add_parser("lock-fail", help="Transition plan to failed/uncertain and release lock")
@@ -1359,6 +1382,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_lf.add_argument("--lock-id", help="Lock ID holding reservation")
     p_lf.add_argument("--fencing-token", type=int, help="Fencing token holding reservation")
     p_lf.add_argument("--lock-dir", default=".infraflow/locks", help="Path to lock storage directory")
+    p_lf.add_argument("--idempotent", action="store_true", help="Allow idempotent outcome recording")
 
     # lock-identity subcommand
     p_lid = subparsers.add_parser("lock-identity", help="Derive canonical lock identity for plan targets")
@@ -1496,11 +1520,17 @@ def main() -> int:
             token = args.fencing_token if args.fencing_token is not None else plan_meta.get("fencing_token")
             canon_key = plan_meta.get("canonical_lock_key")
 
-            ledger.consume_plan(
-                plan_id=args.plan_id,
-                lock_id=l_id,
-                fencing_token=token,
-            )
+            try:
+                ledger.consume_plan(
+                    plan_id=args.plan_id,
+                    lock_id=l_id,
+                    fencing_token=token,
+                )
+            except PlanReplayError as e:
+                if getattr(args, "idempotent", False) and "ALREADY_CONSUMED" in str(e):
+                    pass
+                else:
+                    raise e
 
             if l_id and canon_key:
                 driver = LocalFSDriver(base_dir=args.lock_dir)
@@ -1536,13 +1566,19 @@ def main() -> int:
             token = args.fencing_token if args.fencing_token is not None else plan_meta.get("fencing_token")
             canon_key = plan_meta.get("canonical_lock_key")
 
-            ledger.fail_plan(
-                plan_id=args.plan_id,
-                interrupted=args.interrupted,
-                uncertain=args.uncertain,
-                lock_id=l_id,
-                fencing_token=token,
-            )
+            try:
+                ledger.fail_plan(
+                    plan_id=args.plan_id,
+                    interrupted=args.interrupted,
+                    uncertain=args.uncertain,
+                    lock_id=l_id,
+                    fencing_token=token,
+                )
+            except PlanReplayError as e:
+                if getattr(args, "idempotent", False):
+                    pass
+                else:
+                    raise e
 
             if l_id and canon_key:
                 driver = LocalFSDriver(base_dir=args.lock_dir)

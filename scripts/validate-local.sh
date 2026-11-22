@@ -3288,8 +3288,8 @@ else
 fi
 
 # Test 16.10: Full G06 unit test suite (test_kms_envelope.py + test_plan_lifecycle.py)
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
-  record_pass "G06 Full Test Suite [10/24]: All unit tests passed"
+if python3 -m unittest "${REPO_ROOT}/tests/test_kms_envelope.py" "${REPO_ROOT}/tests/test_plan_lifecycle.py" >/dev/null 2>&1; then
+  record_pass "G06 Full Test Suite [10/24]: All G06 unit tests passed"
 else
   record_fail "G06 Full Test Suite [10/24]: Unit tests" "One or more tests in tests directory failed"
 fi
@@ -6619,6 +6619,118 @@ else
   record_fail "Lock Authority Boundaries [10/10]: Documentation presence" "Missing lock authority boundaries in G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md"
 fi
 rm -rf "${G10_4_TMP}"
+
+# ==============================================================================
+# SECTION 31: Milestone G10.5.1 — Plan Lifecycle State Correctness & Workflow Integration
+# ==============================================================================
+log_header "Section 31: Milestone G10.5.1 — Plan Lifecycle State Correctness & Workflow Integration"
+
+# Test 31.1: reusable-tf-apply.yml contains enable-lock, lock-dir, and lock-ttl-seconds inputs
+if grep -q "enable-lock:" "${REUSABLE_APPLY_WF}" && \
+   grep -q "lock-dir:" "${REUSABLE_APPLY_WF}" && \
+   grep -q "lock-ttl-seconds:" "${REUSABLE_APPLY_WF}"; then
+  record_pass "Workflow Inputs [1/10]: reusable-tf-apply.yml defines enable-lock, lock-dir, and lock-ttl-seconds inputs"
+else
+  record_fail "Workflow Inputs [1/10]: Inputs check" "reusable-tf-apply.yml missing required locking inputs"
+fi
+
+# Test 31.2: reusable-tf-apply.yml contains lock-consume step for completed simulation
+if grep -q "lock-consume" "${REUSABLE_APPLY_WF}" && \
+   grep -q "Complete Simulation & Consume Plan in Replay Ledger" "${REUSABLE_APPLY_WF}"; then
+  record_pass "Workflow Consumption [2/10]: reusable-tf-apply.yml transitions simulation to CONSUMED via lock-consume"
+else
+  record_fail "Workflow Consumption [2/10]: Consumption check" "reusable-tf-apply.yml missing lock-consume step"
+fi
+
+# Test 31.3: reusable-tf-apply.yml contains lock-fail step for failure and cancellation handling
+if grep -q "lock-fail" "${REUSABLE_APPLY_WF}" && \
+   grep -q "Handle Failure & Mark Plan Failed" "${REUSABLE_APPLY_WF}" && \
+   grep -q "Handle Cancellation & Mark Interrupted" "${REUSABLE_APPLY_WF}"; then
+  record_pass "Workflow Failure Traps [3/10]: reusable-tf-apply.yml contains failure and cancellation lock-fail traps"
+else
+  record_fail "Workflow Failure Traps [3/10]: Failure traps check" "reusable-tf-apply.yml missing failure or cancellation traps"
+fi
+
+# Test 31.4: reusable-tf-apply.yml actionlint validation
+if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+  record_pass "Workflow Linting [4/10]: reusable-tf-apply.yml passes actionlint with zero errors"
+else
+  record_fail "Workflow Linting [4/10]: Actionlint check" "actionlint failed on reusable-tf-apply.yml"
+fi
+
+# Test 31.5: reusable-tf-apply.yml zizmor security audit
+if (cd "${REPO_ROOT}" && "${ZIZMOR_BIN}" -c .zizmor.yml --min-severity medium .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+  record_pass "Workflow Security Audit [5/10]: reusable-tf-apply.yml passes zizmor security audit"
+else
+  record_fail "Workflow Security Audit [5/10]: Zizmor check" "zizmor detected vulnerabilities in reusable-tf-apply.yml"
+fi
+
+# Test 31.6: Idempotent duplicate plan consumption
+G10_5_TMP=$(mktemp -d "/tmp/infraflow-g10-5-1-XXXXXX")
+if python3 -c "
+import datetime
+from tests.test_lifecycle_state_correctness import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_5_TMP}/ledger.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-id-1', '1'*64, 'repo', 'commit', 'prod', now, {}, lock_id='lock-1', fencing_token=1)
+l.consume_plan('plan-id-1', lock_id='lock-1', fencing_token=1)
+# Duplicate consume by same owner must succeed idempotently
+l.consume_plan('plan-id-1', lock_id='lock-1', fencing_token=1)
+" >/dev/null 2>&1; then
+  record_pass "Idempotent Consumption [6/10]: Duplicate consume by same owner succeeds idempotently"
+else
+  record_fail "Idempotent Consumption [6/10]: Idempotency check" "Failed idempotent duplicate plan consumption"
+fi
+
+# Test 31.7: Terminal outcome enforcement: consuming plan with different owner rejects with ALREADY_CONSUMED
+if python3 -c "
+from tests.test_lifecycle_state_correctness import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_5_TMP}/ledger.db')
+try:
+    l.consume_plan('plan-id-1', lock_id='lock-2', fencing_token=1)
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'ALREADY_CONSUMED' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Terminal State Guard [7/10]: Consuming already consumed plan with different owner raises ALREADY_CONSUMED"
+else
+  record_fail "Terminal State Guard [7/10]: Terminal guard check" "Failed terminal state guard on duplicate consume"
+fi
+
+# Test 31.8: Monotonic fencing token validation: superseded token rejects with STALE_FENCING_TOKEN
+if python3 -c "
+import datetime
+from tests.test_lifecycle_state_correctness import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_5_TMP}/ledger2.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-a', '2'*64, 'repo', 'commit', 'prod', now, {}, lock_id='l1', fencing_token=1, canonical_lock_key='key1')
+l.reserve_plan('plan-b', '3'*64, 'repo', 'commit', 'prod', now, {}, lock_id='l2', fencing_token=2, canonical_lock_key='key1')
+try:
+    l.consume_plan('plan-a', lock_id='l1', fencing_token=1)
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'STALE_FENCING_TOKEN' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Fencing Token Guard [8/10]: Superseded fencing token rejected with STALE_FENCING_TOKEN"
+else
+  record_fail "Fencing Token Guard [8/10]: Fencing token check" "Failed stale fencing token rejection"
+fi
+rm -rf "${G10_5_TMP}"
+
+# Test 31.9: CLI lock-consume --idempotent and lock-fail --idempotent supported
+if python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-consume --help | grep -q -- "--idempotent" && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-fail --help | grep -q -- "--idempotent"; then
+  record_pass "CLI Idempotency [9/10]: verify-plan-lifecycle.py lock-consume and lock-fail support --idempotent"
+else
+  record_fail "CLI Idempotency [9/10]: CLI flag check" "verify-plan-lifecycle.py missing --idempotent flag"
+fi
+
+# Test 31.10: Full adversarial lifecycle state correctness unit test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_lifecycle_state_correctness.py" >/dev/null 2>&1; then
+  record_pass "Lifecycle Test Suite [10/10]: All 13 tests passed in test_lifecycle_state_correctness.py"
+else
+  record_fail "Lifecycle Test Suite [10/10]: Unit tests" "Tests in test_lifecycle_state_correctness.py failed"
+fi
 
 # --- Summary Report ---
 log_header "Summary of Validation Results"

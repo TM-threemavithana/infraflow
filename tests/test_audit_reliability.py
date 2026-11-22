@@ -75,7 +75,7 @@ class TestIntegrationReliabilityAudit(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_01_workflow_integration_gap_analysis(self):
-        """Audit Finding 1: reusable-tf-apply.yml does not activate or pass --enable-lock."""
+        """Audit Finding 1 Remediation: reusable-tf-apply.yml activates and passes --enable-lock (Remediated in G10.5.1)."""
         apply_yml_path = self.repo_root / ".github" / "workflows" / "reusable-tf-apply.yml"
         self.assertTrue(apply_yml_path.exists(), "reusable-tf-apply.yml must exist")
 
@@ -86,22 +86,23 @@ class TestIntegrationReliabilityAudit(unittest.TestCase):
         on_block = data.get("on") or data.get(True) or {}
         inputs = on_block.get("workflow_call", {}).get("inputs", {})
 
-        # 1. Inputs audit: locking inputs are missing from reusable-tf-apply.yml
+        # 1. Inputs audit: locking inputs are present in reusable-tf-apply.yml (remediated in G10.5.1)
         has_enable_lock = "enable-lock" in inputs
         has_lock_dir = "lock-dir" in inputs
         has_lock_ttl = "lock-ttl-seconds" in inputs
 
-        # 2. Command execution audit: VERIFY_ARGS does not pass --enable-lock
+        # 2. Command execution audit: VERIFY_ARGS passes --enable-lock
         passes_enable_lock = "--enable-lock" in content
         calls_lock_consume = "lock-consume" in content or "consume_plan" in content
         calls_lock_fail = "lock-fail" in content or "fail_plan" in content
 
-        # Document exact audit evidence
-        self.assertFalse(has_enable_lock, "reusable-tf-apply.yml lacks 'enable-lock' input")
-        self.assertFalse(has_lock_dir, "reusable-tf-apply.yml lacks 'lock-dir' input")
-        self.assertFalse(passes_enable_lock, "reusable-tf-apply.yml never passes '--enable-lock' to verify-plan-lifecycle.py")
-        self.assertFalse(calls_lock_consume, "reusable-tf-apply.yml never calls lock-consume or consume_plan")
-        self.assertFalse(calls_lock_fail, "reusable-tf-apply.yml never calls lock-fail or fail_plan on errors")
+        # Document exact audit remediation evidence
+        self.assertTrue(has_enable_lock, "reusable-tf-apply.yml provides 'enable-lock' input")
+        self.assertTrue(has_lock_dir, "reusable-tf-apply.yml provides 'lock-dir' input")
+        self.assertTrue(has_lock_ttl, "reusable-tf-apply.yml provides 'lock-ttl-seconds' input")
+        self.assertTrue(passes_enable_lock, "reusable-tf-apply.yml passes '--enable-lock' to verify-plan-lifecycle.py")
+        self.assertTrue(calls_lock_consume, "reusable-tf-apply.yml calls lock-consume or consume_plan")
+        self.assertTrue(calls_lock_fail, "reusable-tf-apply.yml calls lock-fail or fail_plan on traps")
 
     def test_02_consumer_workflow_gap_analysis(self):
         """Audit Finding 2: Consumer workflows rely on GitHub concurrency, not distributed locking."""
