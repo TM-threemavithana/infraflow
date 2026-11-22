@@ -45,6 +45,15 @@ VALID_EVENT_TYPES = {
     "campaign_rollback_executed",
     "campaign_completed",
     "campaign_aborted",
+    # Distributed Locking & Concurrency Events (Milestone G10.4)
+    "lock_acquired",
+    "lock_renewed",
+    "lock_released",
+    "lock_contention",
+    "lock_stale_reclaimed",
+    "lock_lost",
+    "lock_fencing_violation",
+    "lock_force_unlocked",
 }
 
 # Common sensitive data patterns to scrub

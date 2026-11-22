@@ -25,6 +25,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G10.3** | **Consumer Secret Defense & Semantic Destruction** | Mandatory secret scanner, zero raw leakage, multi-cloud critical resource protection, replacement safety, conftest gates. | **PASS (Completed)** |
 | **G10.3.1** | **Security Integration Assurance & Decommission Hardening** | Multi-workflow secret scanning, Conftest all-namespaces evaluation, decommission bypass closure, 16-test suite, 455/455 checks. | **PASS (Completed)** |
 | **G10.4.1** | **Distributed Locking Architecture & Refinement (G10.4.1-R)** | Backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, decoupled admin recovery, STRIDE model. | **PASS (Completed)** |
+| **G10.4.2** | **Core Locking Engine & LocalFS Driver** | DistributedLockDriver, LocalFSDriver, MockDistributedDriver, LockManager, durable HWM fencing tokens, secret defense, 18 unit tests. | **PASS (Completed)** |
 
 ---
 
@@ -547,7 +548,24 @@ Milestone G10.4.1 / G10.4.1-R establishes the refined, production-grade distribu
 
 ---
 
-## 35. Quality Gate Definitions
+## 35. Milestone G10.4.2 — Acceptance Criteria (Core Locking Engine & LocalFS Driver)
+
+Milestone G10.4.2 implements the reference core distributed locking engine and single-host `LocalFSDriver` (`infraflow/locking.py`), realizing the refined architecture of G10.4.1-R. It provides pure worker driver abstraction (zero force-break), durable high-water mark sequence records (`.hwm`) surviving releases and crashes, stale owner and expired ownership rejection, metadata secret scanning, `MockDistributedDriver` with fault injection, and the high-level `LockManager` with background heartbeat auto-renewal and fast-fail process abort ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-37** | Pure Worker Driver Interface & Models | Implement `DistributedLockDriver` without administrative force-break; implement `LockDescriptor`, `LeaseState`, `LockRecord`, `LockResult`, and `LockHandle`. | Code & schema audit | **PASS (Completed)** |
+| **AC-G10-38** | LocalFS Driver Concurrency Engine | Implement `LocalFSDriver` with atomic temporary writes and `os.replace`, process/thread-safe mutexes (`fcntl.flock`), and explicit single-host confinement notice. | Concurrency unit tests | **PASS (Completed)** |
+| **AC-G10-39** | Durable Monotonic Fencing Tokens | Enforce persistent `.hwm` sequence files that survive clean lock releases, node reboots, and expirations, ensuring $T_{k+1} > T_k$ across all lease generations. | Monotonicity & persistence tests | **PASS (Completed)** |
+| **AC-G10-40** | Stale Owner & Expired Ownership Protection | Reject stale owner release/renewal attempts against newer active locks; reject release or renewal after lease expiration has elapsed. | Adversarial unit tests | **PASS (Completed)** |
+| **AC-G10-41** | Metadata Secret-Scanning Defense | Recursively scan metadata structures before storage write; raise `SecurityViolationError` fail-closed upon detecting AWS keys, PATs, JWTs, or private keys. | Secret detection unit tests | **PASS (Completed)** |
+| **AC-G10-42** | MockDistributedDriver Fault Injection | Implement in-memory simulation driver supporting network partition simulation (`UncertainOutcomeError`), clock skew, and storage corruption injection. | Fault injection unit tests | **PASS (Completed)** |
+| **AC-G10-43** | LockManager & Fast-Fail Heartbeat | Implement `LockManager` lifecycle coordination, context manager, $\frac{1}{3}\text{TTL}$ heartbeat auto-renewal, and $\frac{2}{3}\text{TTL}$ fast-fail child process abort. | Heartbeat & abort unit tests | **PASS (Completed)** |
+| **AC-G10-44** | Comprehensive Unit & Regression Test Suite | Implement `tests/test_distributed_locking.py` (18/18 tests passing); verify 0 regressions across full platform suite (650/650 tests passing). | Test suite execution (650 tests) | **PASS (Completed)** |
+
+---
+
+## 36. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.

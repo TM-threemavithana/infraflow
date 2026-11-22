@@ -502,7 +502,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **632 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance (G10.3.1) | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **650 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance, distributed state locking & concurrency (G10.4.2) | **PASS (100%)** |
 | **OPA / Rego Conftest Suite** | **213 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
 | **Platform Quality Gates (`validate-local.sh`)** | **455 Checks** | End-to-end integration across all 28 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
@@ -542,7 +542,8 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── cli.py                  # Unified CLI & diagnostic engine canonical implementation
 │   ├── scaffold.py             # Self-service consumer project scaffolding engine (G10.2)
 │   ├── registrar.py            # Atomic fleet manifest registration engine (G10.2)
-│   └── scanner.py              # Mandatory consumer secret scanning engine (G10.3)
+│   ├── scanner.py              # Mandatory consumer secret scanning engine (G10.3)
+│   └── locking.py              # Distributed state locking & concurrency engine (G10.4.2)
 ├── policies/
 │   ├── common/                 # Common OPA policies (plan, tag, critical resources)
 │   │   ├── critical_resources.rego # Semantic critical resource destruction policy (G10.3)
@@ -568,6 +569,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 ├── tests/                      # Dedicated Python unit & adversarial test suites
 │   ├── test_cli.py
 │   ├── test_critical_resources.py # Semantic destruction test suite (G10.3)
+│   ├── test_distributed_locking.py # Distributed locking adversarial test suite (G10.4.2)
 │   ├── test_drift_detection.py
 │   ├── test_g10_security_integration.py # Security integration assurance test suite (G10.3.1)
 │   ├── test_operational_maturity.py
@@ -593,6 +595,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 | [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
 | [`docs/architecture/G10-CLI-ARCHITECTURE.md`](docs/architecture/G10-CLI-ARCHITECTURE.md) | Architecture | Unified platform CLI, diagnostic engine, packaging, and onboarding architecture. |
 | [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md) | Architecture | Distributed state locking, lease state machine, monotonic fencing, and multi-cloud driver contracts. |
+| [`docs/evidence/G10/G10-4-2-CORE-LOCKING-ENGINE.md`](docs/evidence/G10/G10-4-2-CORE-LOCKING-ENGINE.md) | Evidence | Core locking engine & LocalFS driver verification report (G10.4.2). |
 | [`docs/usage/CLI-GUIDE.md`](docs/usage/CLI-GUIDE.md) | Operations | Developer guide covering all 6 CLI commands (`init`, `register`, `validate`, `doctor`, `drift`, `upgrade`). |
 | [`docs/usage/CONSUMER-ONBOARDING.md`](docs/usage/CONSUMER-ONBOARDING.md) | Onboarding | Comprehensive step-by-step consumer onboarding tutorial and security guardrails. |
 | [`docs/security/G10-CONSUMER-SECURITY.md`](docs/security/G10-CONSUMER-SECURITY.md) | Security | Consumer secret defense, regex rules, semantic destruction protection, and critical resource catalog. |
@@ -641,7 +644,8 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G10.3**: Consumer secret defense (`SecretScanner`) and semantic destruction protection (`critical_resources.rego`).
 - [x] **Milestone G10.3.1**: Security integration assurance, multi-cloud conftest evaluation, and decommission authorization hardening.
 - [x] **Milestone G10.4.1 / G10.4.1-R**: Distributed locking architecture refinement, backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, and decoupled admin recovery.
-- [ ] **Next Horizon (Milestone G10.4.2 & Beyond)**: State lock driver implementation (`LocalFS` & `MockDistributed`), high-concurrency race suites, and pluggable alerting sinks.
+- [x] **Milestone G10.4.2**: Core locking engine & LocalFS driver (`LocalFSDriver` & `MockDistributedDriver`), durable HWM fencing tokens, secret defense, and fast-fail heartbeat.
+- [ ] **Next Horizon (Milestone G10.4.3 & Beyond)**: Multi-cloud state lock drivers (DynamoDB, Azure Blob, GCS) and pluggable alerting sinks.
 
 ---
 
