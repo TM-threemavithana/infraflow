@@ -29,7 +29,7 @@ The audit verified all nine required objectives:
 
 During initial verification, two audit findings were addressed and locally committed (`8a09d84e565ad02c11d0a5198444a72d1a3b11e2`):
 - **ShellCheck SC2016 in `scripts/validate-local.sh`:** Line 6101 tested literal HCL variable interpolation `db_pass = "${var.db_password}"`. A `# shellcheck disable=SC2016` annotation was added, achieving zero ShellCheck warnings.
-- **Gitleaks Synthetic Test Fixtures:** G10.3 / G10.3.1 added synthetic adversarial test keys (e.g. `AKIAIOSFODNN7MINEKEY`) to test the secret detection engine. The corresponding test file fingerprints were registered in `.gitleaksignore`, resulting in zero Gitleaks findings.
+- **Gitleaks Synthetic Test Fixtures:** G10.3 / G10.3.1 added synthetic adversarial test keys (e.g. `AKIA********************`) to test the secret detection engine. The corresponding test file fingerprints were registered in `.gitleaksignore`, resulting in zero Gitleaks findings.
 
 ---
 

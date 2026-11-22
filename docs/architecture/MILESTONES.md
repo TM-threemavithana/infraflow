@@ -24,6 +24,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G10.2** | **Self-Service Onboarding & Scaffolding** | Self-service `infraflow init`, multi-cloud templates, schema-validated registration, dry-run safety. | **PASS (Completed)** |
 | **G10.3** | **Consumer Secret Defense & Semantic Destruction** | Mandatory secret scanner, zero raw leakage, multi-cloud critical resource protection, replacement safety, conftest gates. | **PASS (Completed)** |
 | **G10.3.1** | **Security Integration Assurance & Decommission Hardening** | Multi-workflow secret scanning, Conftest all-namespaces evaluation, decommission bypass closure, 16-test suite, 455/455 checks. | **PASS (Completed)** |
+| **G10.4.1** | **Distributed Locking Architecture** | Production distributed locking, lease state machine, monotonic fencing tokens, multi-cloud driver contracts, STRIDE threat model. | **PASS (Completed)** |
 
 ---
 
@@ -529,7 +530,24 @@ Milestone G10.3.1 performs independent security integration verification and har
 
 ---
 
-## 34. Quality Gate Definitions
+## 34. Milestone G10.4.1 — Acceptance Criteria (Distributed Locking Architecture)
+
+Milestone G10.4.1 establishes the distributed locking, lease management, and fencing protocol architecture for the InfraFlow enterprise platform ([`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md)). It defines the Lock Manager interface, canonical resource key derivation, metadata schema (`infraflow-lock-metadata-v1`), monotonic fencing tokens (Kleppmann split-brain defense), time-bounded leases with heartbeat renewal, crash recovery protocols, and multi-cloud driver contracts ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-29** | Distributed Locking Architecture Document | Formulate and document the distributed locking architecture, state machine, and failure recovery protocols in [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md). | Documentation audit & review | **PASS (Completed)** |
+| **AC-G10-30** | Separation of Concerns & Native Lock Preservation | Enforce strict separation between platform orchestration locking and Terraform native state locking; prohibit replacing or disabling native `.tflock` or backend locks. | Architectural boundary audit | **PASS (Completed)** |
+| **AC-G10-31** | Canonical Resource Key & Metadata Schema | Define 5-tuple canonical lock key derivation (`infraflow/locks/v1/...`) and immutable metadata schema (`infraflow-lock-metadata-v1`) with cryptographic resource fingerprint. | Schema specification audit | **PASS (Completed)** |
+| **AC-G10-32** | Monotonically Increasing Fencing Tokens | Define monotonic fencing counter protocol (`fencing_token = prev + 1`) to eliminate distributed split-brain hazards from GC pauses or network partitions. | Protocol specification audit | **PASS (Completed)** |
+| **AC-G10-33** | Time-Bounded Leases & Heartbeat Daemon | Define lease lifecycle (default 900s TTL, max 3600s), periodic renewal daemon (TTL / 3), and fail-closed termination on renewal failure. | Lifecycle state audit | **PASS (Completed)** |
+| **AC-G10-34** | Multi-Cloud Production Driver Contracts | Specify atomic CAS driver contracts for offline reference (`LocalFSDriver`, `MockDistributedDriver`), AWS (DynamoDB / S3), Azure (Blob Leases), and GCP (Storage Object Preconditions). | Interface contract audit | **PASS (Completed)** |
+| **AC-G10-35** | STRIDE Threat Model & Zero Credential Invariant | Complete STRIDE threat analysis; prohibit storing secrets/credentials in lock metadata; enforce cryptographic admin authorization for manual break. | Threat model audit | **PASS (Completed)** |
+| **AC-G10-36** | Telemetry Event Catalog & Observability | Define 8 standardized lock telemetry event types conforming to RFC 5424 / OpenTelemetry Schema v1.0 and integration with `scripts/emit-telemetry.py`. | Telemetry schema audit | **PASS (Completed)** |
+
+---
+
+## 35. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.

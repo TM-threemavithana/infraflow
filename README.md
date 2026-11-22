@@ -592,6 +592,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 | [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G10.3. |
 | [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
 | [`docs/architecture/G10-CLI-ARCHITECTURE.md`](docs/architecture/G10-CLI-ARCHITECTURE.md) | Architecture | Unified platform CLI, diagnostic engine, packaging, and onboarding architecture. |
+| [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md) | Architecture | Distributed state locking, lease state machine, monotonic fencing, and multi-cloud driver contracts. |
 | [`docs/usage/CLI-GUIDE.md`](docs/usage/CLI-GUIDE.md) | Operations | Developer guide covering all 6 CLI commands (`init`, `register`, `validate`, `doctor`, `drift`, `upgrade`). |
 | [`docs/usage/CONSUMER-ONBOARDING.md`](docs/usage/CONSUMER-ONBOARDING.md) | Onboarding | Comprehensive step-by-step consumer onboarding tutorial and security guardrails. |
 | [`docs/security/G10-CONSUMER-SECURITY.md`](docs/security/G10-CONSUMER-SECURITY.md) | Security | Consumer secret defense, regex rules, semantic destruction protection, and critical resource catalog. |
@@ -639,7 +640,8 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G10.2**: Self-service consumer onboarding, scaffolding (`infraflow init`), and fleet registration.
 - [x] **Milestone G10.3**: Consumer secret defense (`SecretScanner`) and semantic destruction protection (`critical_resources.rego`).
 - [x] **Milestone G10.3.1**: Security integration assurance, multi-cloud conftest evaluation, and decommission authorization hardening.
-- [ ] **Next Horizon (Milestone G10.4 & Beyond)**: Native OpenTelemetry collector streaming, automated drift remediation proposals, and multi-cloud cost forecasting gates.
+- [x] **Milestone G10.4.1**: Distributed locking architecture, lease state machine, monotonic fencing tokens, and multi-cloud driver contracts.
+- [ ] **Next Horizon (Milestone G10.4.2 & Beyond)**: State lock driver implementation (`LocalFS` & `MockDistributed`), high-concurrency race suites, and pluggable alerting sinks.
 
 ---
 
