@@ -3,9 +3,9 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#19-local-development-and-zero-cost-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
-[![Quality Gates](https://img.shields.io/badge/Quality_Gates-442%2F442_PASS-brightgreen.svg)](#21-testing-and-verification)
-[![Python Tests](https://img.shields.io/badge/Python_Tests-616_Passing-brightgreen.svg)](#21-testing-and-verification)
-[![OPA Rego](https://img.shields.io/badge/OPA_Policies-211_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![Quality Gates](https://img.shields.io/badge/Quality_Gates-455%2F455_PASS-brightgreen.svg)](#21-testing-and-verification)
+[![Python Tests](https://img.shields.io/badge/Python_Tests-632_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![OPA Rego](https://img.shields.io/badge/OPA_Policies-213_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
 ---
@@ -502,9 +502,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **616 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing | **PASS (100%)** |
-| **OPA / Rego Conftest Suite** | **211 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **442 Checks** | End-to-end integration across all 27 platform quality sections | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **632 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance (G10.3.1) | **PASS (100%)** |
+| **OPA / Rego Conftest Suite** | **213 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **455 Checks** | End-to-end integration across all 28 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
 | **Secret Scanning (`SecretScanner` & `gitleaks`)** | **0 Leaks** | Mandatory consumer secret scanner & complete repository commit history clean | **PASS (100%)** |
 
@@ -569,6 +569,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── test_cli.py
 │   ├── test_critical_resources.py # Semantic destruction test suite (G10.3)
 │   ├── test_drift_detection.py
+│   ├── test_g10_security_integration.py # Security integration assurance test suite (G10.3.1)
 │   ├── test_operational_maturity.py
 │   ├── test_scaffolding.py
 │   ├── test_secret_scanner.py   # Consumer secret scanner test suite (G10.3)
@@ -606,9 +607,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 ## 24. Current Project Status
 
 - **Current Published Release**: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0)
-- **Active Development Branch**: `feature/g09-operational-maturity`
-- **Completed Phases**: G01 through G09.4 (Foundation through Enterprise Operational Maturity)
-- **Quality Gates**: 407/407 automated validation checks passing locally and in CI.
+- **Active Development Branch**: `feature/g10-unified-cli`
+- **Completed Phases**: G01 through G10.3.1 (Foundation through Security Integration Assurance)
+- **Quality Gates**: 455/455 automated validation checks passing locally and in CI.
 
 ---
 
@@ -633,11 +634,12 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G01–G06**: Core reusable CI/CD, DevSecOps gates, plan protection, and envelope encryption.
 - [x] **Milestone G07**: Multi-cloud adapter integration (AWS, Azure, GCP).
 - [x] **Milestone G08**: Multi-repository adoption, consumer validation toolkit, and fleet upgrade planning.
-- [x] **Milestone G09.1**: Fleet observability, structured telemetry, and central compliance dashboard.
-- [x] **Milestone G09.2**: Continuous state and speculative drift detection simulation.
-- [x] **Milestone G09.3**: Automated upgrade campaigns and lifecycle tracking with Canary Gating.
-- [x] **Milestone G09.4**: Enterprise governance automation, operational maturity verification, and landing page redesign.
-- [ ] **Next Horizon (v0.7.0 Release & Beyond)**: Native OpenTelemetry collector streaming, policy automated remediation proposals (dry-run git patches), and multi-cloud cost forecasting gates.
+- [x] **Milestone G09.1–G09.4**: Fleet observability, drift detection, upgrade campaigns, and enterprise governance automation.
+- [x] **Milestone G10.1**: Unified platform developer experience, CLI, and diagnostic engine (`infraflow`).
+- [x] **Milestone G10.2**: Self-service consumer onboarding, scaffolding (`infraflow init`), and fleet registration.
+- [x] **Milestone G10.3**: Consumer secret defense (`SecretScanner`) and semantic destruction protection (`critical_resources.rego`).
+- [x] **Milestone G10.3.1**: Security integration assurance, multi-cloud conftest evaluation, and decommission authorization hardening.
+- [ ] **Next Horizon (Milestone G10.4 & Beyond)**: Native OpenTelemetry collector streaming, automated drift remediation proposals, and multi-cloud cost forecasting gates.
 
 ---
 

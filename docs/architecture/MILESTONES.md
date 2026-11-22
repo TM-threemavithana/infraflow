@@ -23,6 +23,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G10.1** | **Unified Platform CLI & Diagnostics** | Unified `infraflow` CLI, environment doctor (12 dimensions), drift runner, upgrade manager, policy error enrichment. | **PASS (Completed)** |
 | **G10.2** | **Self-Service Onboarding & Scaffolding** | Self-service `infraflow init`, multi-cloud templates, schema-validated registration, dry-run safety. | **PASS (Completed)** |
 | **G10.3** | **Consumer Secret Defense & Semantic Destruction** | Mandatory secret scanner, zero raw leakage, multi-cloud critical resource protection, replacement safety, conftest gates. | **PASS (Completed)** |
+| **G10.3.1** | **Security Integration Assurance & Decommission Hardening** | Multi-workflow secret scanning, Conftest all-namespaces evaluation, decommission bypass closure, 16-test suite, 455/455 checks. | **PASS (Completed)** |
 
 ---
 
@@ -513,14 +514,29 @@ Milestone G10.3 implements deep security defense mechanisms protecting enterpris
 
 ---
 
-## 33. Quality Gate Definitions
+## 33. Milestone G10.3.1 — Acceptance Criteria (Security Integration Assurance & Decommission Hardening)
+
+Milestone G10.3.1 performs independent security integration verification and hardening across the entire InfraFlow delivery surface. It ensures that mandatory consumer secret scanning is consistently integrated and executed across all core delivery workflows (`reusable-tf-plan.yml`, `reusable-tf-aws.yml`, `reusable-tf-azure.yml`, `reusable-tf-gcp.yml`, `reusable-tf-security.yml`, `reusable-tf-governance.yml`), eliminates substring heuristic authorization bypasses in `policies/common/critical_resources.rego`, enforces Conftest `--all-namespaces` evaluation across Azure and GCP workflows, hardens workflow input guards against scanner disabling, and introduces an end-to-end 16-scenario security integration test suite ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-23** | Multi-Workflow Secret Scanning Integration | Embed mandatory secret scanning (`scripts/scan-secrets.py`) across all 6 core workflows (`plan`, `aws`, `azure`, `gcp`, `security`, `governance`) with output propagation (`secret-scan-status`). | Workflow inspection, actionlint, zizmor | **PASS (Completed)** |
+| **AC-G10-24** | Multi-Cloud All-Namespaces Conftest Evaluation | Ensure `conftest test` includes `--all-namespaces` across Azure and GCP workflows so `package common.critical_resources` is actively evaluated against Terraform plan JSON. | Workflow inspection & conftest tests | **PASS (Completed)** |
+| **AC-G10-25** | Decommission Substring Bypass Remediation | Remove substring heuristic (`contains(lower(rc.address), "decommission")`) in `critical_resources.rego`; enforce platform-controlled, cryptographically signed plan confirmation (`is_plan_authorized`). | Rego unit tests (66/66) & fixtures | **PASS (Completed)** |
+| **AC-G10-26** | Workflow Guard Input Enforcement | Add defensive input verification rejecting `enable-policy-evaluation: false`, `enable-trivy: false`, and `enable-conftest: false` across `reusable-tf-plan.yml` and `reusable-tf-security.yml`. | Bash guard assertions & unit tests | **PASS (Completed)** |
+| **AC-G10-27** | Dedicated Integration Test Suite (16 Tests) | Implement `tests/test_g10_security_integration.py` covering positive/negative critical deletions, decommission authorization, replacement ordering, malformed plans, zero-leakage, and workflow guards. | `unittest` (16/16 passed) | **PASS (Completed)** |
+| **AC-G10-28** | Local Validation Harness Expansion (Section 28) | Expand `scripts/validate-local.sh` with Section 28 (13 automated checks), raising platform quality gates to 455/455 passing checks. | `validate-local.sh` (455/455 passed) | **PASS (Completed)** |
+
+---
+
+## 34. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (442/442 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (455/455 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

@@ -252,3 +252,38 @@ The secret scanning and semantic destruction gates are embedded in `.github/work
    - If the resource deletion is genuinely intended, submit an authorized Decommission Request via the platform operations portal.
    - Generate an authorized cryptographic destruction token signed for the specific plan digest.
    - Provide the signed token in the governance workflow dispatch inputs.
+
+---
+
+## 7. Security Integration Assurance & Decommission Hardening (G10.3.1)
+
+### 7.1 Decommission Substring Bypass Audit & Resolution
+
+During independent security integration assurance (G10.3.1), an audit of `policies/common/critical_resources.rego` identified a heuristic flaw in the legacy decommission logic:
+- **Flaw:** The rule previously considered a resource to be in "decommissioning" state if its address or name contained the substring `"decommission"` or `"decomm"`.
+- **Attack Vector:** An engineer or adversary could rename an unauthorized critical resource deletion to include `"decommission"` (e.g. `aws_s3_bucket.decommissioned_prod_data`), bypassing deletion protections without cryptographic authorization.
+- **Remediation:** The heuristic substring check was completely removed. Decommissioning now strictly and exclusively requires platform-controlled, cryptographically signed plan confirmation (`is_plan_authorized` verifying `infraflow-destruction-confirmation-v1`). Unauthorized decommissioning plans are fail-closed.
+
+### 7.2 Multi-Workflow Secret Scanning Architecture
+
+Secret defense has been expanded from a single governance workflow to run unconditionally across all six reusable delivery workflows:
+1. `reusable-tf-plan.yml` (Pre-plan scan before speculative execution)
+2. `reusable-tf-aws.yml` (Pre-execution adapter gate)
+3. `reusable-tf-azure.yml` (Pre-execution adapter gate)
+4. `reusable-tf-gcp.yml` (Pre-execution adapter gate)
+5. `reusable-tf-security.yml` (Standalone security verification)
+6. `reusable-tf-governance.yml` (Central policy orchestration)
+
+All workflows emit a standardized step output: `secret-scan-status` (`success` or `failure`).
+
+### 7.3 Multi-Cloud Conftest Namespace Evaluation
+
+In Azure (`reusable-tf-azure.yml`) and GCP (`reusable-tf-gcp.yml`), Conftest was previously invoked without `--all-namespaces`, which defaulted evaluation to `package main` and silently bypassed `package common.critical_resources`.
+- **Resolution:** Added `--all-namespaces` to both workflows, guaranteeing that all 213 OPA policies across common, cloud-specific, and governance namespaces are evaluated against Terraform plan JSON before any workflow authorization.
+
+### 7.4 Defensive Input Guard Hardening
+
+To ensure that callers cannot bypass security scanning via caller workflow inputs:
+- `reusable-tf-plan.yml` enforces fail-closed rejection of `enable-policy-evaluation: false` and `enable-trivy: false`.
+- `reusable-tf-security.yml` enforces fail-closed rejection of `enable-trivy: false` and `enable-conftest: false`.
+- Combined with `reusable-tf-aws.yml`, `azure.yml`, and `gcp.yml`, zero execution paths permit disabling mandatory security scanners.

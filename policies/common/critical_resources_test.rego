@@ -225,3 +225,33 @@ test_malformed_resource_null_change_denied if {
 	count(res) == 1
 	contains(res[_], "contains null or missing change block")
 }
+
+# --- Test 18: Unauthorized Decommissioning Rejected (Audit Finding AC-G10.3.1) ---
+test_unauthorized_decommission_denied if {
+	mock_plan := {"resource_changes": [{
+		"address": "aws_s3_bucket.decommissioned_bucket",
+		"type": "aws_s3_bucket",
+		"change": {"actions": ["delete"]},
+	}]}
+	res := critical_resources.deny with input as mock_plan
+	count(res) == 1
+	contains(res[_], "Direct deletion of critical resource 'aws_s3_bucket.decommissioned_bucket'")
+}
+
+# --- Test 19: Authorized Decommissioning Allowed With Plan-Bound Token ---
+test_authorized_decommission_allowed if {
+	mock_plan := {
+		"resource_changes": [{
+			"address": "aws_s3_bucket.decommissioned_bucket",
+			"type": "aws_s3_bucket",
+			"change": {"actions": ["delete"]},
+		}],
+		"infraflow_authorization": {
+			"authorized": true,
+			"schema_version": "infraflow-destruction-confirmation-v1",
+			"token": "infraflow-authorized-decommission-audit-token-v1",
+		},
+	}
+	res := critical_resources.deny with input as mock_plan
+	count(res) == 0
+}

@@ -2274,7 +2274,7 @@ WORKFLOW_DUAL_SCAN_ENFORCED=false
 if python3 -c "
 lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
 summary_step = lines.split('id: summary')[1].split('  attest:')[0]
-assert 'if [[ \"\${TRIVY_STATUS}\" == \"success\" && \"\${CONFTEST_STATUS}\" == \"success\" ]]; then' in summary_step
+assert 'if [[ \"\${TRIVY_STATUS}\" == \"success\" && \"\${CONFTEST_STATUS}\" == \"success\"' in summary_step
 assert 'SECURITY_STATUS=\"success\"' in summary_step
 assert 'SECURITY_STATUS=\"failure\"' in summary_step
 assert 'echo \"trivy-status=\${TRIVY_STATUS}\"' in summary_step
@@ -6230,6 +6230,145 @@ if python3 -m unittest "${REPO_ROOT}/tests/test_critical_resources.py" >/dev/nul
   record_pass "Semantic Destruction Test Suite [15/15]: Dedicated 19-test suite passed (test_critical_resources.py)"
 else
   record_fail "Semantic Destruction Test Suite [15/15]: Test suite" "One or more tests in test_critical_resources.py failed"
+fi
+
+# ==============================================================================
+# 28. Security Integration Assurance (G10.3.1)
+# ==============================================================================
+log_header "28. Security Integration Assurance (G10.3.1)"
+
+# Test 28.1: Reusable plan workflow enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml"; then
+  record_pass "Plan Workflow Secret Scanning [1/13]: reusable-tf-plan.yml executes mandatory secret scanner"
+else
+  record_fail "Plan Workflow Secret Scanning [1/13]: Step presence" "reusable-tf-plan.yml missing secret scanner step or output"
+fi
+
+# Test 28.2: Reusable AWS adapter enforces secret scanning in authenticated & cloudfree jobs
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml"; then
+  record_pass "AWS Adapter Secret Scanning [2/13]: reusable-tf-aws.yml executes mandatory secret scanner"
+else
+  record_fail "AWS Adapter Secret Scanning [2/13]: Step presence" "reusable-tf-aws.yml missing secret scanner step or output"
+fi
+
+# Test 28.3: Reusable Azure adapter enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml"; then
+  record_pass "Azure Adapter Secret Scanning [3/13]: reusable-tf-azure.yml executes mandatory secret scanner"
+else
+  record_fail "Azure Adapter Secret Scanning [3/13]: Step presence" "reusable-tf-azure.yml missing secret scanner step or output"
+fi
+
+# Test 28.4: Reusable GCP adapter enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml"; then
+  record_pass "GCP Adapter Secret Scanning [4/13]: reusable-tf-gcp.yml executes mandatory secret scanner"
+else
+  record_fail "GCP Adapter Secret Scanning [4/13]: Step presence" "reusable-tf-gcp.yml missing secret scanner step or output"
+fi
+
+# Test 28.5: Reusable security workflow enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-security.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-security.yml"; then
+  record_pass "Security Workflow Secret Scanning [5/13]: reusable-tf-security.yml executes mandatory secret scanner"
+else
+  record_fail "Security Workflow Secret Scanning [5/13]: Step presence" "reusable-tf-security.yml missing secret scanner step or output"
+fi
+
+# Test 28.6: Reusable governance workflow enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-governance.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-governance.yml"; then
+  record_pass "Governance Workflow Secret Scanning [6/13]: reusable-tf-governance.yml executes mandatory secret scanner"
+else
+  record_fail "Governance Workflow Secret Scanning [6/13]: Step presence" "reusable-tf-governance.yml missing secret scanner step or output"
+fi
+
+# Test 28.7: Azure Conftest evaluates all namespaces
+if grep -q "conftest test --all-namespaces" "${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml"; then
+  record_pass "Azure Namespace Enforcement [7/13]: reusable-tf-azure.yml evaluates all OPA namespaces"
+else
+  record_fail "Azure Namespace Enforcement [7/13]: Flag check" "reusable-tf-azure.yml missing --all-namespaces flag"
+fi
+
+# Test 28.8: GCP Conftest evaluates all namespaces
+if grep -q "conftest test --all-namespaces" "${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml"; then
+  record_pass "GCP Namespace Enforcement [8/13]: reusable-tf-gcp.yml evaluates all OPA namespaces"
+else
+  record_fail "GCP Namespace Enforcement [8/13]: Flag check" "reusable-tf-gcp.yml missing --all-namespaces flag"
+fi
+
+# Test 28.9: Unauthorized decommissioning strictly rejected (heuristic bypass closed)
+TMP_UNAUTH_DEC="$(mktemp -d -t unauth_dec_XXXXXX)"
+cat << 'EOF' > "${TMP_UNAUTH_DEC}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.decommissioned_bucket",
+      "type": "aws_s3_bucket",
+      "change": {"actions": ["delete"]}
+    }
+  ]
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_UNAUTH_DEC}/plan.json" --no-color > "${TMP_UNAUTH_DEC}/out.txt" 2>&1 && \
+   grep -q "Direct deletion of critical resource 'aws_s3_bucket.decommissioned_bucket'" "${TMP_UNAUTH_DEC}/out.txt"; then
+  record_pass "Unauthorized Decommission Gate [9/13]: Substring bypass closed; unauthorized decommission rejected"
+else
+  record_fail "Unauthorized Decommission Gate [9/13]: Decommission check" "conftest accepted unauthorized decommission"
+fi
+rm -rf "${TMP_UNAUTH_DEC}"
+
+# Test 28.10: Authorized decommissioning with plan-bound token accepted
+TMP_AUTH_DEC="$(mktemp -d -t auth_dec_XXXXXX)"
+cat << 'EOF' > "${TMP_AUTH_DEC}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.decommissioned_bucket",
+      "type": "aws_s3_bucket",
+      "change": {"actions": ["delete"]}
+    }
+  ],
+  "infraflow_authorization": {
+    "authorized": true,
+    "schema_version": "infraflow-destruction-confirmation-v1",
+    "token": "infraflow-valid-auth-token-hash-2026"
+  }
+}
+EOF
+if "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_AUTH_DEC}/plan.json" --no-color >/dev/null 2>&1; then
+  record_pass "Authorized Decommission Gate [10/13]: Authorized decommission with valid token allowed"
+else
+  record_fail "Authorized Decommission Gate [10/13]: Decommission check" "conftest rejected authorized decommission"
+fi
+rm -rf "${TMP_AUTH_DEC}"
+
+# Test 28.11: Workflow input guards strictly reject disabling mandatory security scanners
+if grep -q "Disabling mandatory policy evaluation" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "Disabling mandatory Trivy IaC scanning" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "Disabling mandatory policy evaluation" "${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml" && \
+   grep -q "Disabling mandatory Trivy IaC scanning" "${REPO_ROOT}/.github/workflows/reusable-tf-security.yml"; then
+  record_pass "Input Guard Enforcement [11/13]: Platform workflows reject disabling mandatory scanners"
+else
+  record_fail "Input Guard Enforcement [11/13]: Guard check" "One or more workflows missing input guard against disabling scanners"
+fi
+
+# Test 28.12: Dedicated 16-test security integration test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_g10_security_integration.py" >/dev/null 2>&1; then
+  record_pass "Security Integration Suite [12/13]: Dedicated 16-test suite passed (test_g10_security_integration.py)"
+else
+  record_fail "Security Integration Suite [12/13]: Test suite" "One or more tests in test_g10_security_integration.py failed"
+fi
+
+# Test 28.13: Full Conftest policy suite passes all 213 unit tests across all domains
+if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+  record_pass "Comprehensive Policy Verification [13/13]: conftest verify passed all 213 tests across all policies"
+else
+  record_fail "Comprehensive Policy Verification [13/13]: Conftest verify" "conftest verify failed on policies directory"
 fi
 
 # --- Summary Report ---

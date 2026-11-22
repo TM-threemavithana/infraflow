@@ -90,6 +90,9 @@ on:
       conftest-status:
         description: "Outcome of Conftest / OPA policy evaluation (success, failure, skipped)"
         value: ${{ jobs.plan.outputs.conftest-status }}
+      secret-scan-status:
+        description: "Outcome of consumer secret scanning (success, failure, skipped)"
+        value: ${{ jobs.plan.outputs.secret-scan-status }}
       verification-status:
         description: "Outcome of cryptographic attestation verification (success, failure, skipped)"
         value: ${{ jobs.verify-attestation.outputs.verification-status }}
@@ -129,6 +132,7 @@ jobs:
       security-status: ${{ steps.summary.outputs.security-status }}
       trivy-status: ${{ steps.summary.outputs.trivy-status }}
       conftest-status: ${{ steps.summary.outputs.conftest-status }}
+      secret-scan-status: ${{ steps.summary.outputs.secret-scan-status }}
       has-changes: ${{ steps.analyze.outputs.has-changes }}
       has-destructive-changes: ${{ steps.analyze.outputs.has-destructive-changes }}
       total-changes: ${{ steps.analyze.outputs.total-changes }}
@@ -145,6 +149,8 @@ jobs:
           INPUT_ENV: ${{ inputs.environment }}
           INPUT_TRUSTED_PUBKEY: ${{ inputs.trusted-public-key }}
           INPUT_TRUSTED_KEYIDS: ${{ inputs.trusted-signer-keyids }}
+          ENABLE_POLICY_EVAL: ${{ inputs.enable-policy-evaluation }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
@@ -279,6 +285,16 @@ jobs:
           fi
           echo "Platform identity verified: ${TRUSTED_PLATFORM_REPO}@${WORKFLOW_SHA} (via ref: ${WORKFLOW_REF_TARGET})"
 
+          # 13. Validate mandatory security scanner inputs
+          if [[ "${ENABLE_POLICY_EVAL}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory policy evaluation (enable-policy-evaluation: false) is prohibited. Security policies are strictly enforced on all plans."
+            exit 1
+          fi
+          if [[ "${ENABLE_TRIVY}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Trivy IaC scanning (enable-trivy: false) is prohibited. Vulnerability scanning is strictly enforced on all plans."
+            exit 1
+          fi
+
           echo "All inputs successfully sanitized and validated against platform security policy."
           echo "::endgroup::"
 
@@ -346,6 +362,30 @@ jobs:
           fi
 
           echo "Working directory safely verified within workspace."
+          echo "::endgroup::"
+
+      - name: "Execute Mandatory Consumer Secret Scanner"
+        id: secret_scanner
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Executing Mandatory Consumer Secret Scanner"
+          PLATFORM_SCRIPTS_DIR="${RUNNER_TEMP}/infraflow-platform/scripts"
+          TARGET_DIR="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+
+          SCAN_REPORT="${RUNNER_TEMP}/secret-scan-summary.json"
+          if python3 "${PLATFORM_SCRIPTS_DIR}/scan-secrets.py" \
+              --target-dir "${TARGET_DIR}" \
+              --strict \
+              --json > "${SCAN_REPORT}"; then
+            echo "scan-status=passed" >> "${GITHUB_OUTPUT}"
+            echo "Consumer secret scanning passed cleanly."
+          else
+            echo "scan-status=failed" >> "${GITHUB_OUTPUT}"
+            echo "::error::Security Violation: Hardcoded credentials detected in consumer repository. Speculative planning blocked fail-closed."
+            exit 1
+          fi
           echo "::endgroup::"
 
       - name: "Setup Terraform Toolchain"
@@ -608,16 +648,18 @@ jobs:
           ANALYSIS_OUTCOME: ${{ steps.analyze.outcome }}
           TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
           CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
+          SECRET_OUTCOME: ${{ steps.secret_scanner.outcome }}
         run: |
           set -euo pipefail
           PLAN_STATUS="${PLAN_OUTCOME:-skipped}"
           ANALYSIS_STATUS="${ANALYSIS_OUTCOME:-skipped}"
           TRIVY_STATUS="${TRIVY_OUTCOME:-skipped}"
           CONFTEST_STATUS="${CONFTEST_OUTCOME:-skipped}"
+          SECRET_STATUS="${SECRET_OUTCOME:-skipped}"
 
-          # Dual scanner enforcement: BOTH Trivy and Conftest must succeed.
+          # Multi-scanner enforcement: Trivy, Conftest, AND Secret Scanner must succeed.
           # Any skipped scanner or failure results in security evaluation failure.
-          if [[ "${TRIVY_STATUS}" == "success" && "${CONFTEST_STATUS}" == "success" ]]; then
+          if [[ "${TRIVY_STATUS}" == "success" && "${CONFTEST_STATUS}" == "success" && "${SECRET_STATUS}" == "success" ]]; then
             SECURITY_STATUS="success"
           else
             SECURITY_STATUS="failure"
@@ -629,6 +671,7 @@ jobs:
             echo "security-status=${SECURITY_STATUS}"
             echo "trivy-status=${TRIVY_STATUS}"
             echo "conftest-status=${CONFTEST_STATUS}"
+            echo "secret-scan-status=${SECRET_STATUS}"
           } >> "$GITHUB_OUTPUT"
 
   attest:
@@ -823,6 +866,7 @@ jobs:
           SECURITY_STATUS: ${{ needs.plan.outputs.security-status }}
           TRIVY_STATUS: ${{ needs.plan.outputs.trivy-status }}
           CONFTEST_STATUS: ${{ needs.plan.outputs.conftest-status }}
+          SECRET_STATUS: ${{ needs.plan.outputs.secret-scan-status }}
           HAS_DESTRUCTIVE: ${{ needs.plan.outputs.has-destructive-changes }}
           TOTAL_CHANGES: ${{ needs.plan.outputs.total-changes }}
           FAIL_ON_DESTRUCTIVE: ${{ inputs.fail-on-destructive }}
@@ -844,8 +888,8 @@ jobs:
             REJECTION_REASONS+=("Plan change analysis failed or was skipped (analysis-status: ${ANALYSIS_STATUS:-unknown})")
           fi
 
-          if [[ "${SECURITY_STATUS}" != "success" || "${TRIVY_STATUS}" != "success" || "${CONFTEST_STATUS}" != "success" ]]; then
-            REJECTION_REASONS+=("Security policy checks (Trivy/OPA) failed or were skipped (security-status: ${SECURITY_STATUS:-unknown}, trivy: ${TRIVY_STATUS:-unknown}, conftest: ${CONFTEST_STATUS:-unknown})")
+          if [[ "${SECURITY_STATUS}" != "success" || "${TRIVY_STATUS}" != "success" || "${CONFTEST_STATUS}" != "success" || "${SECRET_STATUS}" != "success" ]]; then
+            REJECTION_REASONS+=("Security policy checks (Trivy/OPA/SecretScanner) failed or were skipped (security-status: ${SECURITY_STATUS:-unknown}, trivy: ${TRIVY_STATUS:-unknown}, conftest: ${CONFTEST_STATUS:-unknown}, secret-scanner: ${SECRET_STATUS:-unknown})")
           fi
 
           if [[ "${ATTEST_RESULT}" != "success" || "${ATTEST_STATUS}" != "success" ]]; then

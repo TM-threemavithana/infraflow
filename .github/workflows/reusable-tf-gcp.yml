@@ -106,6 +106,9 @@ on:
       security-status:
         description: "Outcome of security scanning and policy evaluation"
         value: ${{ jobs.summary.outputs.security-status }}
+      secret-scan-status:
+        description: "Outcome of consumer secret defense scanning (passed, failed, skipped)"
+        value: ${{ jobs.summary.outputs.secret-scan-status }}
       authorization-status:
         description: "Outcome of the verified adapter gate (authorized, not-applicable, rejected)"
         value: ${{ jobs.summary.outputs.authorization-status }}
@@ -324,6 +327,7 @@ jobs:
     outputs:
       plan-status: ${{ steps.summary.outputs.plan-status }}
       security-status: ${{ steps.summary.outputs.security-status }}
+      secret-scan-status: ${{ steps.summary.outputs.secret-scan-status }}
       has-changes: ${{ steps.summary.outputs.has-changes }}
       has-destructive-changes: ${{ steps.summary.outputs.has-destructive-changes }}
       total-changes: ${{ steps.summary.outputs.total-changes }}
@@ -414,6 +418,30 @@ jobs:
           fi
 
           echo "Working directory '${INPUT_DIR}' is verified and safely contained within workspace."
+          echo "::endgroup::"
+
+      - name: "Execute Mandatory Consumer Secret Scanner"
+        id: secret_scanner
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Executing Mandatory Consumer Secret Scanner"
+          PLATFORM_SCRIPTS_DIR="${PLATFORM_DIR}/scripts"
+          TARGET_DIR="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+
+          SCAN_REPORT="${RUNNER_TEMP}/secret-scan-summary.json"
+          if python3 "${PLATFORM_SCRIPTS_DIR}/scan-secrets.py" \
+              --target-dir "${TARGET_DIR}" \
+              --strict \
+              --json > "${SCAN_REPORT}"; then
+            echo "scan-status=passed" >> "${GITHUB_OUTPUT}"
+            echo "Consumer secret scanning passed cleanly."
+          else
+            echo "scan-status=failed" >> "${GITHUB_OUTPUT}"
+            echo "::error::Security Violation: Hardcoded credentials detected in consumer repository. Plan generation blocked fail-closed."
+            exit 1
+          fi
           echo "::endgroup::"
 
       - name: "Setup Offline Tooling (Terraform, Conftest, Trivy)"
@@ -591,7 +619,7 @@ jobs:
             [[ -d "${PLATFORM_DIR}/policies/gcp" ]] && POLICY_PATHS+=("-p" "${PLATFORM_DIR}/policies/gcp")
             [[ -d "${POLICY_DIR}" ]] && POLICY_PATHS+=("-p" "${POLICY_DIR}")
 
-            if conftest test tfplan.json "${POLICY_PATHS[@]}" --no-color; then
+            if conftest test --all-namespaces tfplan.json "${POLICY_PATHS[@]}" --no-color; then
               echo "OPA policies verified successfully."
             else
               echo "::error::Conftest policy evaluation failed."
@@ -616,6 +644,8 @@ jobs:
 
       - name: "Record Cloud-Free Outputs"
         id: summary
+        env:
+          SCAN_STATUS: ${{ steps.secret_scanner.outputs.scan-status }}
         run: |
           if [[ -z "${TOTAL_CHANGES:-}" || ! "${TOTAL_CHANGES}" =~ ^[0-9]+$ ]]; then
             echo "::error::Internal Error: TOTAL_CHANGES is invalid or unset: '${TOTAL_CHANGES:-}'"
@@ -630,9 +660,11 @@ jobs:
             exit 1
           fi
 
+          SECRET_STATUS="${SCAN_STATUS:-passed}"
           {
             echo "plan-status=success"
             echo "security-status=success"
+            echo "secret-scan-status=${SECRET_STATUS}"
             echo "has-changes=${HAS_CHANGES}"
             echo "has-destructive-changes=${HAS_DESTRUCTIVE}"
             echo "total-changes=${TOTAL_CHANGES}"
@@ -651,6 +683,7 @@ jobs:
       plan-status: ${{ steps.aggregate.outputs.plan-status }}
       gcp-auth-status: ${{ steps.aggregate.outputs.gcp-auth-status }}
       security-status: ${{ steps.aggregate.outputs.security-status }}
+      secret-scan-status: ${{ steps.aggregate.outputs.secret-scan-status }}
       authorization-status: ${{ steps.aggregate.outputs.authorization-status }}
       has-changes: ${{ steps.aggregate.outputs.has-changes }}
       has-destructive-changes: ${{ steps.aggregate.outputs.has-destructive-changes }}
@@ -664,6 +697,7 @@ jobs:
           CF_PLAN_RESULT: ${{ needs.cloud-free-plan.result }}
           CF_PLAN_STATUS: ${{ needs.cloud-free-plan.outputs.plan-status }}
           CF_SEC_STATUS: ${{ needs.cloud-free-plan.outputs.security-status }}
+          CF_SECRET_STATUS: ${{ needs.cloud-free-plan.outputs.secret-scan-status }}
           CF_HAS_CHANGES: ${{ needs.cloud-free-plan.outputs.has-changes }}
           CF_HAS_DESTRUCTIVE: ${{ needs.cloud-free-plan.outputs.has-destructive-changes }}
           CF_TOTAL_CHANGES: ${{ needs.cloud-free-plan.outputs.total-changes }}
@@ -739,6 +773,7 @@ jobs:
             echo "plan-status=${PLAN_STATUS}"
             echo "gcp-auth-status=${GCP_AUTH_STATUS}"
             echo "security-status=${SEC_STATUS}"
+            echo "secret-scan-status=${CF_SECRET_STATUS:-failure}"
             echo "authorization-status=${AUTHORIZATION_STATUS}"
             echo "has-changes=${HAS_CHANGES}"
             echo "has-destructive-changes=${HAS_DESTRUCTIVE}"

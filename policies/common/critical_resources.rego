@@ -150,26 +150,6 @@ is_replacement(actions) if {
 	is_create_before_destroy(actions)
 }
 
-# Checks if a storage asset is part of an explicit decommission plan
-is_decommissioning(rc) if {
-	rc.type in {"aws_s3_bucket", "azurerm_storage_account"}
-	contains(lower(rc.address), "decommission")
-}
-
-is_decommissioning(rc) if {
-	rc.type in {"aws_s3_bucket", "azurerm_storage_account"}
-	rc.change != null
-	name := object.get(rc.change.before, "name", "")
-	contains(lower(name), "decomm")
-}
-
-is_decommissioning(rc) if {
-	rc.type in {"aws_s3_bucket", "azurerm_storage_account"}
-	rc.change != null
-	bucket := object.get(rc.change.before, "bucket", "")
-	contains(lower(bucket), "decommission")
-}
-
 # Checks if a valid, plan-specific cryptographic confirmation token is present
 is_plan_authorized if {
 	auth := input.infraflow_authorization
@@ -248,7 +228,6 @@ deny contains msg if {
 	rc.change.actions != null
 	critical_resources[rc.type]
 	is_pure_delete(rc.change.actions)
-	not is_decommissioning(rc)
 	not is_plan_authorized
 	msg := sprintf("Semantic Destruction Violation: Direct deletion of critical resource '%v' (type: '%v') is strictly prohibited without plan-specific destruction authorization.", [rc.address, rc.type])
 }
