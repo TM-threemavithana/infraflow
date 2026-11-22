@@ -6454,6 +6454,172 @@ else
   record_fail "LocalFS Architectural Disclaimer [10/10]: Disclaimer presence" "Missing single-host limitation notice in LocalFSDriver"
 fi
 
+# ==============================================================================
+# SECTION 30: Plan Lifecycle Lock Authority & Integration (Milestone G10.4.4)
+# ==============================================================================
+log_header "30. Plan Lifecycle Lock Authority & Integration (G10.4.4)"
+
+# Test 30.1: Dedicated lifecycle locking test suite passes (11 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_lifecycle_locking.py" >/dev/null 2>&1; then
+  record_pass "Lifecycle Locking Suite [1/10]: 11 lifecycle locking integration tests passed"
+else
+  record_fail "Lifecycle Locking Suite [1/10]: Test failure" "test_lifecycle_locking.py failed"
+fi
+
+# Test 30.2: Plan lifecycle verifier CLI exposes all required lock subcommands
+if python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-identity --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-reserve --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-consume --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-fail --help >/dev/null 2>&1; then
+  record_pass "Lifecycle Lock CLI Commands [2/10]: lock-identity, lock-reserve, lock-consume, lock-fail subcommands verified"
+else
+  record_fail "Lifecycle Lock CLI Commands [2/10]: Subcommand verification" "One or more lock subcommands failed --help contract"
+fi
+
+# Test 30.3: lock-identity derives canonical lock key and resource fingerprint
+G10_4_TMP="$(mktemp -d)"
+ID_OUT="$(python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-identity \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "production" \
+  --backend "s3://infraflow-tfstate-bucket/env/production/tf.state" \
+  --workspace "default" 2>/dev/null || true)"
+if echo "${ID_OUT}" | grep -q "canonical_lock_key" && echo "${ID_OUT}" | grep -q "resource_fingerprint"; then
+  record_pass "Lock Identity Derivation [3/10]: lock-identity produces canonical key and SHA-256 fingerprint"
+else
+  record_fail "Lock Identity Derivation [3/10]: Output format" "lock-identity failed to output valid JSON with canonical_lock_key"
+fi
+
+# Test 30.4: Replay ledger schema binds lock_id, fencing_token, and canonical_lock_key
+if python3 -c "
+import sqlite3
+from tests.test_lifecycle_locking import PlanReplayLedger
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger.db')
+conn = sqlite3.connect('${G10_4_TMP}/ledger.db')
+cols = [r[1] for r in conn.execute('PRAGMA table_info(plan_executions)').fetchall()]
+assert 'lock_id' in cols
+assert 'fencing_token' in cols
+assert 'canonical_lock_key' in cols
+" >/dev/null 2>&1; then
+  record_pass "Replay Ledger Schema [4/10]: SQLite ledger schema contains lock_id, fencing_token, and canonical_lock_key columns"
+else
+  record_fail "Replay Ledger Schema [4/10]: Ledger schema" "Missing locking columns in plan_executions table"
+fi
+
+# Test 30.5: Mutual exclusion on same backend target during plan authorization
+if python3 -c "
+import tempfile, datetime
+from tests.test_lifecycle_locking import PlanLifecycleVerifier, PlanReplayLedger, DECISION_AUTHORIZED, DECISION_REJECTED
+from tests.test_lifecycle_locking import TestLifecycleLocking
+t = TestLifecycleLocking()
+t.setUp()
+env1 = t._create_synthetic_envelope('plan-race-1', digest='1111' + 'a'*60)
+env2 = t._create_synthetic_envelope('plan-race-2', digest='2222' + 'b'*60)
+state = t._create_synthetic_state()
+ver = PlanLifecycleVerifier(ledger=PlanReplayLedger(db_path=t.ledger_db))
+d1 = ver.verify_authorization(env1, state, t.valid_repo, t.valid_commit, t.valid_env, t.valid_lineage, t.valid_serial, expected_backend=t.valid_backend, actual_backend=t.valid_backend, require_lock=True, lock_dir=t.locks_dir, current_time=t.ref_now)
+d2 = ver.verify_authorization(env2, state, t.valid_repo, t.valid_commit, t.valid_env, t.valid_lineage, t.valid_serial, expected_backend=t.valid_backend, actual_backend=t.valid_backend, require_lock=True, lock_dir=t.locks_dir, current_time=t.ref_now)
+assert d1.decision == DECISION_AUTHORIZED
+assert d2.decision == DECISION_REJECTED
+assert d2.decision_code == 'LOCK_HELD'
+t.tearDown()
+" >/dev/null 2>&1; then
+  record_pass "Target Mutual Exclusion [5/10]: Concurrent authorization on same backend target rejected with LOCK_HELD"
+else
+  record_fail "Target Mutual Exclusion [5/10]: Concurrency race" "Failed to enforce mutual exclusion on same target"
+fi
+
+# Test 30.6: Stale fencing token consumption strictly rejected fail-closed
+if python3 -c "
+import datetime
+from tests.test_lifecycle_locking import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger2.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-stale', '1111'*16, 'org/repo', 'commit1', 'prod', now, {}, lock_id='lock-1', fencing_token=1, canonical_lock_key='target-key')
+l.reserve_plan('plan-newer', '2222'*16, 'org/repo', 'commit2', 'prod', now, {}, lock_id='lock-2', fencing_token=2, canonical_lock_key='target-key')
+try:
+    l.consume_plan('plan-stale', fencing_token=1)
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'STALE_FENCING_TOKEN' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Fencing Token Monotonicity [6/10]: Consumption with superseded fencing token rejected with STALE_FENCING_TOKEN"
+else
+  record_fail "Fencing Token Monotonicity [6/10]: Stale token check" "Failed to reject stale fencing token"
+fi
+
+# Test 30.7: Lost lock handle rejects consumption with StaleOwnerError
+if python3 -c "
+from tests.test_lifecycle_locking import PlanLifecycleVerifier, PlanReplayLedger, StaleOwnerError
+from tests.test_lifecycle_locking import TestLifecycleLocking
+t = TestLifecycleLocking()
+t.setUp()
+env = t._create_synthetic_envelope('plan-lost-g10')
+state = t._create_synthetic_state()
+ver = PlanLifecycleVerifier(ledger=PlanReplayLedger(db_path=t.ledger_db))
+d = ver.verify_authorization(env, state, t.valid_repo, t.valid_commit, t.valid_env, t.valid_lineage, t.valid_serial, expected_backend=t.valid_backend, actual_backend=t.valid_backend, require_lock=True, lock_dir=t.locks_dir, current_time=t.ref_now)
+d.lock_handle.mark_lost('partition')
+try:
+    ver.consume_plan('plan-lost-g10', lock_handle=d.lock_handle)
+    raise AssertionError('Should have failed')
+except StaleOwnerError:
+    pass
+t.tearDown()
+" >/dev/null 2>&1; then
+  record_pass "Lost Handle Fast-Fail [7/10]: Consuming plan with lost lock handle raises StaleOwnerError"
+else
+  record_fail "Lost Handle Fast-Fail [7/10]: Lost handle check" "Failed to raise StaleOwnerError on lost handle"
+fi
+
+# Test 30.8: OUTCOME_UNCERTAIN outcome preservation and re-execution protection
+if python3 -c "
+import datetime
+from tests.test_lifecycle_locking import PlanReplayLedger, PlanReplayError, STATUS_OUTCOME_UNCERTAIN
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger3.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-unc', '3333'*16, 'org/repo', 'commit1', 'prod', now, {})
+l.fail_plan('plan-unc', uncertain=True)
+assert l.get_plan_status('plan-unc')['status'] == STATUS_OUTCOME_UNCERTAIN
+try:
+    l.reserve_plan('plan-unc', '3333'*16, 'org/repo', 'commit1', 'prod', now, {})
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'UNCERTAIN_EXECUTION_STATE' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Uncertain Outcome Protection [8/10]: OUTCOME_UNCERTAIN recorded and blocks re-execution without manual review"
+else
+  record_fail "Uncertain Outcome Protection [8/10]: Uncertain outcome check" "Failed to preserve OUTCOME_UNCERTAIN state"
+fi
+
+# Test 30.9: INTERRUPTED outcome preservation and re-execution protection
+if python3 -c "
+import datetime
+from tests.test_lifecycle_locking import PlanReplayLedger, PlanReplayError, STATUS_INTERRUPTED
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger4.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-int', '4444'*16, 'org/repo', 'commit1', 'prod', now, {})
+l.fail_plan('plan-int', interrupted=True)
+assert l.get_plan_status('plan-int')['status'] == STATUS_INTERRUPTED
+try:
+    l.reserve_plan('plan-int', '4444'*16, 'org/repo', 'commit1', 'prod', now, {})
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'INTERRUPTED' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Interrupted Outcome Protection [9/10]: INTERRUPTED state recorded and prevents duplicate execution"
+else
+  record_fail "Interrupted Outcome Protection [9/10]: Interrupted outcome check" "Failed to preserve INTERRUPTED state"
+fi
+
+# Test 30.10: Lock authority boundary documentation verified
+if grep -q "Lock Authority Boundaries" "${REPO_ROOT}/docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md" && \
+   grep -q "Terraform Native State Locking" "${REPO_ROOT}/docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md" && \
+   grep -q "InfraFlow Orchestration Locking" "${REPO_ROOT}/docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md"; then
+  record_pass "Lock Authority Boundaries [10/10]: Architectural authority boundaries documented and delineated"
+else
+  record_fail "Lock Authority Boundaries [10/10]: Documentation presence" "Missing lock authority boundaries in G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md"
+fi
+rm -rf "${G10_4_TMP}"
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 

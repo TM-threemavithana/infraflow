@@ -27,6 +27,7 @@ InfraFlow is structured into progressive delivery milestones:
 | **G10.4.1** | **Distributed Locking Architecture & Refinement (G10.4.1-R)** | Backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, decoupled admin recovery, STRIDE model. | **PASS (Completed)** |
 | **G10.4.2** | **Core Locking Engine & LocalFS Driver** | DistributedLockDriver, LocalFSDriver, MockDistributedDriver, LockManager, durable HWM fencing tokens, secret defense, 18 unit tests. | **PASS (Completed)** |
 | **G10.4.3** | **Locking Integration & Adversarial Validation** | Multiprocessing concurrency, failure recovery, filesystem security, CLI lock inspect, Section 29 (465 checks), 673 tests. | **PASS (Completed)** |
+| **G10.4.4** | **Lifecycle Integration & Lock Authority Validation** | Plan lifecycle verifier integration, replay ledger fencing enforcement, stale owner rejection, uncertain outcome preservation, Section 30 (475 checks), 684 tests. | **PASS (Completed)** |
 
 ---
 
@@ -583,14 +584,31 @@ Milestone G10.4.3 delivers rigorous, independent adversarial validation and plat
 
 ---
 
-## 37. Quality Gate Definitions
+## 37. Milestone G10.4.4 — Acceptance Criteria (Lifecycle Integration & Lock Authority Validation)
+
+Milestone G10.4.4 integrates the completed G10.4 distributed state locking engine into the existing InfraFlow plan lifecycle and pre-execution authorization verifier (`scripts/verify-plan-lifecycle.py`). It binds lock ownership and monotonic fencing tokens into the SQLite replay prevention ledger, enforces mutual exclusion across concurrent execution runs targeting the same backend state, rejects stale or superseded owners fail-closed, fast-fails child execution processes on heartbeat lease loss, preserves interrupted and uncertain execution states, exposes new lifecycle locking CLI subcommands, and rigorously defines and assesses lock authority boundaries ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-53** | Lifecycle Lock Manager Integration & Pre-Execution Verification | Wire `LockManager` and `DistributedLockDriver` directly into `PlanLifecycleVerifier`; verify authorization binds lock ownership before simulation; verify opt-in `--enable-lock` backward compatibility. | Integration test suite (`test_lifecycle_locking.py`) | **PASS (Completed)** |
+| **AC-G10-54** | Canonical Lock Identity & Multi-Cloud Backend Target Derivation | Derive hierarchical canonical lock keys bound to Terraform backend target (`backend_type`, `storage_location`, `account_or_project`, `state_key`, `workspace`); verify target isolation between distinct keys. | Target isolation tests & CLI `lock-identity` | **PASS (Completed)** |
+| **AC-G10-55** | Transactional Replay Ledger Lock Binding & Schema Integrity | Migrate SQLite `plan_executions` table with `lock_id`, `fencing_token`, and `canonical_lock_key` columns; verify backward compatibility with existing databases via dynamic PRAGMA migration. | Schema inspection & ledger tests | **PASS (Completed)** |
+| **AC-G10-56** | Fencing Token Monotonicity & Superseded Token Replay Interception | Enforce $T_{\text{candidate}} > T_{\text{ledger\_max}}$ on reservation and verify plan consumption with superseded tokens is strictly rejected fail-closed with `STALE_FENCING_TOKEN`. | Monotonicity & adversarial replay tests | **PASS (Completed)** |
+| **AC-G10-57** | Stale Owner & Lost Handle Fast-Fail Child Process Abort | Reject plan consumption from lost or expired lock handles (`StaleOwnerError`); prove background heartbeat loss terminates child execution processes (`SIGTERM`/`SIGKILL`) within grace period. | Process termination & lost handle tests | **PASS (Completed)** |
+| **AC-G10-58** | Uncertain & Interrupted Execution Outcome Preservation | Record `STATUS_OUTCOME_UNCERTAIN` on heartbeat/partition failure and `STATUS_INTERRUPTED` on abrupt kill; prove duplicate reservations fail closed with `UNCERTAIN_EXECUTION_STATE`. | Outcome preservation tests & CLI `lock-fail` | **PASS (Completed)** |
+| **AC-G10-59** | CLI Lifecycle Subcommands & Operational Diagnostics | Implement and verify CLI subcommands `lock-identity`, `lock-reserve`, `lock-consume`, `lock-fail`, and `verify --enable-lock` with clean exit codes and structured JSON outputs. | CLI roundtrip tests (Section 30) | **PASS (Completed)** |
+| **AC-G10-60** | Lock Authority Boundaries & Cloud-Native Locking Architecture Assessment | Document composite lock defense in depth (Terraform native state locking vs InfraFlow orchestration locking); provide comprehensive independent engineering assessment of cloud-native locking necessity. | Architecture docs (`G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`) | **PASS (Completed)** |
+
+---
+
+## 38. Quality Gate Definitions
 
 To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (465/465 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (475/475 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

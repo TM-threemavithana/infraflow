@@ -92,6 +92,24 @@ A critical architectural tenet of InfraFlow is the strict, non-negotiable bounda
 | **Fencing Protection** | Monotonic fencing token (`uint64`) passed downstream to verify authority | Primitive client UUID / lock ID without monotonic ordering |
 | **Replacement Rule** | **NEVER replaces native state locking.** Operates strictly as a pre-flight governance gate. | Continues to execute natively within Terraform runtime. |
 
+### 2.1 Lock Authority Boundaries: Terraform Native State Locking vs. InfraFlow Orchestration Locking
+
+To preserve operational safety and avoid confusion across engineering teams, InfraFlow establishes strict lock authority boundaries:
+
+1. **Terraform Native State Locking (Storage Authority):**
+   - **Authority Domain:** Sole arbiter of byte-level mutation rights to the remote `terraform.tfstate` blob.
+   - **Mechanisms:** AWS DynamoDB conditional writes (`LockID`), S3 native `.tflock` object creation with `If-None-Match: *`, Azure Blob Storage 60-second renewable exclusive write leases (`x-ms-lease-id`), and Google Cloud Storage generation preconditions (`x-goog-if-generation-match`).
+   - **Invariants:** InfraFlow never overrides, bypasses, disables (`-lock=false`), or alters native backend lock mechanisms. If Terraform native locking encounters a lock conflict, Terraform fails natively.
+
+2. **InfraFlow Orchestration Locking (Workflow & Lifecycle Authority):**
+   - **Authority Domain:** Sole arbiter of pipeline scheduling, execution envelope authorization, plan reservation, and transactional replay ledger consistency.
+   - **Mechanisms:** LockManager, hierarchical canonical lock keys, monotonic fencing tokens, and background heartbeat renewal with fast-fail child process abort (`SIGTERM`/`SIGKILL`).
+   - **Invariants:** Operates *before* and *across* CLI executions. It serializes concurrent pull requests targeting the same environment, blocks speculative drift assessments during active release campaigns, binds verified plan cryptographic envelopes to execution runs, and ensures that interrupted or crashed runs enter `STATUS_INTERRUPTED` or `STATUS_OUTCOME_UNCERTAIN` to halt automated retries.
+
+3. **Composite Defense in Depth:**
+   - Even if an infrastructure engineer executes Terraform directly from their local terminal, Terraform Native State Locking protects the state blob.
+   - When running within CI/CD, InfraFlow Orchestration Locking protects the entire delivery lifecycle, preventing multiple runners from compiling conflicting plans, racing through approval gates, or corrupting execution ledgers.
+
 ---
 
 ## 3. Realistic Fencing-Token Enforcement & IaC Provider Boundaries
@@ -650,5 +668,68 @@ Emits 8 standardized event types conforming to RFC 5424 / OpenTelemetry Schema v
 
 **Approved by:** Principal Distributed Systems Engineer & Senior Platform Architect  
 **Distribution:** Platform Architecture Registry (`docs/architecture/`)  
-**Completed Implementation:** Milestone G10.4.2 (Core Locking Engine & LocalFS Driver) & Milestone G10.4.3 (Adversarial Multiprocessing Concurrency & CLI Integration)  
-**Next Implementation Milestone:** Milestone G10.4.4 (Multi-Cloud State Lock Drivers / Alerting Sinks)
+**Completed Implementation:**
+- Milestone G10.4.1 / G10.4.1-R: Distributed Locking Architecture & Refinement
+- Milestone G10.4.2: Core Locking Engine & LocalFS Driver (`infraflow/locking.py`)
+- Milestone G10.4.3: Concurrency Engine & Independent Adversarial Validation (`tests/test_locking_concurrency_adversarial.py`, CLI `lock` subcommands)
+- Milestone G10.4.4: Plan Lifecycle Integration & Lock Authority Validation (`scripts/verify-plan-lifecycle.py`, Replay Ledger Fencing Enforcement, `tests/test_lifecycle_locking.py`)
+**Next Implementation Milestone:** Milestone G10.5 (Optional Cloud-Native State Lock Driver Extensions)
+
+---
+
+## 17. Independent Architectural Assessment — Is Cloud-Native Distributed Locking Necessary?
+
+### 17.1 Context & Core Question
+As platform engineering organizations adopt GitOps and Infrastructure as Code at enterprise scale, a recurring architectural debate emerges:  
+*Does a platform delivery orchestrator like InfraFlow truly need its own cloud-native distributed locking engine (e.g. DynamoDB, Azure Blob Leases, Google Cloud Storage Preconditions), or is Terraform's native state locking coupled with CI/CD concurrency controls sufficient?*
+
+An independent, rigorous evaluation reveals substantial tradeoffs between distributed consistency guarantees, operational complexity, and architectural redundancy.
+
+### 17.2 The Dual-Lock Paradox & Architectural Redundancy
+When an orchestrator introduces an independent distributed lock ahead of Terraform native execution, the system enters a **Dual-Lock Paradigm**:
+1. **InfraFlow Orchestration Lock:** Held by the platform runner before compiling or approving an execution plan.
+2. **Terraform Native State Lock:** Acquired by the Terraform CLI binary during `terraform apply` directly against the state backend (S3/DynamoDB, Azure Blob, GCS).
+
+```text
+Pipeline Run ───▶ [1. InfraFlow Orchestration Lock] ───▶ [2. Terraform Native State Lock] ───▶ Cloud Mutations
+                        │                                          │
+                        ▼                                          ▼
+            Serialized Workflow & Replay             Exclusive State Blob Mutation
+```
+
+**Failure Modes Introduced by Redundant Dual-Locking:**
+- **Asymmetric Lock Failure:** If InfraFlow successfully acquires its cloud lock, but Terraform fails to acquire its native DynamoDB lock (e.g. transient AWS throttles, IAM permission drift), the pipeline fails mid-flight, requiring cleanup of the orchestration lock.
+- **Out-of-Band Blindspots:** If a platform engineer runs emergency break-glass hotfixes via local CLI (`terraform apply`), InfraFlow's orchestration lock is completely bypassed. The sole authoritative barrier protecting infrastructure state remains Terraform's native state lock.
+- **Operational Complexity Tax:** Maintaining custom DynamoDB tables, Azure Storage account permissions, GCS IAM roles, lease expiration daemons, and administrative force-break tools requires ongoing maintenance, security audits, and multi-region failover handling.
+
+### 17.3 Comparative Evaluation Matrix
+
+| Capability / Scenario | Terraform Native State Lock | GitHub Actions Concurrency | InfraFlow Orchestration Lock (Cloud Driver) | InfraFlow Orchestration Lock (LocalFS / Shared Volume) |
+|---|---|---|---|---|
+| **Raw State Blob Safety** | **Authoritative (100%)** | None | None (delegates to Terraform) | None (delegates to Terraform) |
+| **Preventing Competing PRs** | Fails late at `apply` time | Queues/Cancels at job level | **Fails early at `plan`/`auth` phase** | **Fails early at `plan`/`auth` phase** |
+| **Monotonic Fencing Tokens** | No (random client UUIDs) | No | **Yes (strict uint64 ordering)** | **Yes (strict uint64 ordering)** |
+| **Multi-Stage Campaign Hold** | No (process-duration only) | No (workflow-duration only) | **Yes (cross-workflow multi-day hold)** | Only with shared runner storage |
+| **Speculative Drift Isolation** | No | Difficult across separate workflows | **Yes (pauses drift checks on target)** | **Yes (single runner/host cluster)** |
+| **Cloud Spending Overhead** | Built into existing backend | $0.00 | Non-zero ($5-$50/mo per fleet) | **$0.00** |
+| **Zero-Credential Boundary** | Requires cloud credentials | Zero platform credentials | Requires platform cloud credentials | **Zero platform credentials** |
+
+### 17.4 Definitive Engineering Verdict
+
+1. **For 95%+ of Enterprise Organizations:**
+   - **Cloud-native distributed locking inside the orchestrator is NOT strictly necessary.**
+   - A combination of:
+     - Terraform native backend locking (S3 with conditional writes or DynamoDB; Azure Blob Storage leases; GCS generation preconditions).
+     - CI/CD native workflow concurrency (`concurrency: { group: "${{ github.workflow }}-${{ inputs.environment }}", cancel-in-progress: false }`).
+     - InfraFlow cryptographic plan verification and replay ledger.
+   - Provides complete protection against race conditions, duplicate execution, and state corruption without incurring additional infrastructure costs or cloud credential exposure.
+
+2. **When Cloud-Native Orchestration Locking IS Warranted:**
+   - **Cross-Repository Dependencies:** Multiple independent repositories mutate distinct modules that share a common state backend or VPC CIDR block.
+   - **Phased Multi-Day Release Campaigns:** Long-running deployment campaigns (canary testing, fleet-wide Terraform version upgrades) where environments must be locked against concurrent developer pull requests across multiple days.
+   - **Automated Fleet Drift Reconciliation:** Continuous automated drift detection scheduled at high frequencies across thousands of consumer repos that must dynamically yield whenever developer pipelines execute.
+
+3. **Strategic Architectural Posture for InfraFlow:**
+   - **Built-in First-Class LocalFS & Mock Drivers:** Preserve `LocalFSDriver` and `MockDistributedDriver` as core platform components for deterministic testing, offline developer experience, and container runners sharing persistent volumes.
+   - **Decoupled Cloud Drivers as Optional Extensions:** Treat AWS DynamoDB, Azure Blob, and GCP Cloud Storage drivers as optional pluggable adapters. The core platform remains $0.00 spend, zero credential dependency, and strictly fail-closed.
+

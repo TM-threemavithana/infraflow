@@ -502,9 +502,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **673 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance, distributed state locking & concurrency (G10.4.2), multiprocessing & adversarial failure validation (G10.4.3) | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **684 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance, distributed state locking & concurrency (G10.4.2), multiprocessing & adversarial failure validation (G10.4.3), plan lifecycle lock authority validation (G10.4.4) | **PASS (100%)** |
 | **OPA / Rego Conftest Suite** | **213 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **465 Checks** | End-to-end integration across all 29 platform quality sections | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **475 Checks** | End-to-end integration across all 30 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
 | **Secret Scanning (`SecretScanner` & `gitleaks`)** | **0 Leaks** | Mandatory consumer secret scanner & complete repository commit history clean | **PASS (100%)** |
 
@@ -572,6 +572,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── test_distributed_locking.py # Distributed locking adversarial test suite (G10.4.2)
 │   ├── test_drift_detection.py
 │   ├── test_g10_security_integration.py # Security integration assurance test suite (G10.3.1)
+│   ├── test_lifecycle_locking.py # Plan lifecycle lock authority integration test suite (G10.4.4)
 │   ├── test_locking_concurrency_adversarial.py # Adversarial multiprocessing concurrency test suite (G10.4.3)
 │   ├── test_operational_maturity.py
 │   ├── test_scaffolding.py
@@ -598,6 +599,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 | [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md) | Architecture | Distributed state locking, lease state machine, monotonic fencing, and multi-cloud driver contracts. |
 | [`docs/evidence/G10/G10-4-2-CORE-LOCKING-ENGINE.md`](docs/evidence/G10/G10-4-2-CORE-LOCKING-ENGINE.md) | Evidence | Core locking engine & LocalFS driver verification report (G10.4.2). |
 | [`docs/evidence/G10/G10-4-3-ADVERSARIAL-LOCKING-VALIDATION.md`](docs/evidence/G10/G10-4-3-ADVERSARIAL-LOCKING-VALIDATION.md) | Evidence | Locking integration, multiprocessing concurrency, and adversarial validation report (G10.4.3). |
+| [`docs/evidence/G10/G10-4-4-LIFECYCLE-INTEGRATION.md`](docs/evidence/G10/G10-4-4-LIFECYCLE-INTEGRATION.md) | Evidence | Plan lifecycle lock authority integration & independent cloud locking assessment report (G10.4.4). |
 | [`docs/usage/CLI-GUIDE.md`](docs/usage/CLI-GUIDE.md) | Operations | Developer guide covering all 6 CLI commands (`init`, `register`, `validate`, `doctor`, `drift`, `upgrade`). |
 | [`docs/usage/CONSUMER-ONBOARDING.md`](docs/usage/CONSUMER-ONBOARDING.md) | Onboarding | Comprehensive step-by-step consumer onboarding tutorial and security guardrails. |
 | [`docs/security/G10-CONSUMER-SECURITY.md`](docs/security/G10-CONSUMER-SECURITY.md) | Security | Consumer secret defense, regex rules, semantic destruction protection, and critical resource catalog. |
@@ -614,8 +616,8 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 - **Current Published Release**: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0)
 - **Active Development Branch**: `feature/g10-unified-cli`
-- **Completed Phases**: G01 through G10.4.3 (Foundation through Locking Integration & Adversarial Validation)
-- **Quality Gates**: 465/465 automated validation checks passing locally and in CI.
+- **Completed Phases**: G01 through G10.4.4 (Foundation through Lifecycle Integration & Lock Authority Validation)
+- **Quality Gates**: 475/475 automated validation checks passing locally and in CI.
 
 ---
 
@@ -649,7 +651,8 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G10.4.1 / G10.4.1-R**: Distributed locking architecture refinement, backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, and decoupled admin recovery.
 - [x] **Milestone G10.4.2**: Core locking engine & LocalFS driver (`LocalFSDriver` & `MockDistributedDriver`), durable HWM fencing tokens, secret defense, and fast-fail heartbeat.
 - [x] **Milestone G10.4.3**: Distributed locking integration, multiprocessing concurrency, failure recovery, filesystem security, CLI lock inspect, and adversarial validation.
-- [ ] **Next Horizon (Milestone G10.4.4 & Beyond)**: Multi-cloud state lock drivers (DynamoDB, Azure Blob, GCS) and pluggable alerting sinks.
+- [x] **Milestone G10.4.4**: Plan lifecycle integration & lock authority validation, replay ledger fencing token enforcement, stale owner rejection, uncertain outcome preservation, and independent cloud-native locking assessment.
+- [ ] **Next Horizon (Milestone G10.5 & Beyond)**: Optional multi-cloud state lock driver adapters (DynamoDB, Azure Blob, GCS) and pluggable alerting sinks.
 
 ---
 
