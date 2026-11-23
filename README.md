@@ -55,7 +55,7 @@ Instead of requiring individual product teams to author, maintain, and secure th
 +------------------------------------+----------------------------------+----------------------------+
 | Multi-Cloud Reusable Workflows     | Cryptographic Plan Attestation   | Fleet Observability & Bus  |
 | AWS / Azure / GCP Adapters         | Envelope Encryption (KMS)        | 5-Pillar Compliance Engine |
-| Open Policy Agent (194 Rego Tests) | Replay & Lineage Guards          | 6-Category Drift Simulator |
+| Open Policy Agent (213 Rego Tests) | Replay & Lineage Guards          | 6-Category Drift Simulator |
 | Zero Cloud Spend ($0.00 Local CI)  | Blast Radius Circuit-Breakers    | Staged Upgrade Campaigns   |
 +------------------------------------+----------------------------------+----------------------------+
 ```
@@ -154,7 +154,7 @@ flowchart TD
     end
 
     subgraph SecurityAttestation["Security, Lineage & Cryptography"]
-        OPAPolicies["OPA / Conftest Policies\n(194 Rego Unit Tests)"]
+        OPAPolicies["OPA / Conftest Policies\n(213 Rego Unit Tests)"]
         PlanAttest["Plan Integrity Attestation\n(verify-plan-integrity.py)"]
         KMSEnvelope["Envelope Encryption\n(kms-envelope.py)"]
         LineageReplay["Lifecycle & Replay Guard\n(verify-plan-lifecycle.py)"]
@@ -261,7 +261,7 @@ InfraFlow embeds security directly into the deployment pipeline through defensiv
 +------------------------------------+----------------------------------+----------------------------+
 | 1. OIDC Federated Identity         | 5. Envelope Encryption (KMS)     | 9.  Path Traversal Guards  |
 | 2. Least Privilege Token Scoping   | 6. Replay & Lineage Tracking     | 10. Sensitive Secret Scrub |
-| 3. Policy as Code (194 Rego Tests) | 7. Blast Radius Circuit-Breaker  | 11. Canary Gate Isolation  |
+| 3. Policy as Code (213 Rego Tests) | 7. Blast Radius Circuit-Breaker  | 11. Canary Gate Isolation  |
 | 4. SHA-256 Plan Attestation        | 8. 40-Character Commit Pinning   | 12. Supply-Chain Auditing  |
 +------------------------------------+----------------------------------+----------------------------+
 ```
@@ -270,7 +270,7 @@ InfraFlow embeds security directly into the deployment pipeline through defensiv
 
 1. **OIDC Workload Identity Federation**: Eliminates long-lived cloud credentials across AWS, Azure, and GCP. Tokens are short-lived, ephemeral, and scoped to the repository and branch identity.
 2. **Strict Least Privilege**: Workflows run with default `contents: read` permissions. Token permissions are granted only to specific jobs requiring them.
-3. **Policy-as-Code (OPA / Rego)**: All generated Terraform execution plans are inspected by Conftest against 194 unit-tested Rego policies ([`policies/`](policies/)). Violations block execution pre-plan.
+3. **Policy-as-Code (OPA / Rego)**: All generated Terraform execution plans are inspected by Conftest against 213 unit-tested Rego policies ([`policies/`](policies/)). Violations block execution pre-plan.
 4. **Terraform Plan Integrity & Attestation**: Speculative plans are serialized into canonical JSON and sealed with a cryptographic SHA-256 attestation digest ([`scripts/verify-plan-integrity.py`](scripts/verify-plan-integrity.py)). Any byte alteration triggers immediate failure.
 5. **Envelope Encryption & Key Management**: Generated plans are encrypted using AES-256-GCM envelope encryption with ephemeral or KMS-backed data keys ([`scripts/kms-envelope.py`](scripts/kms-envelope.py)).
 6. **Execution Lineage & Replay Guards**: Plans are bound to unique run IDs, Git commit SHAs, and timestamps ([`scripts/verify-plan-lifecycle.py`](scripts/verify-plan-lifecycle.py)), preventing replay attacks and out-of-order execution.
@@ -301,7 +301,7 @@ sequenceDiagram
     Core->>Gate: Run Static Scanners (TFLint, Trivy, Zizmor)
     Gate-->>Core: Security Gates PASS
     Core->>Gate: Generate Speculative Plan (-lock=false)
-    Gate->>Gate: Evaluate 194 OPA / Rego Policies
+    Gate->>Gate: Evaluate 213 OPA / Rego Policies
     Gate-->>Core: Policy Compliance PASS
     Core->>Attest: Compute SHA-256 Plan Digest & Seal Envelope
     Attest-->>Dev: Post PR Review Summary & Attestation Evidence
@@ -437,10 +437,10 @@ infraflow upgrade -m config/fleet-manifest.yaml --plan
 InfraFlow is engineered from first principles to be 100% testable on local developer workstations and in standard GitHub Actions runners with **zero cloud billing**:
 
 ```bash
-# Run 579 Python unit and adversarial tests
+# Run 707 Python unit and adversarial tests
 python3 -m unittest discover -s tests -p 'test_*.py'
 
-# Run 194 OPA / Rego policy unit tests
+# Run 213 OPA / Rego policy unit tests
 conftest verify --policy policies
 
 # Run CI/CD workflow security linters
@@ -635,7 +635,10 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 7. **Speculative Drift Simulation vs. Live Cloud Drift**: Drift detection simulates differences between expected and observed state snapshots; it does not connect to live cloud APIs to inspect live AWS, Azure, or GCP infrastructure.
 8. **Simulated vs. Real Upgrade Execution**: Upgrade campaigns generate simulated PR branches and metadata locally; actual remote branch creation and pull request merging remain under human operator authority.
 9. **Branch Protection Auditing vs. Administration**: Branch protection and ruleset compliance are audited via GitHub API checks (`scripts/audit-consumer-fleet.py`); InfraFlow does not programmatically override or configure organization-level repository administration settings.
-10. **LocalFS vs. Multi-Host Distributed Locking**: The `LocalFSDriver` provides kernel-level concurrency control (`fcntl.flock`) and persistent fencing on single-host runners or environments sharing a POSIX-compliant local filesystem. It is explicitly confined to single-host execution and is not a multi-host distributed lock manager. Multi-host production workloads across disjoint runner machines will utilize the upcoming cloud drivers (AWS DynamoDB, Azure Blob, GCP GCS) designed in G10.4.1-R.
+10. **LocalFS Single-Host Confinement**: The `LocalFSDriver` provides kernel-level concurrency control (`fcntl.flock`) and persistent fencing strictly on a single host. It is explicitly confined to single-host execution and is not a multi-host distributed lock manager; it does not provide cross-host coordination across separate CI runner instances or disjoint machines. Multi-host production workloads across separate runner machines will utilize future cloud drivers (AWS DynamoDB, Azure Blob, GCP GCS) designed in G10.4.1-R.
+11. **SQLite Replay Ledger Ephemeral Storage Boundary**: On standard ephemeral CI runners (such as GitHub-hosted `ubuntu-latest`), local SQLite storage does not persist across independent runner teardowns. Durable cross-runner replay prevention requires mounting persistent runner volumes or backing the ledger with an external datastore.
+12. **Best-Effort Workflow Cancellation Cleanup**: GitHub Actions step traps (`if: cancelled()`) execute on a best-effort basis during runner VM teardown. Hard runner terminations (such as forced process kills, host crashes, or immediate timeouts) can prevent post-cancellation handlers from executing. In such events, local lock recovery relies on lease TTL expiration (default 900s) on that host, while cross-runner isolation remains anchored in GitHub Actions concurrency groups and native Terraform backend state locking.
+13. **Separation of Concurrency Protections**: Terraform backend-native state locking (DynamoDB, Azure Blob leases, GCS preconditions), GitHub Actions workflow concurrency groups (`concurrency: { group: ... }`), and InfraFlow pre-execution state locking represent distinct, orthogonal layers of protection that operate independently.
 
 ---
 
@@ -653,7 +656,8 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G10.4.2**: Core locking engine & LocalFS driver (`LocalFSDriver` & `MockDistributedDriver`), durable HWM fencing tokens, secret defense, and fast-fail heartbeat.
 - [x] **Milestone G10.4.3**: Distributed locking integration, multiprocessing concurrency, failure recovery, filesystem security, CLI lock inspect, and adversarial validation.
 - [x] **Milestone G10.4.4**: Plan lifecycle integration & lock authority validation, replay ledger fencing token enforcement, stale owner rejection, uncertain outcome preservation, and independent cloud-native locking assessment.
-- [ ] **Next Horizon (Milestone G10.5 & Beyond)**: Optional multi-cloud state lock driver adapters (DynamoDB, Azure Blob, GCS) and pluggable alerting sinks.
+- [x] **Milestone G10.5 / G10.5.1**: Independent integration and reliability audit, plan lifecycle state correctness, atomic SQLite transitions, idempotent consumption, and workflow integration.
+- [ ] **Future Horizons (Post-G10)**: Optional multi-cloud state lock driver adapters (AWS DynamoDB, Azure Blob, GCP GCS) for multi-runner coordination, externalized durable replay ledger persistence, and pluggable alerting sinks.
 
 ---
 

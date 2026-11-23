@@ -781,3 +781,44 @@ In Milestone G10.5.1, `reusable-tf-apply.yml` integrates the locking lifecycle i
 - **Failure Trap Step:** If pre-execution verification or blast-radius assessment fails after lock acquisition, a failure handler calls `verify-plan-lifecycle.py lock-fail`, marking the plan as `FAILED` and releasing the lock.
 - **Cancellation Trap Step:** If the workflow run is cancelled (`if: cancelled()`), a cancellation handler invokes `verify-plan-lifecycle.py lock-fail --interrupted`, recording `STATUS_INTERRUPTED` and releasing the lock so subsequent runs are quarantined until manual triage.
 
+### 18.5 Best-Effort Workflow Cancellation Semantics & Recovery Guarantees
+
+In CI/CD environments such as GitHub Actions, job cancellation and step traps (`if: cancelled()`, `if: always()`) provide critical operational failure handling, but distributed systems engineering requires recognizing their fundamental operating boundaries:
+
+1. **Cancellation Handlers are Best-Effort, Not Guaranteed:**
+   - When a job cancellation is initiated in GitHub Actions, the runner sends `SIGINT` to the active process tree. If the process does not exit within 7,500 ms, the runner sends `SIGTERM`, waits an additional 2,500 ms, and forcibly kills the process tree if it is still running.
+   - The runner then executes remaining steps configured with cancellation conditions (such as `if: cancelled()`), up to GitHub's overall 5-minute cancellation timeout, after which GitHub forcibly terminates jobs and steps still marked for cancellation.
+   - Sudden VM terminations, kernel Out-Of-Memory events (`SIGKILL`), unhandled virtualization faults, network isolation, or forced process tree termination can prevent post-cancellation handlers from executing.
+   - Consequently, step traps cannot be treated as an absolute guarantee that every lock release or plan quarantine transition will execute cleanly.
+
+2. **Lease TTL Expiry as the Local Recovery Backstop:**
+   - Because process termination or runner crashes can orphan an active lock, InfraFlow does not rely solely on clean release traps.
+   - Every lock lease acquired by `LockManager` carries a strictly enforced Time-To-Live (`ttl_seconds`, default 900 seconds).
+   - If a local process terminates or crashes without releasing its lease, the lock remains held on that host only until `acquired_at + ttl_seconds` has elapsed.
+   - Once expired, any subsequent process on that host safely reclaims the lock:
+     - The recovery acquisition detects that the existing lease has expired (`now >= expires_at`).
+     - The driver safely acquires the lock and increments the monotonic high-water-mark fencing token ($T_{\text{new}} = T_{\text{current}} + 1$).
+     - Within that host's coordination domain, the dead or stalled process's ownership (`lock_id`) and fencing token are invalidated: any subsequent delayed write or release attempt by the stale owner on that host is rejected.
+   - **Coordination Domain Boundary:** This invalidation guarantee applies strictly within the local coordination domain of the active driver (i.e. processes on the same host for `LocalFSDriver`). When `LocalFSDriver` runs on isolated, ephemeral CI runner VMs, it does not provide cross-host fencing or cross-runner coordination; cross-runner isolation is enforced solely by CI/CD workflow concurrency groups (Layer 1) and native Terraform backend state locks (Layer 4).
+
+---
+
+## 19. Separation of Concurrency Protections & Architectural Boundaries
+
+A robust platform architecture enforces a strict separation of concerns across different layers of the infrastructure stack. InfraFlow clearly defines the authority boundaries between five distinct concurrency and integrity mechanisms:
+
+| Layer | Mechanism | Authority & Scope | Limitations & Boundaries |
+|---|---|---|---|
+| **Layer 1: CI/CD Workflow Serialization** | GitHub Actions Concurrency Groups (`concurrency: { group: ... }`) | Serializes workflow runs across GitHub Actions runners targeting the same environment or branch. | Managed entirely by GitHub Actions scheduler. Only covers workflows within the same repository or organization; does not coordinate out-of-band runs or local developer executions. |
+| **Layer 2: InfraFlow Pre-Execution Lock** | `LockManager` with `LocalFSDriver` | Coordinates pre-execution authorization, speculative plan validation, and blast-radius checks on the runner. | **Single-host only.** Relies on POSIX kernel locks (`fcntl.flock`) and local directory fencing. Does not provide distributed multi-host coordination across disjoint runner VMs or separate physical hosts. |
+| **Layer 3: Plan Lifecycle & Replay Ledger** | SQLite Ledger (`verify-plan-lifecycle.py`) with WAL mode | Tracks plan states (`RESERVED`, `CONSUMED`, `FAILED`, `INTERRUPTED`), enforces digest matching, and blocks plan replay. | **Ephemeral runner storage boundary.** On standard ephemeral CI runners (such as GitHub-hosted `ubuntu-latest`), local SQLite storage does not persist across independent runner VM teardowns. Cross-runner durability requires persistent volume mounts or external database backends (future horizon). |
+| **Layer 4: Terraform Native State Locking** | Terraform Backend Locking (AWS DynamoDB, Azure Blob leases, GCS preconditions) | Authoritative, sole lock protecting the actual Terraform state file during `terraform apply` or `terraform plan`. | InfraFlow does **not** replace or intercept Terraform backend locking. Native backend locking remains the final defense against concurrent state modification. |
+| **Layer 5: Fencing Tokens** | Monotonic High-Water-Mark Counter ($T \in \mathbb{N}$) | Protects InfraFlow orchestration metadata and plan lifecycle transitions against split-brain and delayed writes. | Custom fencing tokens protect InfraFlow ledger and lock operations. Cloud provider REST APIs (AWS, Azure, GCP) do not accept or validate custom Terraform fencing tokens; Terraform state protection relies on native provider/backend CAS mechanisms. |
+
+### 19.1 Clear Delineation of Guarantees
+
+To ensure architectural integrity and transparent operational expectations:
+- **No Claim of Multi-Runner Distributed Locking via LocalFS:** The platform explicitly discloses that `LocalFSDriver` is strictly single-host. Claims of "enterprise-grade distributed locking" across ephemeral GitHub runners are rejected; multi-runner distributed coordination across disjoint machines is designated for future cloud-native drivers (DynamoDB, Azure Blob, GCS).
+- **No Claim of Guaranteed Cancellation Execution:** Cancellation traps are documented as best-effort; local lock reclamation after unhandled process termination depends on lease TTL expiration and monotonic fencing tokens within that host's coordination domain, backed by CI workflow concurrency and native backend locking across runners.
+- **Fail-Closed Default:** When uncertainty arises regarding lock ownership, lease validity, or ledger persistence, InfraFlow consistently fails closed to protect cloud infrastructure from uncontrolled mutation.
+
