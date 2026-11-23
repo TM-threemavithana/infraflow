@@ -7,7 +7,7 @@ continuous state drift simulation, fleet upgrade lifecycle campaigns, and
 distributed state locking engine.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __author__ = "InfraFlow Platform Engineering Team"
 __canonical_ref__ = "TM-threemavithana/infraflow"
 __license__ = "Apache-2.0"

@@ -1,7 +1,7 @@
 # InfraFlow Unified Platform Developer Experience, CLI & Diagnostic Engine Architecture (Milestone G10.1)
 
 **Status:** IMPLEMENTED  
-**Version:** v0.7.0 / G10.1  
+**Version:** v0.8.0 / G10.1
 **Lead Architect:** Principal Platform Engineer, DevEx Architect, DevSecOps Lead  
 **Canonical Repository:** `TM-threemavithana/infraflow`  
 **Security Classification:** Highly Confidential Enterprise Architecture Contract  
@@ -190,7 +190,7 @@ infraflow/
 ├── pyproject.toml              # PEP 517 / 621 build specification & entrypoint mapping
 ├── setup.py                    # Backwards-compatible setuptools shim
 ├── infraflow/
-│   ├── __init__.py             # Exports __version__ ("0.7.0"), __author__, __canonical_ref__
+│   ├── __init__.py             # Exports __version__ ("0.8.0"), __author__, __canonical_ref__
 │   ├── py.typed                # PEP 561 typing marker
 │   └── cli.py                  # Canonical implementation of Unified Platform CLI
 └── scripts/
@@ -206,7 +206,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "infraflow"
-version = "0.7.0"
+version = "0.8.0"
 ...
 dependencies = [
     "pyyaml>=6.0",

@@ -5862,12 +5862,12 @@ else
   record_fail "Unified Platform CLI [1/20]: CLI check" "scripts/infraflow-cli.py missing or not executable"
 fi
 
-# Test 26.2: Version command reports 0.7.0 and canonical reference
+# Test 26.2: Version command reports 0.8.0 and canonical reference
 CLI_VER_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --version 2>&1)"
-if [[ "${CLI_VER_OUT}" == *"infraflow version 0.7.0"* && "${CLI_VER_OUT}" == *"TM-threemavithana/infraflow"* ]]; then
-  record_pass "Platform Version Flag [2/20]: --version returns platform version 0.7.0 and canonical reference"
+if [[ "${CLI_VER_OUT}" == *"infraflow version 0.8.0"* && "${CLI_VER_OUT}" == *"TM-threemavithana/infraflow"* ]]; then
+  record_pass "Platform Version Flag [2/20]: --version returns platform version 0.8.0 and canonical reference"
 else
-  record_fail "Platform Version Flag [2/20]: Version check" "Expected version 0.7.0, got: ${CLI_VER_OUT}"
+  record_fail "Platform Version Flag [2/20]: Version check" "Expected version 0.8.0, got: ${CLI_VER_OUT}"
 fi
 
 # Test 26.3: Help command enumerates all required subcommands
@@ -5986,14 +5986,14 @@ fi
 
 # Test 26.14: Python module execution parity (-m infraflow.cli)
 TMP_MOD_OUT="$(python3 -m infraflow.cli --version 2>&1 || true)"
-if [[ "${TMP_MOD_OUT}" == *"infraflow version 0.7.0"* ]]; then
+if [[ "${TMP_MOD_OUT}" == *"infraflow version 0.8.0"* ]]; then
   record_pass "Module Invocation Parity [14/20]: python3 -m infraflow.cli --version succeeds with platform version"
 else
   record_fail "Module Invocation Parity [14/20]: Module execution" "python3 -m infraflow.cli failed or wrong version: ${TMP_MOD_OUT}"
 fi
 
 # Test 26.15: Package import and runtime metadata validation
-if python3 -c 'import infraflow; assert infraflow.__version__ == "0.7.0"; assert "infraflow" in infraflow.__canonical_ref__' >/dev/null 2>&1; then
+if python3 -c 'import infraflow; assert infraflow.__version__ == "0.8.0"; assert "infraflow" in infraflow.__canonical_ref__' >/dev/null 2>&1; then
   record_pass "Package Import & Metadata [15/20]: Package infraflow imports cleanly and exposes canonical __version__"
 else
   record_fail "Package Import & Metadata [15/20]: Metadata check" "import infraflow failed or invalid metadata"

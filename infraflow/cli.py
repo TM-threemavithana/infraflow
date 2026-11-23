@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Platform Constants
-PLATFORM_VERSION = "0.7.0"
+PLATFORM_VERSION = "0.8.0"
 PLATFORM_CANONICAL_REF = "TM-threemavithana/infraflow"
 
 # Standard exit codes

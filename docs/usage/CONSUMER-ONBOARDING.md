@@ -1,7 +1,7 @@
 # InfraFlow Self-Service Consumer Onboarding Tutorial & Guide
 
 **Milestone:** G10.2  
-**Platform Version:** `v0.7.0`  
+**Platform Version:** `v0.8.0`
 **Tooling:** `infraflow` CLI (`init`, `validate`, `register`, `doctor`)  
 
 Welcome to the **InfraFlow Self-Service Consumer Onboarding Guide**. This tutorial guides platform engineers and application development teams through creating, validating, testing, and registering new infrastructure repositories under InfraFlow enterprise governance.

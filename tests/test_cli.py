@@ -41,7 +41,7 @@ class TestCLIHelpAndVersion(unittest.TestCase):
     def test_version_flag(self):
         res = subprocess.run([sys.executable, str(CLI_PATH), "--version"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
-        self.assertIn("infraflow version 0.7.0", res.stdout)
+        self.assertIn("infraflow version 0.8.0", res.stdout)
         self.assertIn("TM-threemavithana/infraflow", res.stdout)
 
     def test_help_flag(self):
@@ -79,7 +79,7 @@ class TestCLIDoctor(unittest.TestCase):
         res = subprocess.run([sys.executable, str(CLI_PATH), "doctor", "--json"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         payload = json.loads(res.stdout)
-        self.assertEqual(payload["platform_version"], "0.7.0")
+        self.assertEqual(payload["platform_version"], "0.8.0")
         self.assertEqual(payload["summary"]["total"], 12)
         self.assertGreaterEqual(payload["summary"]["passed"], 10)
         self.assertEqual(payload["summary"]["failed"], 0)
@@ -281,7 +281,7 @@ class TestCLIPackageInstallation(unittest.TestCase):
 
     def test_package_import_and_metadata(self):
         import infraflow
-        self.assertEqual(infraflow.__version__, "0.7.0")
+        self.assertEqual(infraflow.__version__, "0.8.0")
         self.assertEqual(infraflow.__canonical_ref__, "TM-threemavithana/infraflow")
         self.assertTrue(len(infraflow.__author__) > 0)
 
@@ -306,7 +306,7 @@ class TestCLIPackageInstallation(unittest.TestCase):
         self.assertIn('[build-system]', content)
         self.assertIn('requires = ["setuptools>=61.0", "wheel"]', content)
         self.assertIn('name = "infraflow"', content)
-        self.assertIn('version = "0.7.0"', content)
+        self.assertIn('version = "0.8.0"', content)
         self.assertIn('[project.scripts]', content)
         self.assertIn('infraflow = "infraflow.cli:main"', content)
 
@@ -324,7 +324,7 @@ class TestCLIPackageInstallation(unittest.TestCase):
             text=True,
         )
         self.assertEqual(res.returncode, 0)
-        self.assertIn("infraflow version 0.7.0", res.stdout)
+        self.assertIn("infraflow version 0.8.0", res.stdout)
 
     def test_programmatic_invocation_main(self):
         from infraflow.cli import main

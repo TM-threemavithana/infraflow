@@ -297,8 +297,13 @@ class TestProcessConcurrency(unittest.TestCase):
         lock_id_1 = res1.record.descriptor.lock_id
         token_1 = res1.record.lease.fencing_token
 
-        # 2. Wait 1.1s for lease to expire
-        time.sleep(1.1)
+        # 2. Wait for lease to expire deterministically with bounded timeout
+        deadline = parse_iso_utc(res1.record.lease.expires_at)
+        start_wait = time.monotonic()
+        while datetime.now(timezone.utc) <= deadline:
+            if time.monotonic() - start_wait > 5.0:
+                self.fail(f"Timed out waiting for lease expiration deadline {deadline}")
+            time.sleep(0.05)
 
         # 3. Process 2 reclaims Lock 2
         res2 = driver.acquire(self.key, {"runner_id": "proc-2"}, 60, "p2")
@@ -390,7 +395,13 @@ class TestFailureAndRecovery(unittest.TestCase):
         # Acquire with 1s TTL
         res = self.driver.acquire(self.key, {"runner_id": "initial-worker"}, 1, "test")
         self.assertTrue(res.success)
-        time.sleep(1.1)
+        # Wait for lease to expire deterministically with bounded timeout
+        deadline = parse_iso_utc(res.record.lease.expires_at)
+        start_wait = time.monotonic()
+        while datetime.now(timezone.utc) <= deadline:
+            if time.monotonic() - start_wait > 5.0:
+                self.fail(f"Timed out waiting for lease expiration deadline {deadline}")
+            time.sleep(0.05)
 
         # Reclaim
         reclaim_res = self.driver.acquire(self.key, {"runner_id": "reclaim-worker"}, 900, "reclaim")

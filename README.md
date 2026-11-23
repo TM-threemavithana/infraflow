@@ -6,7 +6,7 @@
 [![Quality Gates](https://img.shields.io/badge/Quality_Gates-485%2F485_PASS-brightgreen.svg)](#21-testing-and-verification)
 [![Python Tests](https://img.shields.io/badge/Python_Tests-707_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![OPA Rego](https://img.shields.io/badge/OPA_Policies-213_Passing-brightgreen.svg)](#21-testing-and-verification)
-[![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
+[![Release](https://img.shields.io/badge/Release-v0.8.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
 ---
 
@@ -537,7 +537,7 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── consumers/              # Reference multi-cloud consumer workloads
 │   └── drift/                  # Multi-cloud state drift fixtures (AWS, Azure, GCP)
 ├── infraflow/                  # Canonical InfraFlow platform Python package
-│   ├── __init__.py             # Platform package metadata and version 0.7.0
+│   ├── __init__.py             # Platform package metadata and version 0.8.0
 │   ├── py.typed                # PEP 561 typing compliance marker
 │   ├── cli.py                  # Unified CLI & diagnostic engine canonical implementation
 │   ├── scaffold.py             # Self-service consumer project scaffolding engine (G10.2)
@@ -615,8 +615,8 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 ## 24. Current Project Status
 
-- **Current Published Release**: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0)
-- **Active Development Branch**: `feature/g10-unified-cli`
+- **Current Release**: [`v0.8.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.8.0) (Previous: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0))
+- **Active Development Branch**: `main`
 - **Completed Phases**: G01 through G10.5.1 (Foundation through Plan Lifecycle State Correctness)
 - **Quality Gates**: 485/485 automated validation checks passing locally and in CI.
 
