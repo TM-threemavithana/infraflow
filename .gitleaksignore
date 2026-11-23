@@ -18,6 +18,8 @@ scripts/validate-local.sh:aws-access-token:6075
 96cc83ba6c97257e82a3387f020a83fd016177ad:scripts/validate-local.sh:aws-access-token:6082
 scripts/validate-local.sh:aws-access-token:6082
 scripts/validate-local.sh:aws-access-token:6083
+scripts/validate-local.sh:aws-access-token:6086
+scripts/validate-local.sh:aws-access-token:6094
 96cc83ba6c97257e82a3387f020a83fd016177ad:policies/common/critical_resources_test.rego:generic-api-key:161
 policies/common/critical_resources_test.rego:generic-api-key:161
 96cc83ba6c97257e82a3387f020a83fd016177ad:tests/test_critical_resources.py:generic-api-key:265

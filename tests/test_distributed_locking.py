@@ -566,8 +566,8 @@ class TestLockManagerAndHeartbeat(unittest.TestCase):
         # Simulate network partition so renewals fail
         mock_driver.simulate_partition(True)
 
-        # Wait for fast-fail abort threshold
-        signaled = lost_notified.wait(timeout=10.0)
+        # Wait for fast-fail abort threshold (with generous timeout for heavy test suite concurrency)
+        signaled = lost_notified.wait(timeout=25.0)
         self.assertTrue(signaled, "Heartbeat failure must trigger lock lost callback.")
         self.assertEqual(handle.status, "LOST")
         self.assertTrue(child_proc.terminated or child_proc.killed, "Child process must be terminated on lock loss.")

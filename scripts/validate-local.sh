@@ -4788,9 +4788,15 @@ else
 fi
 
 # Test 20.12: Full Platform Test Suite passing
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
+TMP_P20_LOG="$(mktemp /tmp/p20_test_XXXXXX.log)"
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >"${TMP_P20_LOG}" 2>&1; then
   record_pass "Platform Python Test Suite [12/12]: All 406 platform tests passed (tests/test_*.py)"
+  rm -f "${TMP_P20_LOG}"
 else
+  echo -e "\n--- Test 20.12 Failure Output ---"
+  tail -n 30 "${TMP_P20_LOG}"
+  echo -e "---------------------------------\n"
+  rm -f "${TMP_P20_LOG}"
   record_fail "Platform Python Test Suite [12/12]: Platform test suite" "One or more platform tests failed"
 fi
 
@@ -4906,9 +4912,15 @@ else
 fi
 
 # Test 21.13: Full Platform Python Test Suite (437 tests)
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
+TMP_P21_LOG="$(mktemp /tmp/p21_test_XXXXXX.log)"
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >"${TMP_P21_LOG}" 2>&1; then
   record_pass "Platform Python Test Suite [13/14]: All 437 platform tests passed (tests/test_*.py)"
+  rm -f "${TMP_P21_LOG}"
 else
+  echo -e "\n--- Test 21.13 Failure Output ---"
+  tail -n 30 "${TMP_P21_LOG}"
+  echo -e "---------------------------------\n"
+  rm -f "${TMP_P21_LOG}"
   record_fail "Platform Python Test Suite [13/14]: Platform test suite" "One or more platform tests failed"
 fi
 
@@ -6071,7 +6083,7 @@ rm -rf "${TMP_SEC_CLEAN}"
 
 # Test 27.4: Credential detection gate (fail-closed on secrets)
 TMP_SEC_DIRTY="$(mktemp -d -t sec_dirty_XXXXXX)"
-echo 'aws_key = "AKIAIOSFODNN7MINEKEY"' > "${TMP_SEC_DIRTY}/creds.tf"
+echo 'aws_key = "AKIAIOSFODNN7MINEKEY"' > "${TMP_SEC_DIRTY}/creds.tf" # gitleaks:allow
 if ! python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_DIRTY}" --strict --json > "${TMP_SEC_DIRTY}/out.json" 2>&1; then
   record_pass "Credential Detection Gate [4/15]: Exposed AWS access key rejected with non-zero exit code"
 else
@@ -6079,7 +6091,7 @@ else
 fi
 
 # Test 27.5: Zero raw secret leakage in output / report
-if ! grep -q "AKIAIOSFODNN7MINEKEY" "${TMP_SEC_DIRTY}/out.json" && grep -q "AKIA" "${TMP_SEC_DIRTY}/out.json"; then
+if ! grep -q "AKIAIOSFODNN7MINEKEY" "${TMP_SEC_DIRTY}/out.json" && grep -q "AKIA" "${TMP_SEC_DIRTY}/out.json"; then # gitleaks:allow
   record_pass "Zero-Leakage Invariant [5/15]: Raw credential redacted with zero secret exposure in reports"
 else
   record_fail "Zero-Leakage Invariant [5/15]: Redaction check" "Raw credential found unredacted in scan report"
