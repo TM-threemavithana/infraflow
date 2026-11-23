@@ -19,7 +19,15 @@ InfraFlow is structured into progressive delivery milestones:
 | **G06** | **Protected Apply and Destroy (Simulation Scope)** | Secure execution simulation of approved plans with cryptographic digest verification, KMS envelope encryption, state consistency, blast-radius safeguards, and adversarial validation. | **PASS (Simulation Scope)** |
 | **G07** | **Azure and GCP** | Azure and GCP cloud provider adapters, Workload Identity Federation, cloud state backends. | **PASS (Completed)** |
 | **G08** | **Multi-Repository Adoption** | Fleet-wide rollout, consumer repository templates, onboarding contracts, centralized governance, fleet upgrade orchestration, and release v0.6.0. | **PASS (Completed)** |
-| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns. | In Progress (G09.1, G09.2 & G09.3 Implemented) |
+| **G09** | **Operational Maturity** | Drift detection, observability, compliance dashboard, automated upgrade campaigns, and release v0.7.0. | **PASS (Completed)** |
+| **G10.1** | **Unified Platform CLI & Diagnostics** | Unified `infraflow` CLI, environment doctor (12 dimensions), drift runner, upgrade manager, policy error enrichment. | **PASS (Completed)** |
+| **G10.2** | **Self-Service Onboarding & Scaffolding** | Self-service `infraflow init`, multi-cloud templates, schema-validated registration, dry-run safety. | **PASS (Completed)** |
+| **G10.3** | **Consumer Secret Defense & Semantic Destruction** | Mandatory secret scanner, zero raw leakage, multi-cloud critical resource protection, replacement safety, conftest gates. | **PASS (Completed)** |
+| **G10.3.1** | **Security Integration Assurance & Decommission Hardening** | Multi-workflow secret scanning, Conftest all-namespaces evaluation, decommission bypass closure, 16-test suite, 455/455 checks. | **PASS (Completed)** |
+| **G10.4.1** | **Distributed Locking Architecture & Refinement (G10.4.1-R)** | Backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, decoupled admin recovery, STRIDE model. | **PASS (Completed)** |
+| **G10.4.2** | **Core Locking Engine & LocalFS Driver** | DistributedLockDriver, LocalFSDriver, MockDistributedDriver, LockManager, durable HWM fencing tokens, secret defense, 18 unit tests. | **PASS (Completed)** |
+| **G10.4.3** | **Locking Integration & Adversarial Validation** | Multiprocessing concurrency, failure recovery, filesystem security, CLI lock inspect, Section 29 (465 checks), 673 tests. | **PASS (Completed)** |
+| **G10.4.4** | **Lifecycle Integration & Lock Authority Validation** | Plan lifecycle verifier integration, replay ledger fencing enforcement, stale owner rejection, uncertain outcome preservation, Section 30 (475 checks), 684 tests. | **PASS (Completed)** |
 
 ---
 
@@ -461,14 +469,163 @@ Milestone G09.4 finalizes Phase G09 by consolidating scheduled observability, mu
 
 ---
 
-## 30. Quality Gate Definitions
+## 30. Milestone G10.1 — Acceptance Criteria (Unified Platform Developer Experience, CLI & Diagnostic Engine)
 
-To achieve status **PASS** for G01 through G09:
+Milestone G10.1 establishes the unified developer experience (DevEx) for the InfraFlow enterprise platform, introducing the single-binary-like command-line utility ([`scripts/infraflow-cli.py`](../../scripts/infraflow-cli.py)). It consolidates platform diagnostics (`infraflow doctor`), consumer onboarding validation (`infraflow validate`), continuous state and speculative drift detection simulation (`infraflow drift`), and fleet upgrade campaign lifecycle management (`infraflow upgrade`). Furthermore, it introduces intelligent OPA/Conftest policy error enrichment, fail-closed symlink guards, and automated secret redaction ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-01** | Unified CLI Architecture Specification | Formulate and document the unified CLI architecture, 12-check diagnostic matrix, policy error enhancement pipeline, and STRIDE threat boundaries in [`docs/architecture/G10-CLI-ARCHITECTURE.md`](G10-CLI-ARCHITECTURE.md). | Documentation audit & review | **PASS (G10.1 Implemented)** |
+| **AC-G10-02** | Unified Platform CLI Engine | Implement [`scripts/infraflow-cli.py`](../../scripts/infraflow-cli.py) with subcommands (`doctor`, `validate`, `drift`, `upgrade`) and standardized flags (`--json`, `--verbose`, `--no-color`). Strictly reject `shell=True` in all subprocesses. | CLI execution & test suite | **PASS (G10.1 Implemented)** |
+| **AC-G10-03** | Non-Destructive Platform Doctor (12 Dimensions) | Implement `infraflow doctor` evaluating 12 dimensions: Python (>=3.10), Terraform (>=1.6.0), Git, TFLint, Trivy, Conftest, Actionlint, Zizmor, Directory Hierarchy, Rego Policies, Dependencies, Git Workspace. | CLI execution (Text & JSON) | **PASS (G10.1 Implemented)** |
+| **AC-G10-04** | Intelligent Policy Error Enrichment | Implement `PolicyErrorEnhancer` mapping raw Conftest deny outputs to human-readable Policy IDs, severity classifications, resource names, exact source line numbers, and actionable remediation advice. | Adversarial policy evaluation tests | **PASS (G10.1 Implemented)** |
+| **AC-G10-05** | Continuous Drift Simulation Integration | Implement `infraflow drift` wrapping continuous state and speculative drift detection simulation with `--enforce-zero-drift` CI gating, Markdown/JSON export, and telemetry emission. | Adversarial drift fixtures & CLI gates | **PASS (G10.1 Implemented)** |
+| **AC-G10-06** | Fleet Upgrade Planning & Rollout Integration | Implement `infraflow upgrade` wrapping fleet manifest evaluation, staged dry-run planning, Canary Gate enforcement, and local upgrade/rollback execution. | CLI execution & dry-run plan audit | **PASS (G10.1 Implemented)** |
+| **AC-G10-07** | Defensive Security Guards & Secret Redaction | Enforce fail-closed symbolic link rejection (`os.path.islink`), path traversal protection (`..`), and automatic recursive secret scrubbing across all console streams and exported payloads. | Adversarial security unit tests | **PASS (G10.1 Implemented)** |
+| **AC-G10-08** | 19-Scenario CLI Test Suite & Harness Section 26 | Author [`tests/test_cli.py`](../../tests/test_cli.py) (19 tests) and add Section 26 to `scripts/validate-local.sh` (13 checks, raising platform quality checks to 420). | `validate-local.sh` (420/420 passed) | **PASS (G10.1 Implemented)** |
+
+---
+
+## 31. Milestone G10.2 — Acceptance Criteria (Self-Service Consumer Onboarding & Scaffolding)
+
+Milestone G10.2 introduces automated, self-service consumer repository onboarding and scaffolding via `infraflow init` (`infraflow/scaffold.py`) and registration engine (`infraflow/registrar.py`). It enables application teams to rapidly bootstrap production-grade infrastructure repositories with pre-configured cloud adapters (AWS, Azure, GCP), standard GitHub Actions CI/CD workflows, valid `infraflow.config.yaml` contracts, and automated fleet manifest registration ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-09** | Consumer Scaffolding Engine | Implement `ConsumerScaffolder` generating Terraform project structures, GitHub Actions workflow caller configs, and contract schemas for AWS, Azure, and GCP. | Unit tests & directory output audit | **PASS (Completed)** |
+| **AC-G10-10** | Central Fleet Registration | Implement `ConsumerRegistrar` validating existing contracts, preventing duplicate IDs, and deterministically inserting consumer entries into `fleet.manifest.yaml`. | Adversarial registration tests | **PASS (Completed)** |
+| **AC-G10-11** | Interactive & Non-Interactive CLI | Implement `infraflow init` supporting interactive prompts and full CLI flags (`--name`, `--repo`, `--adapter`, `--env`, `--workload`, `--register`). | CLI execution tests | **PASS (Completed)** |
+| **AC-G10-12** | Fail-Closed Security Guards | Enforce strict path traversal checks (`..`), directory containment checks, and duplicate consumer ID rejections. | Adversarial path traversal tests | **PASS (Completed)** |
+| **AC-G10-13** | Dedicated Scaffolding Test Suite & Section 26.2 | Author `tests/test_scaffolding.py` (20 tests) and expand `scripts/validate-local.sh` (20 checks, raising total quality checks to 427). | `validate-local.sh` (427/427 passed) | **PASS (Completed)** |
+
+---
+
+## 32. Milestone G10.3 — Acceptance Criteria (Consumer Secret Defense & Semantic Destruction Protection)
+
+Milestone G10.3 implements deep security defense mechanisms protecting enterprise consumers from credential leaks and catastrophic semantic destruction of persistent infrastructure resources. It introduces a mandatory consumer-side secret scanning engine (`infraflow/scanner.py`, `scripts/scan-secrets.py`), centralized reusable workflow integration, and a centralized semantic OPA policy (`policies/common/critical_resources.rego`) evaluating deletion, replacement orderings, malformed plans, and generic confirmation tokens ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-14** | Consumer Secret Scanning Engine | Implement `SecretScanner` scanning consumer repositories before plan generation for AWS keys, GitHub tokens, PEM private keys, passwords, GCP keys, Slack tokens, and Bearer tokens. | `tests/test_secret_scanner.py` (18 tests) | **PASS (Completed)** |
+| **AC-G10-15** | Zero Raw Secret Exposure Invariant | Enforce multi-tier masking and redaction (`SecretSanitizer`) ensuring zero raw credentials leak in logs, step summaries, or JSON outputs. | Redaction assertions & report checks | **PASS (Completed)** |
+| **AC-G10-16** | Binary & Placeholder Filtering | Explicitly exclude binary plan artifacts (`tfplan`, `*.tfplan.binary`) and filter legitimate Terraform variable interpolations (`${var.*}`) from false-positive detection. | Fixture scans & test assertions | **PASS (Completed)** |
+| **AC-G10-17** | Mandatory Central Governance Gate | Embed secret scanner in `.github/workflows/reusable-tf-governance.yml`; reject consumer attempts to disable scanners via `enforce_mandatory_scanners: false`. | `validate-consumer.py` & actionlint/zizmor | **PASS (Completed)** |
+| **AC-G10-18** | Multi-Cloud Critical Resource Protection | Implement `policies/common/critical_resources.rego` protecting databases, KMS keys, storage accounts, IAM roles, and network security perimeters across AWS, Azure, and GCP. | `conftest verify` (64/64 passed) | **PASS (Completed)** |
+| **AC-G10-19** | Semantic Action Differentiation | Evaluate direct deletions (`["delete"]`), destroy-before-create (`["delete", "create"]`), and create-before-destroy (`["create", "delete"]`) replacements; reject malformed actions. | `tests/test_critical_resources.py` (19 tests) | **PASS (Completed)** |
+| **AC-G10-20** | Generic Token Rejection & Cryptographic Gate | Strictly reject generic approval tokens (`confirm`, `true`, `force`, `approved`); enforce cryptographic confirmation token binding (`infraflow-destruction-confirmation-v1`). | Conftest unit tests & adversarial plans | **PASS (Completed)** |
+| **AC-G10-21** | External Consumer Adversarial Matrix | Update `infraflow-consumer-test` with synthetic secret fixtures, critical destruction fixtures, and automated verification script (5/5 checks passing). | Consumer test script execution | **PASS (Completed)** |
+| **AC-G10-22** | Dedicated Test Suites & Local Harness Section 27 | Author `test_secret_scanner.py` (18 tests), `test_critical_resources.py` (19 tests), and Section 27 in `scripts/validate-local.sh` (15 checks, raising quality checks to 442). | `validate-local.sh` (442/442 passed) | **PASS (Completed)** |
+
+---
+
+## 33. Milestone G10.3.1 — Acceptance Criteria (Security Integration Assurance & Decommission Hardening)
+
+Milestone G10.3.1 performs independent security integration verification and hardening across the entire InfraFlow delivery surface. It ensures that mandatory consumer secret scanning is consistently integrated and executed across all core delivery workflows (`reusable-tf-plan.yml`, `reusable-tf-aws.yml`, `reusable-tf-azure.yml`, `reusable-tf-gcp.yml`, `reusable-tf-security.yml`, `reusable-tf-governance.yml`), eliminates substring heuristic authorization bypasses in `policies/common/critical_resources.rego`, enforces Conftest `--all-namespaces` evaluation across Azure and GCP workflows, hardens workflow input guards against scanner disabling, and introduces an end-to-end 16-scenario security integration test suite ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-23** | Multi-Workflow Secret Scanning Integration | Embed mandatory secret scanning (`scripts/scan-secrets.py`) across all 6 core workflows (`plan`, `aws`, `azure`, `gcp`, `security`, `governance`) with output propagation (`secret-scan-status`). | Workflow inspection, actionlint, zizmor | **PASS (Completed)** |
+| **AC-G10-24** | Multi-Cloud All-Namespaces Conftest Evaluation | Ensure `conftest test` includes `--all-namespaces` across Azure and GCP workflows so `package common.critical_resources` is actively evaluated against Terraform plan JSON. | Workflow inspection & conftest tests | **PASS (Completed)** |
+| **AC-G10-25** | Decommission Substring Bypass Remediation | Remove substring heuristic (`contains(lower(rc.address), "decommission")`) in `critical_resources.rego`; enforce platform-controlled, cryptographically signed plan confirmation (`is_plan_authorized`). | Rego unit tests (66/66) & fixtures | **PASS (Completed)** |
+| **AC-G10-26** | Workflow Guard Input Enforcement | Add defensive input verification rejecting `enable-policy-evaluation: false`, `enable-trivy: false`, and `enable-conftest: false` across `reusable-tf-plan.yml` and `reusable-tf-security.yml`. | Bash guard assertions & unit tests | **PASS (Completed)** |
+| **AC-G10-27** | Dedicated Integration Test Suite (16 Tests) | Implement `tests/test_g10_security_integration.py` covering positive/negative critical deletions, decommission authorization, replacement ordering, malformed plans, zero-leakage, and workflow guards. | `unittest` (16/16 passed) | **PASS (Completed)** |
+| **AC-G10-28** | Local Validation Harness Expansion (Section 28) | Expand `scripts/validate-local.sh` with Section 28 (13 automated checks), raising platform quality gates to 455/455 passing checks. | `validate-local.sh` (455/455 passed) | **PASS (Completed)** |
+
+---
+
+## 34. Milestone G10.4.1 / G10.4.1-R — Acceptance Criteria (Distributed Locking Architecture & Refinement)
+
+Milestone G10.4.1 / G10.4.1-R establishes the refined, production-grade distributed locking, lease management, and fencing protocol architecture for the InfraFlow enterprise platform ([`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md)). It addresses realistic fencing token enforcement boundaries under Terraform cloud provider execution, defines backend-bound canonical lock keys (S3, Azure Blob, GCS, local), resolves the immutable descriptor vs. mutable lease generation dichotomy, specifies durable atomic monotonic token generation, enforces lease time safety margins with fast-fail heartbeats, isolates privileged administrative recovery into an independent cryptographic service, and articulates a complete error taxonomy ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-29** | Distributed Locking Architecture Document | Formulate and document the refined distributed locking architecture, state machine, and failure recovery protocols in [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md). | Documentation audit & review | **PASS (Completed)** |
+| **AC-G10-30** | Separation of Concerns & Native Lock Preservation | Enforce strict separation between platform orchestration locking and Terraform native state locking; strictly preserve native `.tflock` / backend storage locks. | Architectural boundary audit | **PASS (Completed)** |
+| **AC-G10-31** | Backend-Bound Canonical Key & Decoupled Schema | Bind canonical lock keys to actual Terraform backend storage targets (account/project, bucket/container, state key, workspace); decouple immutable `LockDescriptor` from versioned `LeaseState`. | Schema specification audit | **PASS (Completed)** |
+| **AC-G10-32** | Realistic Fencing Enforcement & Provider Boundaries | Formally specify fencing token enforcement points (state backend gate, replay ledger, pre/post execution barriers) and document cloud provider API direct-connection limitations. | Protocol analysis audit | **PASS (Completed)** |
+| **AC-G10-33** | Durable Atomic Fencing-Token Generation | Define strict monotonic token increments ($T_{i+1} > T_i$), crash-resilient persistence, and persistent high-water mark records surviving clean lock releases. | Concurrency protocol audit | **PASS (Completed)** |
+| **AC-G10-34** | Lease Time Safety & Fast-Fail Heartbeat | Enforce storage-authoritative clocks, client safety margins ($\text{TTL} - \Delta_{\text{skew}} - \Delta_{\text{rtt}}$), $\frac{1}{3}\text{TTL}$ heartbeats, and $\frac{2}{3}\text{TTL}$ fast-fail child process termination. | Timing protocol audit | **PASS (Completed)** |
+| **AC-G10-35** | Decoupled Administrative Recovery Service | Remove `force_break` from worker driver interface; isolate privileged force-unlock in `AdministrativeLockRecoveryService` requiring signed ECDSA P-256 tokens and telemetry auditing. | Security boundary audit | **PASS (Completed)** |
+| **AC-G10-36** | Multi-Cloud Production Driver Contracts & Taxonomy | Define standardized atomic CAS driver contracts (LocalFS, MockDistributed, AWS DynamoDB/S3, Azure Blob, GCP GCS) and a comprehensive typed error taxonomy (`LockError`). | Interface specification audit | **PASS (Completed)** |
+
+---
+
+## 35. Milestone G10.4.2 — Acceptance Criteria (Core Locking Engine & LocalFS Driver)
+
+Milestone G10.4.2 implements the reference core distributed locking engine and single-host `LocalFSDriver` (`infraflow/locking.py`), realizing the refined architecture of G10.4.1-R. It provides pure worker driver abstraction (zero force-break), durable high-water mark sequence records (`.hwm`) surviving releases and crashes, stale owner and expired ownership rejection, metadata secret scanning, `MockDistributedDriver` with fault injection, and the high-level `LockManager` with background heartbeat auto-renewal and fast-fail process abort ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-37** | Pure Worker Driver Interface & Models | Implement `DistributedLockDriver` without administrative force-break; implement `LockDescriptor`, `LeaseState`, `LockRecord`, `LockResult`, and `LockHandle`. | Code & schema audit | **PASS (Completed)** |
+| **AC-G10-38** | LocalFS Driver Concurrency Engine | Implement `LocalFSDriver` with atomic temporary writes and `os.replace`, process/thread-safe mutexes (`fcntl.flock`), and explicit single-host confinement notice. | Concurrency unit tests | **PASS (Completed)** |
+| **AC-G10-39** | Durable Monotonic Fencing Tokens | Enforce persistent `.hwm` sequence files that survive clean lock releases, node reboots, and expirations, ensuring $T_{k+1} > T_k$ across all lease generations. | Monotonicity & persistence tests | **PASS (Completed)** |
+| **AC-G10-40** | Stale Owner & Expired Ownership Protection | Reject stale owner release/renewal attempts against newer active locks; reject release or renewal after lease expiration has elapsed. | Adversarial unit tests | **PASS (Completed)** |
+| **AC-G10-41** | Metadata Secret-Scanning Defense | Recursively scan metadata structures before storage write; raise `SecurityViolationError` fail-closed upon detecting AWS keys, PATs, JWTs, or private keys. | Secret detection unit tests | **PASS (Completed)** |
+| **AC-G10-42** | MockDistributedDriver Fault Injection | Implement in-memory simulation driver supporting network partition simulation (`UncertainOutcomeError`), clock skew, and storage corruption injection. | Fault injection unit tests | **PASS (Completed)** |
+| **AC-G10-43** | LockManager & Fast-Fail Heartbeat | Implement `LockManager` lifecycle coordination, context manager, $\frac{1}{3}\text{TTL}$ heartbeat auto-renewal, and $\frac{2}{3}\text{TTL}$ fast-fail child process abort. | Heartbeat & abort unit tests | **PASS (Completed)** |
+| **AC-G10-44** | Comprehensive Unit & Regression Test Suite | Implement `tests/test_distributed_locking.py` (18/18 tests passing); verify 0 regressions across full platform suite (650/650 tests passing). | Test suite execution (650 tests) | **PASS (Completed)** |
+
+---
+
+## 36. Milestone G10.4.3 — Acceptance Criteria (Locking Integration & Adversarial Validation)
+
+Milestone G10.4.3 delivers rigorous, independent adversarial validation and platform integration of the G10.4 distributed state locking engine. It proves true multi-process kernel concurrency across distinct OS address spaces, hard process termination (`SIGKILL`) recovery, machine reboot state preservation, network partition timeouts, symlink attack defenses, path traversal defenses, cryptographic payload integrity verification, CLI inspection (`infraflow lock inspect`), and structured RFC 5424 telemetry emission with secret scrubbing ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-45** | Multiprocessing Kernel Concurrency | Prove that independent OS processes (`multiprocessing.Process`) cannot acquire the same lock simultaneously; verify 8-process barrier contention yields exactly 1 owner; verify independent lock key isolation. | Multiprocessing test suite | **PASS (Completed)** |
+| **AC-G10-46** | Monotonic Fencing Token Monotonicity | Prove that high-water mark fencing tokens remain strictly monotonic ($T_{k+1} > T_k$) across concurrent process acquisitions, node crashes, and clean lock releases. | Concurrency & sequence audit | **PASS (Completed)** |
+| **AC-G10-47** | Stale Owner & Expired Ownership Interception | Prove that stale owners cannot release or renew newer leases; prove that expired owners are unconditionally rejected when attempting lease renewal or state release. | Adversarial concurrency tests | **PASS (Completed)** |
+| **AC-G10-48** | Hard Process Termination & Lease Recovery | Prove that abruptly terminating a lock owner (`SIGKILL`) releases the kernel advisory lock (`fcntl.flock`), leaves the durable lock metadata intact until TTL expiration, and allows a subsequent process to acquire the lock upon expiry. | Kill simulation & recovery tests | **PASS (Completed)** |
+| **AC-G10-49** | Node Reboot & Storage Crash State Preservation | Prove that re-instantiating the driver after simulated node shutdown preserves high-water mark counters and active locks without state corruption or counter resets. | Driver reinitialization tests | **PASS (Completed)** |
+| **AC-G10-50** | Filesystem Security & Symlink Attack Defense | Prove that symlink attack targets are rejected with `SecurityViolationError`; verify path traversal sequences are rejected; verify malformed or tampered metadata fails closed with `MetadataCorruptionError`. | Adversarial filesystem tests | **PASS (Completed)** |
+| **AC-G10-51** | CLI Diagnostic Lock Inspection Engine | Implement `infraflow lock inspect <key>` with human-readable summary, `--json` export, HWM sequence query, and path traversal validation. | CLI unit & functional tests | **PASS (Completed)** |
+| **AC-G10-52** | Telemetry RFC 5424 Audit & Zero Credential Leakage | Verify all 8 locking events emit structured RFC 5424 telemetry; prove zero sensitive credentials appear in event payloads or log streams. | Telemetry test verification | **PASS (Completed)** |
+
+---
+
+## 37. Milestone G10.4.4 — Acceptance Criteria (Lifecycle Integration & Lock Authority Validation)
+
+Milestone G10.4.4 integrates the completed G10.4 distributed state locking engine into the existing InfraFlow plan lifecycle and pre-execution authorization verifier (`scripts/verify-plan-lifecycle.py`). It binds lock ownership and monotonic fencing tokens into the SQLite replay prevention ledger, enforces mutual exclusion across concurrent execution runs targeting the same backend state, rejects stale or superseded owners fail-closed, fast-fails child execution processes on heartbeat lease loss, preserves interrupted and uncertain execution states, exposes new lifecycle locking CLI subcommands, and rigorously defines and assesses lock authority boundaries ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-53** | Lifecycle Lock Manager Integration & Pre-Execution Verification | Wire `LockManager` and `DistributedLockDriver` directly into `PlanLifecycleVerifier`; verify authorization binds lock ownership before simulation; verify opt-in `--enable-lock` backward compatibility. | Integration test suite (`test_lifecycle_locking.py`) | **PASS (Completed)** |
+| **AC-G10-54** | Canonical Lock Identity & Multi-Cloud Backend Target Derivation | Derive hierarchical canonical lock keys bound to Terraform backend target (`backend_type`, `storage_location`, `account_or_project`, `state_key`, `workspace`); verify target isolation between distinct keys. | Target isolation tests & CLI `lock-identity` | **PASS (Completed)** |
+| **AC-G10-55** | Transactional Replay Ledger Lock Binding & Schema Integrity | Migrate SQLite `plan_executions` table with `lock_id`, `fencing_token`, and `canonical_lock_key` columns; verify backward compatibility with existing databases via dynamic PRAGMA migration. | Schema inspection & ledger tests | **PASS (Completed)** |
+| **AC-G10-56** | Fencing Token Monotonicity & Superseded Token Replay Interception | Enforce $T_{\text{candidate}} > T_{\text{ledger\_max}}$ on reservation and verify plan consumption with superseded tokens is strictly rejected fail-closed with `STALE_FENCING_TOKEN`. | Monotonicity & adversarial replay tests | **PASS (Completed)** |
+| **AC-G10-57** | Stale Owner & Lost Handle Fast-Fail Child Process Abort | Reject plan consumption from lost or expired lock handles (`StaleOwnerError`); prove background heartbeat loss terminates child execution processes (`SIGTERM`/`SIGKILL`) within grace period. | Process termination & lost handle tests | **PASS (Completed)** |
+| **AC-G10-58** | Uncertain & Interrupted Execution Outcome Preservation | Record `STATUS_OUTCOME_UNCERTAIN` on heartbeat/partition failure and `STATUS_INTERRUPTED` on abrupt kill; prove duplicate reservations fail closed with `UNCERTAIN_EXECUTION_STATE`. | Outcome preservation tests & CLI `lock-fail` | **PASS (Completed)** |
+| **AC-G10-59** | CLI Lifecycle Subcommands & Operational Diagnostics | Implement and verify CLI subcommands `lock-identity`, `lock-reserve`, `lock-consume`, `lock-fail`, and `verify --enable-lock` with clean exit codes and structured JSON outputs. | CLI roundtrip tests (Section 30) | **PASS (Completed)** |
+| **AC-G10-60** | Lock Authority Boundaries & Cloud-Native Locking Architecture Assessment | Document composite lock defense in depth (Terraform native state locking vs InfraFlow orchestration locking); provide comprehensive independent engineering assessment of cloud-native locking necessity. | Architecture docs (`G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`) | **PASS (Completed)** |
+
+---
+
+## 38. Milestone G10.5.1 — Acceptance Criteria (Plan Lifecycle State Correctness & Workflow Integration)
+
+Milestone G10.5.1 remediates the audit findings identified during the G10.5 Independent Reliability Audit (AUDIT-G10-01, AUDIT-G10-03, AUDIT-G10-05). It hardens the transactional plan lifecycle state machine, enforces atomic SQLite transitions with the release-after-persistence invariant, enables idempotent duplicate completion, wires orchestration distributed locking into `reusable-tf-apply.yml`, guarantees post-simulation plan consumption, establishes deterministic failure and cancellation traps, and implements a comprehensive 13-test adversarial suite ($0.00 cloud spend, zero live credentials).
+
+| Criterion ID | Objective | Description | Verification Method | Pass / Fail Status |
+|---|---|---|---|---|
+| **AC-G10-61** | Lifecycle State Machine & Transition Matrix | Specify explicit state machine transitions, invariants, and error responses across all states (`AVAILABLE`, `RESERVED`, `CONSUMED`, `FAILED`, `INTERRUPTED`, `OUTCOME_UNCERTAIN`) in [`G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md). | Documentation inspection | **PASS (Completed)** |
+| **AC-G10-62** | Release-After-Persistence Invariant | Enforce that SQLite ledger status commits durably inside transactions before lock handles are released, ensuring failure during lock release preserves `CONSUMED` state. | Unit tests (`test_13`) & code inspection | **PASS (Completed)** |
+| **AC-G10-63** | Idempotent Duplicate Completion | Support safe, idempotent duplicate `consume_plan()` and `record_outcome()` calls when presented with matching `lock_id` and `fencing_token`, while failing closed against different owners. | Unit tests (`test_02`, `test_12`) & Section 31 | **PASS (Completed)** |
+| **AC-G10-64** | Apply Workflow Locking Wiring | Add `enable-lock`, `lock-dir`, and `lock-ttl-seconds` inputs to `reusable-tf-apply.yml`, pass arguments to `verify-plan-lifecycle.py verify`, and expose `lock-id` and `fencing-token` outputs. | Actionlint, Zizmor, & workflow audit | **PASS (Completed)** |
+| **AC-G10-65** | Durable Plan Consumption Step | Add dedicated post-simulation step to `reusable-tf-apply.yml` calling `lock-consume` (or `ledger-consume`) upon authorized simulation, transitioning the plan to `CONSUMED`. | Workflow execution inspection | **PASS (Completed)** |
+| **AC-G10-66** | Workflow Failure & Cancellation Traps | Add failure handler step calling `lock-fail` and cancellation trap (`if: cancelled()`) calling `lock-fail --interrupted`, preventing unreleased locks or unresolved ledger states. | Workflow trap inspection | **PASS (Completed)** |
+| **AC-G10-67** | Dedicated Adversarial Test Suite (13 Tests) | Implement `tests/test_lifecycle_state_correctness.py` covering reservation, consumption, idempotency, stale tokens, renewal process abort, interruption, and recovery. | `unittest` (13/13 passed) | **PASS (Completed)** |
+| **AC-G10-68** | Local Validation Runner Expansion (Section 31) | Expand `scripts/validate-local.sh` with Section 31 (10 automated checks), raising platform quality gates to 485/485 passing checks. | `validate-local.sh` (485/485 passed) | **PASS (Completed)** |
+
+---
+
+## 39. Quality Gate Definitions
+
+To achieve status **PASS** for G01 through G10:
 1. Every milestone architecture and implementation document must exist, be fully elaborated, and be internally consistent.
 2. All reusable workflows and caller examples must pass `actionlint` and `zizmor` without errors or warnings.
 3. All reference Terraform modules must pass format check, validation, and native mock-provider test assertions.
 4. All negative test fixtures and input guards must fail as expected with appropriate error codes.
-5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (407/407 checks passing).
+5. The local validation runner script (`scripts/validate-local.sh`) must complete with exit code 0 (485/485 checks passing).
 6. Git status must remain clean of untracked temporary files and state caches.
 7. Any capability not executable locally (e.g. live cloud credential exchange) must remain simulation-only and fail-closed.
 8. External consumer integration must be validated on actual GitHub Actions runners across both `push` and `pull_request` events with zero live cloud spend ($0.00).

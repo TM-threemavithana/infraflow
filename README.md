@@ -3,9 +3,9 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI Status](https://img.shields.io/badge/CI-actionlint%20%7C%20zizmor%20%7C%20tflint%20%7C%20trivy%20%7C%20conftest-brightgreen.svg)](#19-local-development-and-zero-cost-validation)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.6.0-844FBA.svg)](https://www.terraform.io)
-[![Quality Gates](https://img.shields.io/badge/Quality_Gates-407%2F407_PASS-brightgreen.svg)](#21-testing-and-verification)
-[![Python Tests](https://img.shields.io/badge/Python_Tests-535_Passing-brightgreen.svg)](#21-testing-and-verification)
-[![OPA Rego](https://img.shields.io/badge/OPA_Policies-194_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![Quality Gates](https://img.shields.io/badge/Quality_Gates-485%2F485_PASS-brightgreen.svg)](#21-testing-and-verification)
+[![Python Tests](https://img.shields.io/badge/Python_Tests-707_Passing-brightgreen.svg)](#21-testing-and-verification)
+[![OPA Rego](https://img.shields.io/badge/OPA_Policies-213_Passing-brightgreen.svg)](#21-testing-and-verification)
 [![Release](https://img.shields.io/badge/Release-v0.7.0-blue.svg)](https://github.com/TM-threemavithana/infraflow/releases)
 
 ---
@@ -55,7 +55,7 @@ Instead of requiring individual product teams to author, maintain, and secure th
 +------------------------------------+----------------------------------+----------------------------+
 | Multi-Cloud Reusable Workflows     | Cryptographic Plan Attestation   | Fleet Observability & Bus  |
 | AWS / Azure / GCP Adapters         | Envelope Encryption (KMS)        | 5-Pillar Compliance Engine |
-| Open Policy Agent (194 Rego Tests) | Replay & Lineage Guards          | 6-Category Drift Simulator |
+| Open Policy Agent (213 Rego Tests) | Replay & Lineage Guards          | 6-Category Drift Simulator |
 | Zero Cloud Spend ($0.00 Local CI)  | Blast Radius Circuit-Breakers    | Staged Upgrade Campaigns   |
 +------------------------------------+----------------------------------+----------------------------+
 ```
@@ -154,7 +154,7 @@ flowchart TD
     end
 
     subgraph SecurityAttestation["Security, Lineage & Cryptography"]
-        OPAPolicies["OPA / Conftest Policies\n(194 Rego Unit Tests)"]
+        OPAPolicies["OPA / Conftest Policies\n(213 Rego Unit Tests)"]
         PlanAttest["Plan Integrity Attestation\n(verify-plan-integrity.py)"]
         KMSEnvelope["Envelope Encryption\n(kms-envelope.py)"]
         LineageReplay["Lifecycle & Replay Guard\n(verify-plan-lifecycle.py)"]
@@ -261,7 +261,7 @@ InfraFlow embeds security directly into the deployment pipeline through defensiv
 +------------------------------------+----------------------------------+----------------------------+
 | 1. OIDC Federated Identity         | 5. Envelope Encryption (KMS)     | 9.  Path Traversal Guards  |
 | 2. Least Privilege Token Scoping   | 6. Replay & Lineage Tracking     | 10. Sensitive Secret Scrub |
-| 3. Policy as Code (194 Rego Tests) | 7. Blast Radius Circuit-Breaker  | 11. Canary Gate Isolation  |
+| 3. Policy as Code (213 Rego Tests) | 7. Blast Radius Circuit-Breaker  | 11. Canary Gate Isolation  |
 | 4. SHA-256 Plan Attestation        | 8. 40-Character Commit Pinning   | 12. Supply-Chain Auditing  |
 +------------------------------------+----------------------------------+----------------------------+
 ```
@@ -270,7 +270,7 @@ InfraFlow embeds security directly into the deployment pipeline through defensiv
 
 1. **OIDC Workload Identity Federation**: Eliminates long-lived cloud credentials across AWS, Azure, and GCP. Tokens are short-lived, ephemeral, and scoped to the repository and branch identity.
 2. **Strict Least Privilege**: Workflows run with default `contents: read` permissions. Token permissions are granted only to specific jobs requiring them.
-3. **Policy-as-Code (OPA / Rego)**: All generated Terraform execution plans are inspected by Conftest against 194 unit-tested Rego policies ([`policies/`](policies/)). Violations block execution pre-plan.
+3. **Policy-as-Code (OPA / Rego)**: All generated Terraform execution plans are inspected by Conftest against 213 unit-tested Rego policies ([`policies/`](policies/)). Violations block execution pre-plan.
 4. **Terraform Plan Integrity & Attestation**: Speculative plans are serialized into canonical JSON and sealed with a cryptographic SHA-256 attestation digest ([`scripts/verify-plan-integrity.py`](scripts/verify-plan-integrity.py)). Any byte alteration triggers immediate failure.
 5. **Envelope Encryption & Key Management**: Generated plans are encrypted using AES-256-GCM envelope encryption with ephemeral or KMS-backed data keys ([`scripts/kms-envelope.py`](scripts/kms-envelope.py)).
 6. **Execution Lineage & Replay Guards**: Plans are bound to unique run IDs, Git commit SHAs, and timestamps ([`scripts/verify-plan-lifecycle.py`](scripts/verify-plan-lifecycle.py)), preventing replay attacks and out-of-order execution.
@@ -301,7 +301,7 @@ sequenceDiagram
     Core->>Gate: Run Static Scanners (TFLint, Trivy, Zizmor)
     Gate-->>Core: Security Gates PASS
     Core->>Gate: Generate Speculative Plan (-lock=false)
-    Gate->>Gate: Evaluate 194 OPA / Rego Policies
+    Gate->>Gate: Evaluate 213 OPA / Rego Policies
     Gate-->>Core: Policy Compliance PASS
     Core->>Attest: Compute SHA-256 Plan Digest & Seal Envelope
     Attest-->>Dev: Post PR Review Summary & Attestation Evidence
@@ -393,25 +393,41 @@ git clone https://github.com/TM-threemavithana/infraflow.git
 cd infraflow
 ```
 
-### 2. Run Local Quality Verification Suite
+### 2. Install the Unified Platform CLI
 ```bash
-# Execute full quality gate suite (407 checks)
+# Install in editable mode for local development
+pip install -e .
+
+# Verify installation & run platform health diagnostics
+infraflow --version
+infraflow doctor
+```
+
+### 3. Run Everyday Operations via `infraflow`
+```bash
+# Scaffold a new consumer repository (G10.2)
+infraflow init --name my-app --adapter aws --env dev -o ./my-app
+
+# Validate consumer repository configuration
+infraflow validate --config ./my-app/infraflow.config.yaml
+
+# Preview and register consumer in central fleet manifest
+infraflow register --config ./my-app/infraflow.config.yaml --dry-run
+infraflow register --config ./my-app/infraflow.config.yaml
+
+# Continuous state drift detection simulation ($0.00 cloud spend)
+infraflow drift \
+  -e fixtures/drift/aws/clean/expected.json \
+  -o fixtures/drift/aws/clean/observed.json
+
+# Generate fleet upgrade campaign dry-run plan
+infraflow upgrade -m config/fleet-manifest.yaml --plan
+```
+
+### 4. Run Local Quality Verification Suite
+```bash
+# Execute full quality gate suite
 ./scripts/validate-local.sh
-```
-
-### 3. Run Operational Maturity Verification
-```bash
-# Execute consolidated operational verification across all 4 pillars
-python3 scripts/verify-operational-maturity.py \
-  --manifest config/fleet-manifest.yaml \
-  --fleet-root fixtures/consumers \
-  --output-json /tmp/operational_report.json \
-  --output-markdown /tmp/operational_report.md
-```
-
-### 4. Inspect Generated Governance Evidence
-```bash
-cat /tmp/operational_report.md
 ```
 
 ---
@@ -421,10 +437,10 @@ cat /tmp/operational_report.md
 InfraFlow is engineered from first principles to be 100% testable on local developer workstations and in standard GitHub Actions runners with **zero cloud billing**:
 
 ```bash
-# Run 535 Python unit and adversarial tests
+# Run 707 Python unit and adversarial tests
 python3 -m unittest discover -s tests -p 'test_*.py'
 
-# Run 194 OPA / Rego policy unit tests
+# Run 213 OPA / Rego policy unit tests
 conftest verify --policy policies
 
 # Run CI/CD workflow security linters
@@ -486,11 +502,11 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 
 | Test Harness / Suite | Test Count | Scope & Coverage | Status |
 |---|---|---|---|
-| **Python Unit & Adversarial Tests** | **535 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, plan integrity, secret scrubbing | **PASS (100%)** |
-| **OPA / Rego Conftest Suite** | **194 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation | **PASS (100%)** |
-| **Platform Quality Gates (`validate-local.sh`)** | **407 Checks** | End-to-end integration across all 25 platform quality sections | **PASS (100%)** |
+| **Python Unit & Adversarial Tests** | **707 Tests** | Cryptographic signatures, drift detection, upgrade campaigns, self-service scaffolding, fleet registration, secret scanning, semantic destruction, secret scrubbing, security integration assurance, distributed state locking & concurrency (G10.4.2), multiprocessing & adversarial failure validation (G10.4.3), plan lifecycle lock authority validation (G10.4.4), plan lifecycle state correctness & workflow integration (G10.5.1) | **PASS (100%)** |
+| **OPA / Rego Conftest Suite** | **213 Tests** | Terraform security policies, tag compliance, encryption mandates, network isolation, semantic critical resource destruction & replacement rules | **PASS (100%)** |
+| **Platform Quality Gates (`validate-local.sh`)** | **485 Checks** | End-to-end integration across all 31 platform quality sections | **PASS (100%)** |
 | **CI Workflow Linters (`actionlint`, `zizmor`)** | **100% Clean** | Zero supply chain warnings, strict commit SHA pinning, least-privilege tokens | **PASS (100%)** |
-| **Secret Scanning (`gitleaks`)** | **0 Leaks** | Complete repository commit history verified clean of sensitive credentials | **PASS (100%)** |
+| **Secret Scanning (`SecretScanner` & `gitleaks`)** | **0 Leaks** | Mandatory consumer secret scanner & complete repository commit history clean | **PASS (100%)** |
 
 ---
 
@@ -515,11 +531,23 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── architecture/           # System architecture, milestones, requirements
 │   ├── security/               # Threat models, drift detection security specs
 │   ├── operations/             # Upgrade campaigns, operational verification guides
+│   ├── usage/                  # Unified CLI and developer operational guides
 │   └── evidence/               # Cryptographically signed milestone audit reports
 ├── fixtures/
 │   ├── consumers/              # Reference multi-cloud consumer workloads
 │   └── drift/                  # Multi-cloud state drift fixtures (AWS, Azure, GCP)
+├── infraflow/                  # Canonical InfraFlow platform Python package
+│   ├── __init__.py             # Platform package metadata and version 0.7.0
+│   ├── py.typed                # PEP 561 typing compliance marker
+│   ├── cli.py                  # Unified CLI & diagnostic engine canonical implementation
+│   ├── scaffold.py             # Self-service consumer project scaffolding engine (G10.2)
+│   ├── registrar.py            # Atomic fleet manifest registration engine (G10.2)
+│   ├── scanner.py              # Mandatory consumer secret scanning engine (G10.3)
+│   └── locking.py              # Distributed state locking & concurrency engine (G10.4.2)
 ├── policies/
+│   ├── common/                 # Common OPA policies (plan, tag, critical resources)
+│   │   ├── critical_resources.rego # Semantic critical resource destruction policy (G10.3)
+│   │   └── critical_resources_test.rego
 │   └── rego/                   # OPA / Rego policy definitions & unit tests
 ├── scripts/                    # Platform CLI utilities & verification engines
 │   ├── analyze-plan.py
@@ -527,9 +555,11 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── audit-consumer-fleet.py
 │   ├── emit-telemetry.py
 │   ├── generate-compliance-dashboard.py
+│   ├── infraflow-cli.py        # CLI backwards-compatible executable wrapper
 │   ├── kms-envelope.py
 │   ├── orchestrate-campaign.py
 │   ├── plan-fleet-upgrade.py
+│   ├── scan-secrets.py         # Standalone consumer secret scanner CLI (G10.3)
 │   ├── simulate-drift.py
 │   ├── validate-consumer.py
 │   ├── validate-local.sh
@@ -537,10 +567,21 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 │   ├── verify-plan-integrity.py
 │   └── verify-plan-lifecycle.py
 ├── tests/                      # Dedicated Python unit & adversarial test suites
+│   ├── test_cli.py
+│   ├── test_critical_resources.py # Semantic destruction test suite (G10.3)
+│   ├── test_distributed_locking.py # Distributed locking adversarial test suite (G10.4.2)
 │   ├── test_drift_detection.py
+│   ├── test_g10_security_integration.py # Security integration assurance test suite (G10.3.1)
+│   ├── test_lifecycle_locking.py # Plan lifecycle lock authority integration test suite (G10.4.4)
+│   ├── test_lifecycle_state_correctness.py # Plan lifecycle state correctness & adversarial test suite (G10.5.1)
+│   ├── test_locking_concurrency_adversarial.py # Adversarial multiprocessing concurrency test suite (G10.4.3)
 │   ├── test_operational_maturity.py
+│   ├── test_scaffolding.py
+│   ├── test_secret_scanner.py   # Consumer secret scanner test suite (G10.3)
 │   ├── test_telemetry.py
 │   └── test_upgrade_campaigns.py
+├── pyproject.toml              # PEP 517 / 621 packaging and console entrypoint definition
+├── setup.py                    # Backwards-compatible packaging shim
 ├── CONTRIBUTING.md             # Contribution guidelines & safety principles
 ├── LICENSE                     # Apache License 2.0
 └── README.md                   # Platform landing page & documentation
@@ -553,8 +594,16 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 | Document | Category | Description |
 |---|---|---|
 | [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) | Architecture | End-to-end platform design and tier breakdowns. |
-| [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G09.4. |
+| [`docs/architecture/MILESTONES.md`](docs/architecture/MILESTONES.md) | Milestones | Authoritative acceptance criteria matrix across G01 through G10.3. |
 | [`docs/architecture/ADAPTERS.md`](docs/architecture/ADAPTERS.md) | Adapters | Detailed multi-cloud adapter specifications (AWS, Azure, GCP). |
+| [`docs/architecture/G10-CLI-ARCHITECTURE.md`](docs/architecture/G10-CLI-ARCHITECTURE.md) | Architecture | Unified platform CLI, diagnostic engine, packaging, and onboarding architecture. |
+| [`docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md`](docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md) | Architecture | Distributed state locking, lease state machine, monotonic fencing, and multi-cloud driver contracts. |
+| [`docs/evidence/G10/G10-4-2-CORE-LOCKING-ENGINE.md`](docs/evidence/G10/G10-4-2-CORE-LOCKING-ENGINE.md) | Evidence | Core locking engine & LocalFS driver verification report (G10.4.2). |
+| [`docs/evidence/G10/G10-4-3-ADVERSARIAL-LOCKING-VALIDATION.md`](docs/evidence/G10/G10-4-3-ADVERSARIAL-LOCKING-VALIDATION.md) | Evidence | Locking integration, multiprocessing concurrency, and adversarial validation report (G10.4.3). |
+| [`docs/evidence/G10/G10-4-4-LIFECYCLE-INTEGRATION.md`](docs/evidence/G10/G10-4-4-LIFECYCLE-INTEGRATION.md) | Evidence | Plan lifecycle lock authority integration & independent cloud locking assessment report (G10.4.4). |
+| [`docs/usage/CLI-GUIDE.md`](docs/usage/CLI-GUIDE.md) | Operations | Developer guide covering all 6 CLI commands (`init`, `register`, `validate`, `doctor`, `drift`, `upgrade`). |
+| [`docs/usage/CONSUMER-ONBOARDING.md`](docs/usage/CONSUMER-ONBOARDING.md) | Onboarding | Comprehensive step-by-step consumer onboarding tutorial and security guardrails. |
+| [`docs/security/G10-CONSUMER-SECURITY.md`](docs/security/G10-CONSUMER-SECURITY.md) | Security | Consumer secret defense, regex rules, semantic destruction protection, and critical resource catalog. |
 | [`docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md`](docs/architecture/G09-OPERATIONAL-MATURITY-ARCHITECTURE.md) | Architecture | 4-pillar operational maturity framework. |
 | [`docs/security/security-architecture.md`](docs/security/security-architecture.md) | Security | Cryptographic attestation, envelope encryption, and threat models. |
 | [`docs/security/G09-DRIFT-DETECTION.md`](docs/security/G09-DRIFT-DETECTION.md) | Security | Multi-cloud state drift classification and STRIDE mitigations. |
@@ -567,9 +616,9 @@ InfraFlow maintains an extensive automated test suite covering functional, secur
 ## 24. Current Project Status
 
 - **Current Published Release**: [`v0.7.0`](https://github.com/TM-threemavithana/infraflow/releases/tag/v0.7.0)
-- **Active Development Branch**: `feature/g09-operational-maturity`
-- **Completed Phases**: G01 through G09.4 (Foundation through Enterprise Operational Maturity)
-- **Quality Gates**: 407/407 automated validation checks passing locally and in CI.
+- **Active Development Branch**: `feature/g10-unified-cli`
+- **Completed Phases**: G01 through G10.5.1 (Foundation through Plan Lifecycle State Correctness)
+- **Quality Gates**: 485/485 automated validation checks passing locally and in CI.
 
 ---
 
@@ -586,6 +635,10 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 7. **Speculative Drift Simulation vs. Live Cloud Drift**: Drift detection simulates differences between expected and observed state snapshots; it does not connect to live cloud APIs to inspect live AWS, Azure, or GCP infrastructure.
 8. **Simulated vs. Real Upgrade Execution**: Upgrade campaigns generate simulated PR branches and metadata locally; actual remote branch creation and pull request merging remain under human operator authority.
 9. **Branch Protection Auditing vs. Administration**: Branch protection and ruleset compliance are audited via GitHub API checks (`scripts/audit-consumer-fleet.py`); InfraFlow does not programmatically override or configure organization-level repository administration settings.
+10. **LocalFS Single-Host Confinement**: The `LocalFSDriver` provides kernel-level concurrency control (`fcntl.flock`) and persistent fencing strictly on a single host. It is explicitly confined to single-host execution and is not a multi-host distributed lock manager; it does not provide cross-host coordination across separate CI runner instances or disjoint machines. Multi-host production workloads across separate runner machines will utilize future cloud drivers (AWS DynamoDB, Azure Blob, GCP GCS) designed in G10.4.1-R.
+11. **SQLite Replay Ledger Ephemeral Storage Boundary**: On standard ephemeral CI runners (such as GitHub-hosted `ubuntu-latest`), local SQLite storage does not persist across independent runner teardowns. Durable cross-runner replay prevention requires mounting persistent runner volumes or backing the ledger with an external datastore.
+12. **Best-Effort Workflow Cancellation Cleanup**: GitHub Actions step traps (`if: cancelled()`) execute on a best-effort basis during runner VM teardown. Hard runner terminations (such as forced process kills, host crashes, or immediate timeouts) can prevent post-cancellation handlers from executing. In such events, local lock recovery relies on lease TTL expiration (default 900s) on that host, while cross-runner isolation remains anchored in GitHub Actions concurrency groups and native Terraform backend state locking.
+13. **Separation of Concurrency Protections**: Terraform backend-native state locking (DynamoDB, Azure Blob leases, GCS preconditions), GitHub Actions workflow concurrency groups (`concurrency: { group: ... }`), and InfraFlow pre-execution state locking represent distinct, orthogonal layers of protection that operate independently.
 
 ---
 
@@ -594,11 +647,17 @@ InfraFlow prioritizes absolute supply chain integrity and zero-cost verifiabilit
 - [x] **Milestone G01–G06**: Core reusable CI/CD, DevSecOps gates, plan protection, and envelope encryption.
 - [x] **Milestone G07**: Multi-cloud adapter integration (AWS, Azure, GCP).
 - [x] **Milestone G08**: Multi-repository adoption, consumer validation toolkit, and fleet upgrade planning.
-- [x] **Milestone G09.1**: Fleet observability, structured telemetry, and central compliance dashboard.
-- [x] **Milestone G09.2**: Continuous state and speculative drift detection simulation.
-- [x] **Milestone G09.3**: Automated upgrade campaigns and lifecycle tracking with Canary Gating.
-- [x] **Milestone G09.4**: Enterprise governance automation, operational maturity verification, and landing page redesign.
-- [ ] **Next Horizon (v0.7.0 Release & Beyond)**: Native OpenTelemetry collector streaming, policy automated remediation proposals (dry-run git patches), and multi-cloud cost forecasting gates.
+- [x] **Milestone G09.1–G09.4**: Fleet observability, drift detection, upgrade campaigns, and enterprise governance automation.
+- [x] **Milestone G10.1**: Unified platform developer experience, CLI, and diagnostic engine (`infraflow`).
+- [x] **Milestone G10.2**: Self-service consumer onboarding, scaffolding (`infraflow init`), and fleet registration.
+- [x] **Milestone G10.3**: Consumer secret defense (`SecretScanner`) and semantic destruction protection (`critical_resources.rego`).
+- [x] **Milestone G10.3.1**: Security integration assurance, multi-cloud conftest evaluation, and decommission authorization hardening.
+- [x] **Milestone G10.4.1 / G10.4.1-R**: Distributed locking architecture refinement, backend-bound identity, realistic fencing enforcement, durable atomic tokens, time safety, and decoupled admin recovery.
+- [x] **Milestone G10.4.2**: Core locking engine & LocalFS driver (`LocalFSDriver` & `MockDistributedDriver`), durable HWM fencing tokens, secret defense, and fast-fail heartbeat.
+- [x] **Milestone G10.4.3**: Distributed locking integration, multiprocessing concurrency, failure recovery, filesystem security, CLI lock inspect, and adversarial validation.
+- [x] **Milestone G10.4.4**: Plan lifecycle integration & lock authority validation, replay ledger fencing token enforcement, stale owner rejection, uncertain outcome preservation, and independent cloud-native locking assessment.
+- [x] **Milestone G10.5 / G10.5.1**: Independent integration and reliability audit, plan lifecycle state correctness, atomic SQLite transitions, idempotent consumption, and workflow integration.
+- [ ] **Future Horizons (Post-G10)**: Optional multi-cloud state lock driver adapters (AWS DynamoDB, Azure Blob, GCP GCS) for multi-runner coordination, externalized durable replay ledger persistence, and pluggable alerting sinks.
 
 ---
 

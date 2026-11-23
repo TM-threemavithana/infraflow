@@ -26,5 +26,10 @@
         "after": null
       }
     }
-  ]
+  ],
+  "infraflow_authorization": {
+    "authorized": true,
+    "schema_version": "infraflow-destruction-confirmation-v1",
+    "token": "infraflow-authorized-decommission-audit-token-v1"
+  }
 }

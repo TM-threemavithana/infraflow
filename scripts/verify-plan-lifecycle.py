@@ -114,6 +114,16 @@ class AuthorizationError(LifecycleError):
     pass
 
 
+class PlanEnvelopeError(LifecycleError):
+    """Raised when envelope structure or cryptographic verification fails."""
+    pass
+
+
+class LockAuthorityError(LifecycleError):
+    """Raised when distributed locking or fencing token validation fails."""
+    pass
+
+
 # -----------------------------------------------------------------------------
 # Dynamic Import for kms-envelope module
 # -----------------------------------------------------------------------------
@@ -135,6 +145,50 @@ def get_kms_envelope_module():
     sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+# -----------------------------------------------------------------------------
+# Dynamic Import for infraflow.locking module (G10.4)
+# -----------------------------------------------------------------------------
+def get_locking_module():
+    """Dynamically loads or imports infraflow.locking package."""
+    try:
+        from infraflow import locking
+        return locking
+    except ImportError:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        repo_root = os.path.dirname(script_dir)
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from infraflow import locking
+        return locking
+
+
+_locking = get_locking_module()
+LockManager = _locking.LockManager
+DistributedLockDriver = _locking.DistributedLockDriver
+LocalFSDriver = _locking.LocalFSDriver
+MockDistributedDriver = _locking.MockDistributedDriver
+LockHandle = _locking.LockHandle
+LockRecord = _locking.LockRecord
+LockDescriptor = _locking.LockDescriptor
+derive_canonical_lock_identity = _locking.derive_canonical_lock_identity
+LockError = _locking.LockError
+LockHeldError = _locking.LockHeldError
+StaleOwnerError = _locking.StaleOwnerError
+LeaseExpiredError = _locking.LeaseExpiredError
+LockLostError = _locking.LockLostError
+LeaseLostError = _locking.LockLostError
+StaleFencingTokenError = _locking.StaleFencingTokenError
+UncertainOutcomeError = _locking.UncertainOutcomeError
+SecurityViolationError = _locking.SecurityViolationError
+ResourceIdentityError = _locking.ResourceIdentityError
+
+
+class MetadataCorruptionError(LockError):
+    """Raised when lock metadata is corrupted or checksum mismatch occurs."""
+    pass
+
 
 
 # -----------------------------------------------------------------------------
@@ -200,6 +254,10 @@ class PlanAuthorizationContract:
     expires_at: str
     provenance_status: str
     replay_status: str
+    lock_id: Optional[str] = None
+    fencing_token: Optional[int] = None
+    canonical_lock_key: Optional[str] = None
+    lock_authority: Optional[str] = None
 
 
 @dataclass
@@ -209,9 +267,89 @@ class AuthorizationDecision:
     reasons: List[str] = field(default_factory=list)
     contract: Optional[Dict[str, Any]] = None
     evaluated_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+    lock_handle: Optional[Any] = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return {
+            "decision": self.decision,
+            "decision_code": self.decision_code,
+            "reasons": list(self.reasons),
+            "contract": self.contract,
+            "evaluated_at": self.evaluated_at,
+        }
+
+
+def derive_plan_lock_identity(
+    expected_backend: Optional[str],
+    workspace: str,
+    repository: str,
+    environment: str,
+    plan_id: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Derives canonical hierarchical lock key and deterministic SHA-256 fingerprint
+    from plan lifecycle target parameters, adhering to Section 4 of G10-DISTRIBUTED-LOCKING-ARCHITECTURE.
+    """
+    backend_type = "orchestration"
+    storage_location = repository.replace("/", "-")
+    account_or_project = environment
+    state_key = f"{environment}/terraform.tfstate"
+    ws = workspace or DEFAULT_WORKSPACE
+
+    if expected_backend:
+        eb = expected_backend.strip()
+        if eb.startswith("s3://"):
+            parts = eb[5:].split("/", 1)
+            backend_type = "s3"
+            storage_location = parts[0]
+            account_or_project = environment
+            state_key = parts[1] if len(parts) > 1 and parts[1].strip() else f"{environment}/terraform.tfstate"
+        elif eb.startswith("gs://") or eb.startswith("gcs://"):
+            prefix = "gs://" if eb.startswith("gs://") else "gcs://"
+            parts = eb[len(prefix):].split("/", 1)
+            backend_type = "gcs"
+            storage_location = parts[0]
+            account_or_project = environment
+            state_key = parts[1] if len(parts) > 1 and parts[1].strip() else f"{environment}/terraform.tfstate"
+        elif "blob.core.windows.net" in eb or eb.startswith("azurerm://"):
+            backend_type = "azurerm"
+            if eb.startswith("azurerm://"):
+                parts = eb[10:].split("/", 2)
+                storage_location = parts[1] if len(parts) > 1 else parts[0]
+                account_or_project = parts[0]
+                state_key = parts[2] if len(parts) > 2 else f"{environment}/terraform.tfstate"
+            else:
+                account_or_project = eb.split(".blob.core.windows.net")[0].split("//")[-1]
+                path_part = eb.split(".blob.core.windows.net")[-1].lstrip("/")
+                parts = path_part.split("/", 1)
+                storage_location = parts[0] if parts else "tfstate"
+                state_key = parts[1] if len(parts) > 1 and parts[1].strip() else f"{environment}/terraform.tfstate"
+        elif eb == "local" or eb.startswith("local"):
+            backend_type = "local"
+            storage_location = repository.replace("/", "-")
+            account_or_project = "local"
+            state_key = f"{environment}/terraform.tfstate"
+        else:
+            clean_b = re.sub(r"[^a-zA-Z0-9_\-.:/]", "-", eb).strip("-")
+            backend_type = "orchestration"
+            storage_location = clean_b.replace("/", "-")[:64]
+            account_or_project = environment
+            state_key = f"{environment}/terraform.tfstate"
+
+    storage_location = re.sub(r"[^a-zA-Z0-9_\-.:]", "-", storage_location).strip("-") or "default-location"
+    account_or_project = re.sub(r"[^a-zA-Z0-9_\-.:]", "-", account_or_project).strip("-") or "default-account"
+    state_key = state_key.lstrip("/").replace("\\", "/")
+    state_key = re.sub(r"[^a-zA-Z0-9_\-.:/]", "-", state_key) or "terraform.tfstate"
+
+    return derive_canonical_lock_identity(
+        backend_type=backend_type,
+        storage_location=storage_location,
+        account_or_project=account_or_project,
+        state_key=state_key,
+        workspace=ws,
+        repository=repository,
+        environment=environment,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -419,7 +557,10 @@ class PlanReplayLedger:
                         reserved_at TEXT NOT NULL,
                         consumed_at TEXT,
                         expires_at TEXT NOT NULL,
-                        execution_context TEXT NOT NULL
+                        execution_context TEXT NOT NULL,
+                        lock_id TEXT,
+                        fencing_token INTEGER,
+                        canonical_lock_key TEXT
                     )
                     """
                 )
@@ -433,6 +574,19 @@ class PlanReplayLedger:
                     CREATE INDEX IF NOT EXISTS idx_repo_commit ON plan_executions(repository, commit_sha, environment)
                     """
                 )
+                self._conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_lock_token ON plan_executions(canonical_lock_key, fencing_token)
+                    """
+                )
+
+                # Schema migration check for backward compatibility with existing databases
+                cursor = self._conn.cursor()
+                cursor.execute("PRAGMA table_info(plan_executions)")
+                existing_cols = {row["name"] for row in cursor.fetchall()}
+                for col_name, col_type in [("lock_id", "TEXT"), ("fencing_token", "INTEGER"), ("canonical_lock_key", "TEXT")]:
+                    if col_name not in existing_cols:
+                        cursor.execute(f"ALTER TABLE plan_executions ADD COLUMN {col_name} {col_type}")
 
     def close(self) -> None:
         with self._lock:
@@ -451,10 +605,14 @@ class PlanReplayLedger:
         expires_at: str,
         execution_context: Dict[str, Any],
         current_time: Optional[datetime.datetime] = None,
+        lock_id: Optional[str] = None,
+        fencing_token: Optional[int] = None,
+        canonical_lock_key: Optional[str] = None,
     ) -> None:
         """
-        Atomically reserves a plan for execution.
-        Fails if the plan_id or plan_digest_sha256 has already been reserved, consumed, or failed.
+        Atomically reserves a plan for execution with optional lock authority bindings.
+        Fails if the plan_id or plan_digest_sha256 has already been reserved, consumed, or failed,
+        or if a stale fencing token is provided.
         """
         if not plan_id or not plan_id.strip():
             raise PlanReplayError("INVALID_PLAN_ID: plan_id must be non-empty")
@@ -467,6 +625,29 @@ class PlanReplayLedger:
         with self._lock:
             with self._conn:
                 cursor = self._conn.cursor()
+
+                # Fencing token monotonicity validation
+                if fencing_token is not None:
+                    if not isinstance(fencing_token, int) or fencing_token <= 0:
+                        raise PlanReplayError(f"INVALID_FENCING_TOKEN: fencing_token must be a positive integer, got '{fencing_token}'")
+
+                    if canonical_lock_key:
+                        cursor.execute(
+                            """
+                            SELECT MAX(fencing_token) as max_token
+                            FROM plan_executions
+                            WHERE canonical_lock_key = ?
+                            """,
+                            (canonical_lock_key,),
+                        )
+                        hwm_row = cursor.fetchone()
+                        if hwm_row and hwm_row["max_token"] is not None:
+                            max_token = hwm_row["max_token"]
+                            if fencing_token <= max_token:
+                                raise PlanReplayError(
+                                    f"STALE_FENCING_TOKEN: Provided fencing token {fencing_token} is stale or already recorded; "
+                                    f"ledger high-water mark for '{canonical_lock_key}' is {max_token}"
+                                )
 
                 # Check for existing plan_id or plan_digest_sha256
                 cursor.execute(
@@ -505,8 +686,9 @@ class PlanReplayLedger:
                     """
                     INSERT INTO plan_executions (
                         plan_id, plan_digest_sha256, repository, commit_sha, environment,
-                        status, reserved_at, consumed_at, expires_at, execution_context
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                        status, reserved_at, consumed_at, expires_at, execution_context,
+                        lock_id, fencing_token, canonical_lock_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                     """,
                     (
                         plan_id,
@@ -518,6 +700,9 @@ class PlanReplayLedger:
                         now_iso,
                         expires_at,
                         json.dumps(execution_context, sort_keys=True),
+                        lock_id,
+                        fencing_token,
+                        canonical_lock_key,
                     ),
                 )
 
@@ -525,10 +710,12 @@ class PlanReplayLedger:
         self,
         plan_id: str,
         current_time: Optional[datetime.datetime] = None,
+        lock_id: Optional[str] = None,
+        fencing_token: Optional[int] = None,
     ) -> None:
         """
-        Transitions a RESERVED plan to CONSUMED status upon simulated completion.
-        Fails if the plan is not currently in RESERVED status.
+        Transitions a RESERVED plan to CONSUMED status upon simulated completion,
+        enforcing lock ownership and fencing token validity.
         """
         now = get_current_utc_time(current_time)
         now_iso = now.isoformat()
@@ -538,7 +725,7 @@ class PlanReplayLedger:
                 cursor = self._conn.cursor()
 
                 cursor.execute(
-                    "SELECT status FROM plan_executions WHERE plan_id = ?",
+                    "SELECT status, lock_id, fencing_token, canonical_lock_key FROM plan_executions WHERE plan_id = ?",
                     (plan_id,),
                 )
                 row = cursor.fetchone()
@@ -546,12 +733,47 @@ class PlanReplayLedger:
                     raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{plan_id}' does not exist in ledger")
 
                 current_status = row["status"]
-                if current_status == STATUS_CONSUMED:
+                res_lock_id = row["lock_id"]
+                res_token = row["fencing_token"]
+                res_key = row["canonical_lock_key"]
+
+                # Idempotency check: duplicate consumption by the same owner
+                if current_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                    if lock_id is not None and res_lock_id is not None and lock_id == res_lock_id:
+                        if fencing_token is None or res_token is None or fencing_token == res_token:
+                            return  # Idempotent success
+                    elif lock_id is None and res_lock_id is None:
+                        return  # Idempotent success for non-locked plan
                     raise PlanReplayError(f"ALREADY_CONSUMED: Plan '{plan_id}' has already been consumed")
+
                 if current_status != STATUS_RESERVED:
                     raise PlanReplayError(
                         f"INVALID_STATE_TRANSITION: Cannot consume plan in '{current_status}' state; must be '{STATUS_RESERVED}'"
                     )
+
+                # Validate lock_id if supplied or recorded
+                if lock_id is not None and res_lock_id is not None and lock_id != res_lock_id:
+                    raise PlanReplayError(
+                        f"LOCK_OWNER_MISMATCH: Provided lock_id '{lock_id}' does not match reservation lock_id '{res_lock_id}'"
+                    )
+
+                # Validate fencing_token if supplied or recorded
+                if fencing_token is not None:
+                    if res_token is not None and fencing_token != res_token:
+                        raise PlanReplayError(
+                            f"FENCING_TOKEN_MISMATCH: Provided fencing token {fencing_token} does not match reservation token {res_token}"
+                        )
+                    # Check if a higher fencing token has superseded this key
+                    if res_key:
+                        cursor.execute(
+                            "SELECT MAX(fencing_token) as max_token FROM plan_executions WHERE canonical_lock_key = ?",
+                            (res_key,),
+                        )
+                        hwm_row = cursor.fetchone()
+                        if hwm_row and hwm_row["max_token"] is not None and hwm_row["max_token"] > fencing_token:
+                            raise PlanReplayError(
+                                f"STALE_FENCING_TOKEN: Fencing token {fencing_token} was superseded by higher token {hwm_row['max_token']} on '{res_key}'"
+                            )
 
                 cursor.execute(
                     """
@@ -566,24 +788,28 @@ class PlanReplayLedger:
         self,
         plan_id: str,
         interrupted: bool = False,
+        uncertain: bool = False,
+        lock_id: Optional[str] = None,
+        fencing_token: Optional[int] = None,
     ) -> None:
         """
-        Transitions a RESERVED plan to FAILED or INTERRUPTED status.
+        Transitions a RESERVED plan to FAILED, INTERRUPTED, or OUTCOME_UNCERTAIN status.
         """
-        new_status = STATUS_INTERRUPTED if interrupted else STATUS_FAILED
-        with self._lock:
-            with self._conn:
-                cursor = self._conn.cursor()
-                cursor.execute(
-                    "UPDATE plan_executions SET status = ? WHERE plan_id = ?",
-                    (new_status, plan_id),
-                )
+        if uncertain:
+            new_status = STATUS_OUTCOME_UNCERTAIN
+        elif interrupted:
+            new_status = STATUS_INTERRUPTED
+        else:
+            new_status = STATUS_FAILED
+        self.record_outcome(plan_id=plan_id, status=new_status, lock_id=lock_id, fencing_token=fencing_token)
 
     def record_outcome(
         self,
         plan_id: str,
         status: str,
         current_time: Optional[datetime.datetime] = None,
+        lock_id: Optional[str] = None,
+        fencing_token: Optional[int] = None,
     ) -> None:
         """
         Transitions a RESERVED plan to a final or recovery outcome status.
@@ -599,7 +825,7 @@ class PlanReplayLedger:
             with self._conn:
                 cursor = self._conn.cursor()
                 cursor.execute(
-                    "SELECT status FROM plan_executions WHERE plan_id = ?",
+                    "SELECT status, lock_id, fencing_token, canonical_lock_key FROM plan_executions WHERE plan_id = ?",
                     (plan_id,),
                 )
                 row = cursor.fetchone()
@@ -607,8 +833,45 @@ class PlanReplayLedger:
                     raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{plan_id}' does not exist in ledger")
 
                 current_status = row["status"]
+                res_lock_id = row["lock_id"]
+                res_token = row["fencing_token"]
+                res_key = row["canonical_lock_key"]
+
+                # Idempotency check: if already in the target outcome status
+                if current_status == status:
+                    if lock_id is not None and res_lock_id is not None and lock_id != res_lock_id:
+                        raise PlanReplayError(
+                            f"LOCK_OWNER_MISMATCH: Provided lock_id '{lock_id}' does not match reservation lock_id '{res_lock_id}'"
+                        )
+                    return  # Idempotent re-invocation
+
                 if current_status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                    if status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED):
+                        if lock_id is not None and res_lock_id is not None and lock_id == res_lock_id:
+                            if fencing_token is None or res_token is None or fencing_token == res_token:
+                                return  # Idempotent re-invocation
                     raise PlanReplayError(f"ALREADY_CONSUMED: Plan '{plan_id}' has already been consumed")
+
+                if lock_id is not None and res_lock_id is not None and lock_id != res_lock_id:
+                    raise PlanReplayError(
+                        f"LOCK_OWNER_MISMATCH: Provided lock_id '{lock_id}' does not match reservation lock_id '{res_lock_id}'"
+                    )
+
+                if fencing_token is not None:
+                    if res_token is not None and fencing_token != res_token:
+                        raise PlanReplayError(
+                            f"FENCING_TOKEN_MISMATCH: Provided fencing token {fencing_token} does not match reservation token {res_token}"
+                        )
+                    if res_key:
+                        cursor.execute(
+                            "SELECT MAX(fencing_token) as max_token FROM plan_executions WHERE canonical_lock_key = ?",
+                            (res_key,),
+                        )
+                        hwm_row = cursor.fetchone()
+                        if hwm_row and hwm_row["max_token"] is not None and hwm_row["max_token"] > fencing_token:
+                            raise PlanReplayError(
+                                f"STALE_FENCING_TOKEN: Fencing token {fencing_token} was superseded by higher token {hwm_row['max_token']} on '{res_key}'"
+                            )
 
                 consumed_at = now_iso if status in (STATUS_CONSUMED, STATUS_SIMULATION_COMPLETED) else None
                 cursor.execute(
@@ -627,7 +890,8 @@ class PlanReplayLedger:
             cursor.execute(
                 """
                 SELECT plan_id, plan_digest_sha256, repository, commit_sha, environment,
-                       status, reserved_at, consumed_at, expires_at, execution_context
+                       status, reserved_at, consumed_at, expires_at, execution_context,
+                       lock_id, fencing_token, canonical_lock_key
                 FROM plan_executions WHERE plan_id = ?
                 """,
                 (plan_id,),
@@ -645,11 +909,22 @@ class PlanLifecycleVerifier:
     """
     Unified pre-execution verification engine.
     Validates cryptographic envelope, in-toto provenance authenticity, plan TTL,
-    execution context, state consistency, and ledger replay reservation.
+    execution context, state consistency, ledger replay reservation, and orchestration locking.
     """
 
-    def __init__(self, ledger: Optional[PlanReplayLedger] = None):
+    def __init__(
+        self,
+        ledger: Optional[PlanReplayLedger] = None,
+        lock_manager: Optional[Any] = None,
+        lock_driver: Optional[Any] = None,
+    ):
         self.ledger = ledger or PlanReplayLedger()
+        if lock_manager is not None:
+            self.lock_manager = lock_manager
+        elif lock_driver is not None:
+            self.lock_manager = LockManager(driver=lock_driver)
+        else:
+            self.lock_manager = None
 
     def verify_authorization(
         self,
@@ -671,12 +946,21 @@ class PlanLifecycleVerifier:
         max_ttl_seconds: int = MAX_PLAN_TTL_SECONDS,
         clock_skew_seconds: int = DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS,
         reserve_in_ledger: bool = True,
+        require_lock: bool = False,
+        enable_lock: Optional[bool] = None,
+        lock_manager: Optional[Any] = None,
+        lock_driver: Optional[Any] = None,
+        lock_dir: Optional[str] = None,
+        lock_ttl_seconds: int = 900,
+        lock_handle: Optional[Any] = None,
     ) -> AuthorizationDecision:
         """
         Executes complete verification pipeline.
         Returns AuthorizationDecision with status AUTHORIZED_FOR_SIMULATION or REJECTED.
         """
         reasons: List[str] = []
+        if enable_lock is not None:
+            require_lock = enable_lock
         now = get_current_utc_time(current_time)
 
         # 1. Envelope Schema & Static Structure Check
@@ -781,7 +1065,69 @@ class PlanLifecycleVerifier:
         except StateConsistencyError as e:
             reasons.append(str(e))
 
-        # 6. Replay Prevention Ledger Reservation
+        # 6. Orchestration Lock Acquisition (G10.4)
+        acquired_handle: Optional[Any] = lock_handle
+        mgr = lock_manager or self.lock_manager
+        should_lock = (
+            require_lock
+            or (acquired_handle is not None)
+            or (lock_manager is not None)
+            or (lock_driver is not None)
+            or (self.lock_manager is not None)
+        )
+
+        if should_lock and not reasons:
+            if mgr is None:
+                if lock_driver is not None:
+                    drv = lock_driver
+                else:
+                    drv = LocalFSDriver(base_dir=lock_dir or ".infraflow/locks")
+                mgr = LockManager(driver=drv, default_ttl_seconds=lock_ttl_seconds)
+
+            if acquired_handle is None:
+                canonical_key, fingerprint = derive_plan_lock_identity(
+                    expected_backend=expected_backend or actual_backend,
+                    workspace=expected_workspace,
+                    repository=expected_repo,
+                    environment=expected_environment,
+                    plan_id=plan_id,
+                )
+                owner_id = {
+                    "workflow": context.get("workflow", "reusable-tf-apply.yml"),
+                    "workflow_sha": expected_workflow_sha or context.get("workflow_sha", "unknown"),
+                    "repository": expected_repo,
+                    "commit_sha": expected_commit,
+                    "environment": expected_environment,
+                    "plan_id": plan_id,
+                }
+                plan_bind = {
+                    "plan_id": plan_id,
+                    "plan_digest_sha256": plan_digest,
+                    "target_environment": expected_environment,
+                }
+                try:
+                    acquired_handle = mgr.acquire_lock(
+                        key=canonical_key,
+                        owner_identity=owner_id,
+                        purpose=f"plan-execution-authorization:{plan_id}",
+                        ttl_seconds=lock_ttl_seconds,
+                        plan_binding=plan_bind,
+                    )
+                except LockHeldError as e:
+                    reasons.append(f"LOCK_HELD: Orchestration lock is currently held by another worker: {e}")
+                except LockError as e:
+                    reasons.append(f"LOCK_ACQUISITION_FAILED: {e}")
+                except Exception as e:
+                    reasons.append(f"LOCK_ERROR: Unexpected error acquiring lock: {e}")
+            else:
+                if not acquired_handle.is_active():
+                    reasons.append("LOCK_INVALID: Supplied lock handle is not active or has expired")
+
+        # 7. Replay Prevention Ledger Reservation
+        lock_id_val = acquired_handle.lock_id if acquired_handle else None
+        fencing_token_val = acquired_handle.fencing_token if acquired_handle else None
+        canonical_key_val = acquired_handle.key if acquired_handle else None
+
         if not reasons and reserve_in_ledger:
             try:
                 exec_context = {
@@ -792,6 +1138,11 @@ class PlanLifecycleVerifier:
                     "serial": expected_serial,
                     "workspace": expected_workspace,
                 }
+                if lock_id_val:
+                    exec_context["lock_id"] = lock_id_val
+                    exec_context["fencing_token"] = fencing_token_val
+                    exec_context["canonical_lock_key"] = canonical_key_val
+
                 self.ledger.reserve_plan(
                     plan_id=plan_id,
                     plan_digest_sha256=plan_digest,
@@ -801,9 +1152,25 @@ class PlanLifecycleVerifier:
                     expires_at=expires_at_str or now.isoformat(),
                     execution_context=exec_context,
                     current_time=now,
+                    lock_id=lock_id_val,
+                    fencing_token=fencing_token_val,
+                    canonical_lock_key=canonical_key_val,
                 )
             except PlanReplayError as e:
                 reasons.append(str(e))
+                if acquired_handle and lock_handle is None and mgr:
+                    try:
+                        mgr.release_lock(acquired_handle)
+                    except Exception:
+                        pass
+                    acquired_handle = None
+
+        if reasons and acquired_handle and lock_handle is None and mgr:
+            try:
+                mgr.release_lock(acquired_handle)
+            except Exception:
+                pass
+            acquired_handle = None
 
         # Decision synthesis
         if reasons:
@@ -814,6 +1181,7 @@ class PlanLifecycleVerifier:
                 reasons=reasons,
                 contract=None,
                 evaluated_at=now.isoformat(),
+                lock_handle=None,
             )
 
         contract = PlanAuthorizationContract(
@@ -834,6 +1202,10 @@ class PlanLifecycleVerifier:
             expires_at=lifecycle_meta.get("expires_at_utc", ""),
             provenance_status=provenance_status,
             replay_status=STATUS_RESERVED if reserve_in_ledger else STATUS_AVAILABLE,
+            lock_id=lock_id_val,
+            fencing_token=fencing_token_val,
+            canonical_lock_key=canonical_key_val,
+            lock_authority="InfraFlow-Orchestration-Lock-v1" if lock_id_val else None,
         )
 
         return AuthorizationDecision(
@@ -842,7 +1214,68 @@ class PlanLifecycleVerifier:
             reasons=[],
             contract=asdict(contract),
             evaluated_at=now.isoformat(),
+            lock_handle=acquired_handle,
         )
+
+    def consume_plan(
+        self,
+        plan_id: str,
+        lock_handle: Optional[Any] = None,
+        fencing_token: Optional[int] = None,
+        release_lock: bool = True,
+    ) -> None:
+        """
+        Atomically consumes the plan in the replay ledger, validating lock ownership
+        and fencing token authority, and optionally releases the lock handle.
+        """
+        token = fencing_token or (lock_handle.fencing_token if lock_handle else None)
+        l_id = lock_handle.lock_id if lock_handle else None
+
+        if lock_handle and not lock_handle.is_active():
+            raise StaleOwnerError(
+                f"Cannot consume plan '{plan_id}': Lock handle '{lock_handle.lock_id}' is no longer active (status: {lock_handle.status})"
+            )
+
+        self.ledger.consume_plan(plan_id=plan_id, lock_id=l_id, fencing_token=token)
+
+        if release_lock and lock_handle:
+            if self.lock_manager:
+                self.lock_manager.release_lock(lock_handle)
+            elif hasattr(lock_handle, "manager") and lock_handle.manager:
+                lock_handle.manager.release_lock(lock_handle)
+
+    def fail_plan(
+        self,
+        plan_id: str,
+        interrupted: bool = False,
+        uncertain: bool = False,
+        lock_handle: Optional[Any] = None,
+        fencing_token: Optional[int] = None,
+        release_lock: bool = True,
+    ) -> None:
+        """
+        Transitions the plan to FAILED, INTERRUPTED, or OUTCOME_UNCERTAIN in the ledger,
+        and safely releases the lock handle.
+        """
+        token = fencing_token or (lock_handle.fencing_token if lock_handle else None)
+        l_id = lock_handle.lock_id if lock_handle else None
+
+        self.ledger.fail_plan(
+            plan_id=plan_id,
+            interrupted=interrupted,
+            uncertain=uncertain,
+            lock_id=l_id,
+            fencing_token=token,
+        )
+
+        if release_lock and lock_handle:
+            try:
+                if self.lock_manager:
+                    self.lock_manager.release_lock(lock_handle)
+                elif hasattr(lock_handle, "manager") and lock_handle.manager:
+                    lock_handle.manager.release_lock(lock_handle)
+            except Exception:
+                pass
 
 
 # -----------------------------------------------------------------------------
@@ -912,6 +1345,51 @@ def build_cli_parser() -> argparse.ArgumentParser:
     p_ver.add_argument("--initial-state", action="store_true", help="Allow initial state bootstrap")
     p_ver.add_argument("--current-time", help="Simulated evaluation timestamp (ISO 8601 UTC)")
     p_ver.add_argument("--no-reserve", action="store_true", help="Do not reserve in ledger")
+    p_ver.add_argument("--enable-lock", action="store_true", help="Enable orchestration lock verification")
+    p_ver.add_argument("--lock-dir", default=".infraflow/locks", help="Path to lock storage directory")
+    p_ver.add_argument("--lock-ttl-seconds", type=int, default=900, help="Lock lease duration in seconds")
+    p_ver.add_argument("--lock-driver", default="localfs", choices=["localfs", "mock"], help="Lock driver to use")
+
+    # lock-reserve subcommand
+    p_lr = subparsers.add_parser("lock-reserve", help="Acquire orchestration lock and reserve plan in ledger")
+    p_lr.add_argument("--ledger-db", default=":memory:", help="Path to SQLite ledger database")
+    p_lr.add_argument("--plan-id", required=True, help="Unique plan ID")
+    p_lr.add_argument("--plan-digest", required=True, help="SHA-256 digest of original plan")
+    p_lr.add_argument("--repo", required=True, help="Repository identity")
+    p_lr.add_argument("--commit", required=True, help="Commit SHA")
+    p_lr.add_argument("--environment", required=True, help="Deployment environment")
+    p_lr.add_argument("--expires-at", required=True, help="ISO 8601 UTC expiration timestamp")
+    p_lr.add_argument("--backend", help="Backend identifier URL (e.g. s3://bucket/key)")
+    p_lr.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="Terraform workspace")
+    p_lr.add_argument("--lock-dir", default=".infraflow/locks", help="Path to lock storage directory")
+    p_lr.add_argument("--lock-ttl-seconds", type=int, default=900, help="Lock duration in seconds")
+
+    # lock-consume subcommand
+    p_lc = subparsers.add_parser("lock-consume", help="Consume plan in ledger and release orchestration lock")
+    p_lc.add_argument("--ledger-db", default=":memory:", help="Path to SQLite ledger database")
+    p_lc.add_argument("--plan-id", required=True, help="Plan ID to mark as consumed")
+    p_lc.add_argument("--lock-id", help="Lock ID holding reservation")
+    p_lc.add_argument("--fencing-token", type=int, help="Fencing token holding reservation")
+    p_lc.add_argument("--lock-dir", default=".infraflow/locks", help="Path to lock storage directory")
+    p_lc.add_argument("--idempotent", action="store_true", help="Allow idempotent re-consumption by same owner")
+
+    # lock-fail subcommand
+    p_lf = subparsers.add_parser("lock-fail", help="Transition plan to failed/uncertain and release lock")
+    p_lf.add_argument("--ledger-db", default=":memory:", help="Path to SQLite ledger database")
+    p_lf.add_argument("--plan-id", required=True, help="Plan ID to mark")
+    p_lf.add_argument("--uncertain", action="store_true", help="Mark outcome as OUTCOME_UNCERTAIN")
+    p_lf.add_argument("--interrupted", action="store_true", help="Mark outcome as INTERRUPTED")
+    p_lf.add_argument("--lock-id", help="Lock ID holding reservation")
+    p_lf.add_argument("--fencing-token", type=int, help="Fencing token holding reservation")
+    p_lf.add_argument("--lock-dir", default=".infraflow/locks", help="Path to lock storage directory")
+    p_lf.add_argument("--idempotent", action="store_true", help="Allow idempotent outcome recording")
+
+    # lock-identity subcommand
+    p_lid = subparsers.add_parser("lock-identity", help="Derive canonical lock identity for plan targets")
+    p_lid.add_argument("--backend", help="Backend identifier URL")
+    p_lid.add_argument("--workspace", default=DEFAULT_WORKSPACE, help="Terraform workspace")
+    p_lid.add_argument("--repo", required=True, help="Repository identity")
+    p_lid.add_argument("--environment", required=True, help="Deployment environment")
 
     return parser
 
@@ -980,6 +1458,164 @@ def main() -> int:
             print(json.dumps({"status": "FOUND", "details": status}, indent=2))
             return 0
 
+        elif args.command == "lock-reserve":
+            key, fp = derive_plan_lock_identity(
+                expected_backend=args.backend,
+                workspace=args.workspace,
+                repository=args.repo,
+                environment=args.environment,
+                plan_id=args.plan_id,
+            )
+            driver = LocalFSDriver(base_dir=args.lock_dir)
+            mgr = LockManager(driver=driver, default_ttl_seconds=args.lock_ttl_seconds)
+            owner_id = {
+                "repository": args.repo,
+                "commit_sha": args.commit,
+                "environment": args.environment,
+                "plan_id": args.plan_id,
+            }
+            handle = mgr.acquire_lock(
+                key=key,
+                owner_identity=owner_id,
+                purpose=f"plan-execution-authorization:{args.plan_id}",
+                ttl_seconds=args.lock_ttl_seconds,
+                plan_binding={"plan_id": args.plan_id, "plan_digest_sha256": args.plan_digest},
+            )
+            ledger = PlanReplayLedger(db_path=args.ledger_db)
+            try:
+                ledger.reserve_plan(
+                    plan_id=args.plan_id,
+                    plan_digest_sha256=args.plan_digest,
+                    repository=args.repo,
+                    commit_sha=args.commit,
+                    environment=args.environment,
+                    expires_at=args.expires_at,
+                    execution_context={"source": "cli-lock-reserve"},
+                    lock_id=handle.lock_id,
+                    fencing_token=handle.fencing_token,
+                    canonical_lock_key=handle.key,
+                )
+            except Exception as e:
+                try:
+                    mgr.release_lock(handle)
+                except Exception:
+                    pass
+                raise e
+
+            print(json.dumps({
+                "status": "PASS",
+                "message": f"Plan '{args.plan_id}' reserved with lock '{handle.lock_id}'",
+                "lock_id": handle.lock_id,
+                "fencing_token": handle.fencing_token,
+                "canonical_lock_key": handle.key,
+            }, indent=2))
+            return 0
+
+        elif args.command == "lock-consume":
+            ledger = PlanReplayLedger(db_path=args.ledger_db)
+            plan_meta = ledger.get_plan_status(args.plan_id)
+            if not plan_meta:
+                raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{args.plan_id}' does not exist in ledger")
+            l_id = args.lock_id or plan_meta.get("lock_id")
+            token = args.fencing_token if args.fencing_token is not None else plan_meta.get("fencing_token")
+            canon_key = plan_meta.get("canonical_lock_key")
+
+            try:
+                ledger.consume_plan(
+                    plan_id=args.plan_id,
+                    lock_id=l_id,
+                    fencing_token=token,
+                )
+            except PlanReplayError as e:
+                if getattr(args, "idempotent", False) and "ALREADY_CONSUMED" in str(e):
+                    pass
+                else:
+                    raise e
+
+            if l_id and canon_key:
+                driver = LocalFSDriver(base_dir=args.lock_dir)
+                try:
+                    fp = driver._validate_key(canon_key)
+                    lock_path = driver._resolve_key_path(fp, "lock.json")
+                    if lock_path.exists():
+                        with open(lock_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        rec = LockRecord.from_dict(data)
+                        owner_id_val = rec.descriptor.owner_identity.get("runner_id") or rec.descriptor.owner_identity.get("actor") or ""
+                        lease_gen = rec.lease.lease_generation
+                        tok = token if token is not None else rec.lease.fencing_token
+                        driver.release(
+                            key=canon_key,
+                            lock_id=l_id,
+                            owner_id=owner_id_val,
+                            fencing_token=tok,
+                            lease_generation=lease_gen,
+                        )
+                except Exception:
+                    pass
+
+            print(json.dumps({"status": "PASS", "message": f"Plan '{args.plan_id}' consumed and lock released"}, indent=2))
+            return 0
+
+        elif args.command == "lock-fail":
+            ledger = PlanReplayLedger(db_path=args.ledger_db)
+            plan_meta = ledger.get_plan_status(args.plan_id)
+            if not plan_meta:
+                raise PlanReplayError(f"PLAN_NOT_FOUND: Plan '{args.plan_id}' does not exist in ledger")
+            l_id = args.lock_id or plan_meta.get("lock_id")
+            token = args.fencing_token if args.fencing_token is not None else plan_meta.get("fencing_token")
+            canon_key = plan_meta.get("canonical_lock_key")
+
+            try:
+                ledger.fail_plan(
+                    plan_id=args.plan_id,
+                    interrupted=args.interrupted,
+                    uncertain=args.uncertain,
+                    lock_id=l_id,
+                    fencing_token=token,
+                )
+            except PlanReplayError as e:
+                if getattr(args, "idempotent", False):
+                    pass
+                else:
+                    raise e
+
+            if l_id and canon_key:
+                driver = LocalFSDriver(base_dir=args.lock_dir)
+                try:
+                    fp = driver._validate_key(canon_key)
+                    lock_path = driver._resolve_key_path(fp, "lock.json")
+                    if lock_path.exists():
+                        with open(lock_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        rec = LockRecord.from_dict(data)
+                        owner_id_val = rec.descriptor.owner_identity.get("runner_id") or rec.descriptor.owner_identity.get("actor") or ""
+                        lease_gen = rec.lease.lease_generation
+                        tok = token if token is not None else rec.lease.fencing_token
+                        driver.release(
+                            key=canon_key,
+                            lock_id=l_id,
+                            owner_id=owner_id_val,
+                            fencing_token=tok,
+                            lease_generation=lease_gen,
+                        )
+                except Exception:
+                    pass
+
+            status_name = "OUTCOME_UNCERTAIN" if args.uncertain else ("INTERRUPTED" if args.interrupted else "FAILED")
+            print(json.dumps({"status": "PASS", "message": f"Plan '{args.plan_id}' marked as {status_name} and lock released"}, indent=2))
+            return 0
+
+        elif args.command == "lock-identity":
+            key, fp = derive_plan_lock_identity(
+                expected_backend=args.backend,
+                workspace=args.workspace,
+                repository=args.repo,
+                environment=args.environment,
+            )
+            print(json.dumps({"canonical_lock_key": key, "resource_fingerprint": fp}, indent=2))
+            return 0
+
         elif args.command == "verify":
             if os.path.islink(args.envelope_file):
                 raise PlanEnvelopeError(f"Symlinks are strictly prohibited: '{args.envelope_file}'")
@@ -991,7 +1627,15 @@ def main() -> int:
                 state_data = json.load(f)
 
             ledger = PlanReplayLedger(db_path=args.ledger_db)
-            verifier = PlanLifecycleVerifier(ledger=ledger)
+            lock_drv = None
+            if getattr(args, "enable_lock", False):
+                drv_type = getattr(args, "lock_driver", "localfs")
+                if drv_type == "mock":
+                    lock_drv = MockDistributedDriver()
+                else:
+                    lock_drv = LocalFSDriver(base_dir=getattr(args, "lock_dir", ".infraflow/locks"))
+
+            verifier = PlanLifecycleVerifier(ledger=ledger, lock_driver=lock_drv)
             cur_time = parse_iso_utc(args.current_time) if args.current_time else None
 
             decision = verifier.verify_authorization(
@@ -1011,6 +1655,9 @@ def main() -> int:
                 is_initial_state=args.initial_state,
                 current_time=cur_time,
                 reserve_in_ledger=not args.no_reserve,
+                require_lock=getattr(args, "enable_lock", False),
+                lock_dir=getattr(args, "lock_dir", ".infraflow/locks"),
+                lock_ttl_seconds=getattr(args, "lock_ttl_seconds", 900),
             )
 
             print(json.dumps(decision.to_dict(), indent=2))

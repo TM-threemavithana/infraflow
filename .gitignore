@@ -9,12 +9,24 @@ crash.*.log
 *.tfvars
 !*.example.tfvars
 
+# Local state, locks, and cache
+.infraflow/
+
 # Actionlint and local binaries
 actionlint
 
 # Python cache
 __pycache__/
 *.py[cod]
+
+# Python packaging and virtual environments
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+.venv/
+venv/
 
 # Cryptographic test keys and plan envelopes
 *.kek

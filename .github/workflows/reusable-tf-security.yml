@@ -54,6 +54,9 @@ on:
       conftest-status:
         description: "Outcome of Conftest policy checks (success, failure, skipped)"
         value: ${{ jobs.security-scan.outputs.conftest-status }}
+      secret-scan-status:
+        description: "Outcome of consumer secret scanning (success, failure, skipped)"
+        value: ${{ jobs.security-scan.outputs.secret-scan-status }}
       zizmor-status:
         description: "Outcome of Zizmor workflow analysis (success, failure, skipped)"
         value: ${{ jobs.security-scan.outputs.zizmor-status }}
@@ -76,6 +79,7 @@ jobs:
       tflint-status: ${{ steps.summary.outputs.tflint-status }}
       trivy-status: ${{ steps.summary.outputs.trivy-status }}
       conftest-status: ${{ steps.summary.outputs.conftest-status }}
+      secret-scan-status: ${{ steps.summary.outputs.secret-scan-status }}
       zizmor-status: ${{ steps.summary.outputs.zizmor-status }}
       security-summary: ${{ steps.summary.outputs.security-summary }}
 
@@ -87,6 +91,8 @@ jobs:
           INPUT_VERSION: ${{ inputs.terraform-version }}
           INPUT_POLICY_DIR: ${{ inputs.policy-directory }}
           INPUT_SEVERITY: ${{ inputs.severity-threshold }}
+          ENABLE_TRIVY: ${{ inputs.enable-trivy }}
+          ENABLE_CONFTEST: ${{ inputs.enable-conftest }}
           WORKFLOW_REPO: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
@@ -193,6 +199,16 @@ jobs:
           fi
           echo "Platform identity verified: ${TRUSTED_PLATFORM_REPO}@${WORKFLOW_SHA} (via ref: ${WORKFLOW_REF_TARGET})"
 
+          # 9. Validate mandatory security scanner inputs
+          if [[ "${ENABLE_TRIVY}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Trivy IaC scanning (enable-trivy: false) is prohibited."
+            exit 1
+          fi
+          if [[ "${ENABLE_CONFTEST}" == "false" ]]; then
+            echo "::error::Security Violation: Disabling mandatory Conftest policy evaluation (enable-conftest: false) is prohibited."
+            exit 1
+          fi
+
           echo "All security parameters successfully validated."
           echo "::endgroup::"
 
@@ -222,6 +238,7 @@ jobs:
             # Fallback when running self-tests inside the platform repository itself
             mkdir -p "${PLATFORM_DIR}"
             cp -r "${GITHUB_WORKSPACE}/policies" "${PLATFORM_DIR}/" 2>/dev/null || true
+            cp -r "${GITHUB_WORKSPACE}/scripts" "${PLATFORM_DIR}/" 2>/dev/null || true
             cp "${GITHUB_WORKSPACE}/.tflint.hcl" "${PLATFORM_DIR}/" 2>/dev/null || true
             cp "${GITHUB_WORKSPACE}/.zizmor.yml" "${PLATFORM_DIR}/" 2>/dev/null || true
           fi
@@ -251,6 +268,30 @@ jobs:
           fi
 
           echo "Working directory '${INPUT_DIR}' is verified to exist and is safely contained within GITHUB_WORKSPACE."
+          echo "::endgroup::"
+
+      - name: "Execute Mandatory Consumer Secret Scanner"
+        id: secret_scanner
+        env:
+          INPUT_DIR: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "::group::Executing Mandatory Consumer Secret Scanner"
+          PLATFORM_SCRIPTS_DIR="${RUNNER_TEMP}/infraflow-platform/scripts"
+          TARGET_DIR="${GITHUB_WORKSPACE}/${INPUT_DIR}"
+
+          SCAN_REPORT="${RUNNER_TEMP}/secret-scan-summary.json"
+          if python3 "${PLATFORM_SCRIPTS_DIR}/scan-secrets.py" \
+              --target-dir "${TARGET_DIR}" \
+              --strict \
+              --json > "${SCAN_REPORT}"; then
+            echo "scan-status=passed" >> "${GITHUB_OUTPUT}"
+            echo "Consumer secret scanning passed cleanly."
+          else
+            echo "scan-status=failed" >> "${GITHUB_OUTPUT}"
+            echo "::error::Security Violation: Hardcoded credentials detected in consumer repository. Security gates failed."
+            exit 1
+          fi
           echo "::endgroup::"
 
       - name: "Setup Terraform Toolchain"
@@ -377,6 +418,7 @@ jobs:
         env:
           GUARD_OUTCOME: ${{ steps.guard.outcome }}
           WORKSPACE_OUTCOME: ${{ steps.verify_workspace.outcome }}
+          SECRET_OUTCOME: ${{ steps.secret_scanner.outcome }}
           TFLINT_OUTCOME: ${{ steps.tflint.outcome }}
           TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
           CONFTEST_OUTCOME: ${{ steps.conftest.outcome }}
@@ -386,6 +428,7 @@ jobs:
           TFLINT_STATUS="${TFLINT_OUTCOME:-skipped}"
           TRIVY_STATUS="${TRIVY_OUTCOME:-skipped}"
           CONFTEST_STATUS="${CONFTEST_OUTCOME:-skipped}"
+          SECRET_STATUS="${SECRET_OUTCOME:-skipped}"
           ZIZMOR_STATUS="${ZIZMOR_OUTCOME:-skipped}"
           GUARD_STATUS="${GUARD_OUTCOME:-skipped}"
           WORKSPACE_STATUS="${WORKSPACE_OUTCOME:-skipped}"
@@ -394,8 +437,9 @@ jobs:
             echo "tflint-status=${TFLINT_STATUS}"
             echo "trivy-status=${TRIVY_STATUS}"
             echo "conftest-status=${CONFTEST_STATUS}"
+            echo "secret-scan-status=${SECRET_STATUS}"
             echo "zizmor-status=${ZIZMOR_STATUS}"
-            echo "security-summary=Guard: ${GUARD_STATUS}, TFLint: ${TFLINT_STATUS}, Trivy: ${TRIVY_STATUS}, Conftest: ${CONFTEST_STATUS}, Zizmor: ${ZIZMOR_STATUS}"
+            echo "security-summary=Guard: ${GUARD_STATUS}, SecretScanner: ${SECRET_STATUS}, TFLint: ${TFLINT_STATUS}, Trivy: ${TRIVY_STATUS}, Conftest: ${CONFTEST_STATUS}, Zizmor: ${ZIZMOR_STATUS}"
           } >> "$GITHUB_OUTPUT"
 
           if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -405,6 +449,7 @@ jobs:
           |---|---|---|
           | Input Guard | Security Policy | ${GUARD_STATUS} |
           | Workspace Containment | Runner Sandbox | ${WORKSPACE_STATUS} |
+          | Secret Defense | SecretScanner | ${SECRET_STATUS} |
           | Static Code Linting | TFLint | ${TFLINT_STATUS} |
           | IaC Misconfiguration | Trivy | ${TRIVY_STATUS} |
           | Policy as Code | Conftest / OPA | ${CONFTEST_STATUS} |

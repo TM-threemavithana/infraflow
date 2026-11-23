@@ -2274,7 +2274,7 @@ WORKFLOW_DUAL_SCAN_ENFORCED=false
 if python3 -c "
 lines = open('${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml').read()
 summary_step = lines.split('id: summary')[1].split('  attest:')[0]
-assert 'if [[ \"\${TRIVY_STATUS}\" == \"success\" && \"\${CONFTEST_STATUS}\" == \"success\" ]]; then' in summary_step
+assert 'if [[ \"\${TRIVY_STATUS}\" == \"success\" && \"\${CONFTEST_STATUS}\" == \"success\"' in summary_step
 assert 'SECURITY_STATUS=\"success\"' in summary_step
 assert 'SECURITY_STATUS=\"failure\"' in summary_step
 assert 'echo \"trivy-status=\${TRIVY_STATUS}\"' in summary_step
@@ -3175,7 +3175,7 @@ else
 fi
 
 # Test 16.2: G06 Cryptographic unit test suite (20 tests)
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" >/dev/null 2>&1; then
+if python3 -m unittest "${REPO_ROOT}/tests/test_kms_envelope.py" >/dev/null 2>&1; then
   record_pass "G06 Cryptographic Suite [2/24]: All 20 unit tests passed (test_kms_envelope.py)"
 else
   record_fail "G06 Cryptographic Suite [2/24]: Unit tests" "One or more tests in tests/test_kms_envelope.py failed"
@@ -3288,8 +3288,8 @@ else
 fi
 
 # Test 16.10: Full G06 unit test suite (test_kms_envelope.py + test_plan_lifecycle.py)
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p "test_*.py" >/dev/null 2>&1; then
-  record_pass "G06 Full Test Suite [10/24]: All unit tests passed"
+if python3 -m unittest "${REPO_ROOT}/tests/test_kms_envelope.py" "${REPO_ROOT}/tests/test_plan_lifecycle.py" >/dev/null 2>&1; then
+  record_pass "G06 Full Test Suite [10/24]: All G06 unit tests passed"
 else
   record_fail "G06 Full Test Suite [10/24]: Unit tests" "One or more tests in tests directory failed"
 fi
@@ -4788,9 +4788,15 @@ else
 fi
 
 # Test 20.12: Full Platform Test Suite passing
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
+TMP_P20_LOG="$(mktemp /tmp/p20_test_XXXXXX.log)"
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >"${TMP_P20_LOG}" 2>&1; then
   record_pass "Platform Python Test Suite [12/12]: All 406 platform tests passed (tests/test_*.py)"
+  rm -f "${TMP_P20_LOG}"
 else
+  echo -e "\n--- Test 20.12 Failure Output ---"
+  tail -n 30 "${TMP_P20_LOG}"
+  echo -e "---------------------------------\n"
+  rm -f "${TMP_P20_LOG}"
   record_fail "Platform Python Test Suite [12/12]: Platform test suite" "One or more platform tests failed"
 fi
 
@@ -4906,9 +4912,15 @@ else
 fi
 
 # Test 21.13: Full Platform Python Test Suite (437 tests)
-if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >/dev/null 2>&1; then
+TMP_P21_LOG="$(mktemp /tmp/p21_test_XXXXXX.log)"
+if python3 -m unittest discover -s "${REPO_ROOT}/tests" -p 'test_*.py' >"${TMP_P21_LOG}" 2>&1; then
   record_pass "Platform Python Test Suite [13/14]: All 437 platform tests passed (tests/test_*.py)"
+  rm -f "${TMP_P21_LOG}"
 else
+  echo -e "\n--- Test 21.13 Failure Output ---"
+  tail -n 30 "${TMP_P21_LOG}"
+  echo -e "---------------------------------\n"
+  rm -f "${TMP_P21_LOG}"
   record_fail "Platform Python Test Suite [13/14]: Platform test suite" "One or more platform tests failed"
 fi
 
@@ -5838,6 +5850,900 @@ else
   record_fail "Operational Maturity Adversarial Suite [15/15]: Test suite" "One or more tests in test_operational_maturity.py failed"
 fi
 
+# ==============================================================================
+# SECTION 26: Unified Platform Developer Experience, CLI & Diagnostic Engine (G10.1)
+# ==============================================================================
+log_header "26. Unified Platform Developer Experience, CLI & Diagnostic Engine (G10.1)"
+
+# Test 26.1: scripts/infraflow-cli.py exists and is executable
+if [[ -f "${REPO_ROOT}/scripts/infraflow-cli.py" && -x "${REPO_ROOT}/scripts/infraflow-cli.py" ]]; then
+  record_pass "Unified Platform CLI [1/20]: scripts/infraflow-cli.py exists and is executable"
+else
+  record_fail "Unified Platform CLI [1/20]: CLI check" "scripts/infraflow-cli.py missing or not executable"
+fi
+
+# Test 26.2: Version command reports 0.7.0 and canonical reference
+CLI_VER_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --version 2>&1)"
+if [[ "${CLI_VER_OUT}" == *"infraflow version 0.7.0"* && "${CLI_VER_OUT}" == *"TM-threemavithana/infraflow"* ]]; then
+  record_pass "Platform Version Flag [2/20]: --version returns platform version 0.7.0 and canonical reference"
+else
+  record_fail "Platform Version Flag [2/20]: Version check" "Expected version 0.7.0, got: ${CLI_VER_OUT}"
+fi
+
+# Test 26.3: Help command enumerates all required subcommands
+CLI_HELP_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" --help 2>&1)"
+if [[ "${CLI_HELP_OUT}" == *"doctor"* && "${CLI_HELP_OUT}" == *"validate"* && "${CLI_HELP_OUT}" == *"drift"* && "${CLI_HELP_OUT}" == *"upgrade"* && "${CLI_HELP_OUT}" == *"init"* && "${CLI_HELP_OUT}" == *"register"* ]]; then
+  record_pass "Platform Help & Discovery [3/20]: --help lists doctor, validate, drift, upgrade, init, and register"
+else
+  record_fail "Platform Help & Discovery [3/20]: Help check" "Help output missing required subcommands"
+fi
+
+# Test 26.4: Platform Doctor non-destructive execution passes cleanly
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" doctor >/dev/null 2>&1; then
+  record_pass "Platform Doctor Engine [4/20]: doctor executes and reports healthy platform state (exit code 0)"
+else
+  record_fail "Platform Doctor Engine [4/20]: Doctor check" "Platform doctor returned unexpected failure"
+fi
+
+# Test 26.5: Platform Doctor JSON emission contains all 12 diagnostic checks
+TMP_DOC_JSON="$(mktemp -t doc_json_XXXXXX.json)"
+python3 "${REPO_ROOT}/scripts/infraflow-cli.py" doctor --json > "${TMP_DOC_JSON}" 2>&1
+if [[ -s "${TMP_DOC_JSON}" ]] && \
+   grep -q '"overall_status": "HEALTHY"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-01-PYTHON"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-02-TERRAFORM"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-06-CONFTEST"' "${TMP_DOC_JSON}" && \
+   grep -q '"DOC-12-GITSTATE"' "${TMP_DOC_JSON}"; then
+  record_pass "Platform Doctor JSON API [5/20]: doctor --json produces structured 12-check diagnostic payload"
+else
+  record_fail "Platform Doctor JSON API [5/20]: JSON check" "Doctor JSON missing expected diagnostic checks"
+fi
+rm -f "${TMP_DOC_JSON}"
+
+# Test 26.6: Consumer onboarding validation via unified CLI
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
+    --config "${REPO_ROOT}/fixtures/consumers/networking/infraflow.config.yaml" \
+    --quiet >/dev/null 2>&1; then
+  record_pass "Consumer Config Validator [6/20]: validate --config succeeds on valid consumer fixture"
+else
+  record_fail "Consumer Config Validator [6/20]: Config check" "validate --config failed on compliant consumer config"
+fi
+
+# Test 26.7: Fleet manifest validation via unified CLI
+TMP_VAL_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate -m "${REPO_ROOT}/config/fleet-manifest.yaml" 2>&1)"
+if [[ "${TMP_VAL_OUT}" == *"Fleet Manifest Valid"* && "${TMP_VAL_OUT}" == *"be51718f06a2662099500a710e93e6e8201b4f1c"* ]]; then
+  record_pass "Fleet Manifest Validator [7/20]: validate -m verifies fleet manifest schema and candidate SHA"
+else
+  record_fail "Fleet Manifest Validator [7/20]: Manifest check" "validate -m failed on config/fleet-manifest.yaml"
+fi
+
+# Test 26.8: OPA policy evaluation with policy error enhancement
+TMP_POL_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
+    -p "${REPO_ROOT}/policies/aws/s3.rego" \
+    -i "${REPO_ROOT}/fixtures/security/policies/invalid-aws/main.tf" \
+    -n "aws.s3" 2>&1 || true)"
+if [[ "${TMP_POL_OUT}" == *"AWS-SEC-S3-ACL-001"* && \
+      "${TMP_POL_OUT}" == *"CRITICAL"* && \
+      "${TMP_POL_OUT}" == *"aws_s3_bucket.bad_acl_bucket"* && \
+      "${TMP_POL_OUT}" == *"main.tf:5"* && \
+      "${TMP_POL_OUT}" == *"Remediation:"* ]]; then
+  record_pass "Policy Error Enhancement [8/20]: Enhanced policy diagnostics map violation ID, line, and remediation"
+else
+  record_fail "Policy Error Enhancement [8/20]: Diagnostic check" "Enhanced policy output missing mapped fields: ${TMP_POL_OUT}"
+fi
+
+# Test 26.9: Drift detection simulation (clean state -> NO_DRIFT)
+TMP_DRIFT_CLEAN="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" drift \
+    -e "${REPO_ROOT}/fixtures/drift/aws/clean/expected.json" \
+    -o "${REPO_ROOT}/fixtures/drift/aws/clean/observed.json" 2>&1)"
+if [[ "${TMP_DRIFT_CLEAN}" == *"Verdict: NO_DRIFT"* ]]; then
+  record_pass "Drift Detection Simulator [9/20]: drift reports NO_DRIFT on clean state snapshots"
+else
+  record_fail "Drift Detection Simulator [9/20]: Clean drift check" "Expected NO_DRIFT, got: ${TMP_DRIFT_CLEAN}"
+fi
+
+# Test 26.10: Zero-drift enforcement gate fails closed on drift
+if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" drift \
+    -e "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/expected.json" \
+    -o "${REPO_ROOT}/fixtures/drift/aws/attribute-drift/observed.json" \
+    --enforce-zero-drift >/dev/null 2>&1; then
+  record_pass "Zero-Drift Enforcement Gate [10/20]: --enforce-zero-drift exits with code 1 on detected drift"
+else
+  record_fail "Zero-Drift Enforcement Gate [10/20]: Gate check" "Drift gate unexpectedly passed on drifted state"
+fi
+
+# Test 26.11: Fleet upgrade planning dry-run via unified CLI
+TMP_UP_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" upgrade \
+    -m "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --plan 2>&1)"
+if [[ "${TMP_UP_OUT}" == *"InfraFlow Fleet Upgrade Plan (Dry-Run)"* && \
+      "${TMP_UP_OUT}" == *"Stage 1 — Canary Rollout"* && \
+      "${TMP_UP_OUT}" == *"Stage 2 — Progressive Rollout"* ]]; then
+  record_pass "Fleet Upgrade Planner [11/20]: upgrade --plan generates staged canary/progressive rollout plan"
+else
+  record_fail "Fleet Upgrade Planner [11/20]: Upgrade check" "Upgrade plan output missing expected stages: ${TMP_UP_OUT}"
+fi
+
+# Test 26.12: Security controls: symlink rejection & secret sanitization
+TMP_SYM_DIR="$(mktemp -d -t sym_dir_XXXXXX)"
+ln -s "${REPO_ROOT}/config/fleet-manifest.yaml" "${TMP_SYM_DIR}/sym_manifest.yaml"
+if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" validate \
+    -m "${TMP_SYM_DIR}/sym_manifest.yaml" >/dev/null 2>&1; then
+  record_pass "Fail-Closed Security Invariant [12/20]: Symlink input paths rejected with security exit code"
+else
+  record_fail "Fail-Closed Security Invariant [12/20]: Symlink check" "Symlinked manifest unexpectedly accepted by CLI"
+fi
+rm -rf "${TMP_SYM_DIR}"
+
+# Test 26.13: Packaging files exist and define PEP 517/621 entrypoints (pyproject.toml, setup.py)
+if [[ -f "${REPO_ROOT}/pyproject.toml" && -f "${REPO_ROOT}/setup.py" ]] && \
+   grep -q 'name = "infraflow"' "${REPO_ROOT}/pyproject.toml" && \
+   grep -q 'infraflow = "infraflow.cli:main"' "${REPO_ROOT}/pyproject.toml"; then
+  record_pass "Python Packaging Specification [13/20]: pyproject.toml defines PEP 517/621 build and [project.scripts] entry point"
+else
+  record_fail "Python Packaging Specification [13/20]: Packaging check" "pyproject.toml or setup.py missing or misconfigured"
+fi
+
+# Test 26.14: Python module execution parity (-m infraflow.cli)
+TMP_MOD_OUT="$(python3 -m infraflow.cli --version 2>&1 || true)"
+if [[ "${TMP_MOD_OUT}" == *"infraflow version 0.7.0"* ]]; then
+  record_pass "Module Invocation Parity [14/20]: python3 -m infraflow.cli --version succeeds with platform version"
+else
+  record_fail "Module Invocation Parity [14/20]: Module execution" "python3 -m infraflow.cli failed or wrong version: ${TMP_MOD_OUT}"
+fi
+
+# Test 26.15: Package import and runtime metadata validation
+if python3 -c 'import infraflow; assert infraflow.__version__ == "0.7.0"; assert "infraflow" in infraflow.__canonical_ref__' >/dev/null 2>&1; then
+  record_pass "Package Import & Metadata [15/20]: Package infraflow imports cleanly and exposes canonical __version__"
+else
+  record_fail "Package Import & Metadata [15/20]: Metadata check" "import infraflow failed or invalid metadata"
+fi
+
+# Test 26.16: Dedicated 26-test unified CLI test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_cli.py" >/dev/null 2>&1; then
+  record_pass "Unified CLI Test Suite [16/20]: Dedicated 26-test suite passed (test_cli.py)"
+else
+  record_fail "Unified CLI Test Suite [16/20]: Test suite" "One or more tests in test_cli.py failed"
+fi
+
+# Test 26.17: Self-service consumer project scaffolding (infraflow init)
+TMP_SCAF_DIR="$(mktemp -d -t scaf_XXXXXX)"
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" init \
+    -n "val-scaf-consumer" \
+    -a "azure" \
+    -o "${TMP_SCAF_DIR}/consumer" \
+    --quiet >/dev/null 2>&1 && \
+   [[ -f "${TMP_SCAF_DIR}/consumer/infraflow.config.yaml" && \
+      -f "${TMP_SCAF_DIR}/consumer/.github/workflows/infraflow-ci.yml" && \
+      -f "${TMP_SCAF_DIR}/consumer/terraform/main.tf" ]]; then
+  record_pass "Consumer Project Scaffolding [17/20]: infraflow init generates complete compliant consumer project"
+else
+  record_fail "Consumer Project Scaffolding [17/20]: Scaffolding check" "infraflow init failed or generated incomplete project"
+fi
+
+# Test 26.18: Overwrite safeguard on non-empty directory
+if ! python3 "${REPO_ROOT}/scripts/infraflow-cli.py" init \
+    -n "val-scaf-consumer" \
+    -a "azure" \
+    -o "${TMP_SCAF_DIR}/consumer" >/dev/null 2>&1; then
+  record_pass "Overwrite Safeguard Invariant [18/20]: Scaffolding into non-empty directory rejected without --force"
+else
+  record_fail "Overwrite Safeguard Invariant [18/20]: Overwrite check" "Scaffolding unexpectedly overwrote non-empty directory"
+fi
+
+# Test 26.19: Consumer fleet registration preview & dry-run
+TMP_REG_OUT="$(python3 "${REPO_ROOT}/scripts/infraflow-cli.py" register \
+    -c "${TMP_SCAF_DIR}/consumer/infraflow.config.yaml" \
+    -m "${REPO_ROOT}/config/fleet-manifest.yaml" \
+    --dry-run 2>&1 || true)"
+if [[ "${TMP_REG_OUT}" == *"InfraFlow Fleet Registration Preview"* && \
+      "${TMP_REG_OUT}" == *"val-scaf-consumer"* && \
+      "${TMP_REG_OUT}" == *"Zero disk modifications made"* ]]; then
+  record_pass "Consumer Registration Preview [19/20]: infraflow register --dry-run generates safe preview diff"
+else
+  record_fail "Consumer Registration Preview [19/20]: Registration check" "register --dry-run failed: ${TMP_REG_OUT}"
+fi
+rm -rf "${TMP_SCAF_DIR}"
+
+# Test 26.20: Dedicated 18-test scaffolding & registration test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_scaffolding.py" >/dev/null 2>&1; then
+  record_pass "Scaffolding Test Suite [20/20]: Dedicated 18-test suite passed (test_scaffolding.py)"
+else
+  record_fail "Scaffolding Test Suite [20/20]: Test suite" "One or more tests in test_scaffolding.py failed"
+fi
+
+# ==============================================================================
+# 27. Consumer Secret Defense & Semantic Destruction Protection (G10.3)
+# ==============================================================================
+log_header "27. Consumer Secret Defense & Semantic Destruction Protection (G10.3)"
+
+# Test 27.1: Secret scanner script exists and is executable
+if [[ -x "${REPO_ROOT}/scripts/scan-secrets.py" ]]; then
+  record_pass "Secret Scanning Tooling [1/15]: scripts/scan-secrets.py exists and is executable"
+else
+  record_fail "Secret Scanning Tooling [1/15]: Executable check" "scripts/scan-secrets.py missing or not executable"
+fi
+
+# Test 27.2: Secret scanner CLI help
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --help >/dev/null 2>&1; then
+  record_pass "Secret Scanner CLI Help [2/15]: scan-secrets.py --help executes successfully"
+else
+  record_fail "Secret Scanner CLI Help [2/15]: Help check" "scan-secrets.py --help returned non-zero code"
+fi
+
+# Test 27.3: Clean repository scan passes
+TMP_SEC_CLEAN="$(mktemp -d -t sec_clean_XXXXXX)"
+echo 'resource "terraform_data" "clean" {}' > "${TMP_SEC_CLEAN}/main.tf"
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_CLEAN}" --json > "${TMP_SEC_CLEAN}/out.json" 2>&1; then
+  record_pass "Clean Directory Scan [3/15]: Clean repository passes secret scan with status PASS"
+else
+  record_fail "Clean Directory Scan [3/15]: Clean scan" "scan-secrets.py unexpectedly failed on clean directory"
+fi
+rm -rf "${TMP_SEC_CLEAN}"
+
+# Test 27.4: Credential detection gate (fail-closed on secrets)
+TMP_SEC_DIRTY="$(mktemp -d -t sec_dirty_XXXXXX)"
+echo 'aws_key = "AKIAIOSFODNN7MINEKEY"' > "${TMP_SEC_DIRTY}/creds.tf" # gitleaks:allow
+if ! python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_DIRTY}" --strict --json > "${TMP_SEC_DIRTY}/out.json" 2>&1; then
+  record_pass "Credential Detection Gate [4/15]: Exposed AWS access key rejected with non-zero exit code"
+else
+  record_fail "Credential Detection Gate [4/15]: Detection check" "scan-secrets.py failed to reject exposed AWS key"
+fi
+
+# Test 27.5: Zero raw secret leakage in output / report
+if ! grep -q "AKIAIOSFODNN7MINEKEY" "${TMP_SEC_DIRTY}/out.json" && grep -q "AKIA" "${TMP_SEC_DIRTY}/out.json"; then # gitleaks:allow
+  record_pass "Zero-Leakage Invariant [5/15]: Raw credential redacted with zero secret exposure in reports"
+else
+  record_fail "Zero-Leakage Invariant [5/15]: Redaction check" "Raw credential found unredacted in scan report"
+fi
+rm -rf "${TMP_SEC_DIRTY}"
+
+# Test 27.6: Binary plan file exclusion
+TMP_SEC_BIN="$(mktemp -d -t sec_bin_XXXXXX)"
+printf '\x00\x01\x02TFPLAN_BINARY_AKIAIOSFODNN7MINEKEY\x00' > "${TMP_SEC_BIN}/tfplan.binary"
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_BIN}" --json > "${TMP_SEC_BIN}/out.json" 2>&1; then
+  record_pass "Binary File Exclusion [6/15]: Binary Terraform plan files skipped without false-positive detection"
+else
+  record_fail "Binary File Exclusion [6/15]: Binary check" "scan-secrets.py failed or falsely flagged binary plan"
+fi
+rm -rf "${TMP_SEC_BIN}"
+
+# Test 27.7: Variable reference & placeholder filtering
+TMP_SEC_PH="$(mktemp -d -t sec_ph_XXXXXX)"
+# shellcheck disable=SC2016
+echo 'db_pass = "${var.db_password}"' > "${TMP_SEC_PH}/vars.tf"
+if python3 "${REPO_ROOT}/scripts/scan-secrets.py" --target-dir "${TMP_SEC_PH}" --json > "${TMP_SEC_PH}/out.json" 2>&1; then
+  record_pass "Placeholder Filtering [7/15]: Variable interpolations and placeholders safely ignored"
+else
+  record_fail "Placeholder Filtering [7/15]: Placeholder check" "scan-secrets.py falsely flagged variable reference"
+fi
+rm -rf "${TMP_SEC_PH}"
+
+# Test 27.8: Dedicated 18-test secret scanner test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_secret_scanner.py" >/dev/null 2>&1; then
+  record_pass "Secret Scanner Test Suite [8/15]: Dedicated 18-test suite passed (test_secret_scanner.py)"
+else
+  record_fail "Secret Scanner Test Suite [8/15]: Test suite" "One or more tests in test_secret_scanner.py failed"
+fi
+
+# Test 27.9: Semantic critical resources policy file exists
+if [[ -f "${REPO_ROOT}/policies/common/critical_resources.rego" && -f "${REPO_ROOT}/policies/common/critical_resources_test.rego" ]]; then
+  record_pass "Semantic Policy Presence [9/15]: policies/common/critical_resources.rego verified intact"
+else
+  record_fail "Semantic Policy Presence [9/15]: Policy check" "critical_resources.rego or test missing"
+fi
+
+# Test 27.10: Conftest policy verification
+if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies/common" >/dev/null 2>&1; then
+  record_pass "Policy Verification [10/15]: conftest verify passed all 64 unit tests in policies/common"
+else
+  record_fail "Policy Verification [10/15]: Conftest verify" "conftest verify failed on policies/common"
+fi
+
+# Test 27.11: Semantic critical resource deletion gate
+TMP_PLAN_DEL="$(mktemp -d -t plan_del_XXXXXX)"
+cat << 'EOF' > "${TMP_PLAN_DEL}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.primary",
+      "type": "aws_db_instance",
+      "change": {"actions": ["delete"]}
+    }
+  ]
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_PLAN_DEL}/plan.json" --no-color > "${TMP_PLAN_DEL}/out.txt" 2>&1 && \
+   grep -q "Direct deletion of critical resource 'aws_db_instance.primary'" "${TMP_PLAN_DEL}/out.txt"; then
+  record_pass "Critical Deletion Gate [11/15]: Direct database deletion strictly blocked by semantic policy"
+else
+  record_fail "Critical Deletion Gate [11/15]: Deletion gate" "conftest failed to block database deletion: $(cat "${TMP_PLAN_DEL}/out.txt")"
+fi
+rm -rf "${TMP_PLAN_DEL}"
+
+# Test 27.12: Semantic replacement gate (destroy-before-create)
+TMP_PLAN_REP="$(mktemp -d -t plan_rep_XXXXXX)"
+cat << 'EOF' > "${TMP_PLAN_REP}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_kms_key.master",
+      "type": "aws_kms_key",
+      "change": {"actions": ["delete", "create"]}
+    }
+  ]
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_PLAN_REP}/plan.json" --no-color > "${TMP_PLAN_REP}/out.txt" 2>&1 && \
+   grep -q "Dangerous destroy-before-create replacement" "${TMP_PLAN_REP}/out.txt"; then
+  record_pass "Critical Replacement Gate [12/15]: Destroy-before-create KMS replacement strictly blocked"
+else
+  record_fail "Critical Replacement Gate [12/15]: Replacement gate" "conftest failed to block KMS replacement: $(cat "${TMP_PLAN_REP}/out.txt")"
+fi
+rm -rf "${TMP_PLAN_REP}"
+
+# Test 27.13: Generic confirmation token rejection
+TMP_PLAN_GEN="$(mktemp -d -t plan_gen_XXXXXX)"
+cat << 'EOF' > "${TMP_PLAN_GEN}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "azurerm_key_vault.secrets",
+      "type": "azurerm_key_vault",
+      "change": {"actions": ["delete"]}
+    }
+  ],
+  "infraflow_authorization": {
+    "authorized": true,
+    "token": "confirm"
+  }
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_PLAN_GEN}/plan.json" --no-color > "${TMP_PLAN_GEN}/out.txt" 2>&1 && \
+   grep -q "Generic confirmation token 'confirm' is rejected" "${TMP_PLAN_GEN}/out.txt"; then
+  record_pass "Generic Token Gate [13/15]: Generic approval token 'confirm' strictly rejected"
+else
+  record_fail "Generic Token Gate [13/15]: Token check" "conftest failed to reject generic token: $(cat "${TMP_PLAN_GEN}/out.txt")"
+fi
+rm -rf "${TMP_PLAN_GEN}"
+
+# Test 27.14: Consumer governance enforcement: disabling mandatory scanners rejected
+TMP_GOV_BAD="$(mktemp -d -t gov_bad_XXXXXX)"
+cat << 'EOF' > "${TMP_GOV_BAD}/infraflow.config.yaml"
+version: "1.0"
+consumer_id: "val-gov-bad"
+team: "platform"
+workload_type: "general"
+terraform_dir: "terraform"
+environment: "dev"
+adapter: "aws"
+platform_ref: "TM-threemavithana/infraflow"
+platform_sha: "8fd761bb42165435e1162f37ee39df15d5532b09"
+terraform_version: "1.10.4"
+security_controls:
+  enforce_mandatory_scanners: false
+  fail_on_destructive: true
+  max_allowed_deletions: 5
+EOF
+mkdir -p "${TMP_GOV_BAD}/terraform"
+echo 'resource "terraform_data" "x" {}' > "${TMP_GOV_BAD}/terraform/main.tf"
+if ! python3 "${REPO_ROOT}/scripts/validate-consumer.py" --config "${TMP_GOV_BAD}/infraflow.config.yaml" --repo-dir "${TMP_GOV_BAD}" > "${TMP_GOV_BAD}/out.txt" 2>&1 && \
+   grep -q "enforce_mandatory_scanners must be strictly" "${TMP_GOV_BAD}/out.txt"; then
+  record_pass "Governance Enforcement [14/15]: Consumer attempting enforce_mandatory_scanners: false rejected"
+else
+  record_fail "Governance Enforcement [14/15]: Governance check" "validate-consumer.py accepted disabled scanners"
+fi
+rm -rf "${TMP_GOV_BAD}"
+
+# Test 27.15: Dedicated 19-test semantic destruction test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_critical_resources.py" >/dev/null 2>&1; then
+  record_pass "Semantic Destruction Test Suite [15/15]: Dedicated 19-test suite passed (test_critical_resources.py)"
+else
+  record_fail "Semantic Destruction Test Suite [15/15]: Test suite" "One or more tests in test_critical_resources.py failed"
+fi
+
+# ==============================================================================
+# 28. Security Integration Assurance (G10.3.1)
+# ==============================================================================
+log_header "28. Security Integration Assurance (G10.3.1)"
+
+# Test 28.1: Reusable plan workflow enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml"; then
+  record_pass "Plan Workflow Secret Scanning [1/13]: reusable-tf-plan.yml executes mandatory secret scanner"
+else
+  record_fail "Plan Workflow Secret Scanning [1/13]: Step presence" "reusable-tf-plan.yml missing secret scanner step or output"
+fi
+
+# Test 28.2: Reusable AWS adapter enforces secret scanning in authenticated & cloudfree jobs
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml"; then
+  record_pass "AWS Adapter Secret Scanning [2/13]: reusable-tf-aws.yml executes mandatory secret scanner"
+else
+  record_fail "AWS Adapter Secret Scanning [2/13]: Step presence" "reusable-tf-aws.yml missing secret scanner step or output"
+fi
+
+# Test 28.3: Reusable Azure adapter enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml"; then
+  record_pass "Azure Adapter Secret Scanning [3/13]: reusable-tf-azure.yml executes mandatory secret scanner"
+else
+  record_fail "Azure Adapter Secret Scanning [3/13]: Step presence" "reusable-tf-azure.yml missing secret scanner step or output"
+fi
+
+# Test 28.4: Reusable GCP adapter enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml"; then
+  record_pass "GCP Adapter Secret Scanning [4/13]: reusable-tf-gcp.yml executes mandatory secret scanner"
+else
+  record_fail "GCP Adapter Secret Scanning [4/13]: Step presence" "reusable-tf-gcp.yml missing secret scanner step or output"
+fi
+
+# Test 28.5: Reusable security workflow enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-security.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-security.yml"; then
+  record_pass "Security Workflow Secret Scanning [5/13]: reusable-tf-security.yml executes mandatory secret scanner"
+else
+  record_fail "Security Workflow Secret Scanning [5/13]: Step presence" "reusable-tf-security.yml missing secret scanner step or output"
+fi
+
+# Test 28.6: Reusable governance workflow enforces secret scanning step and output
+if grep -q "Execute Mandatory Consumer Secret Scanner" "${REPO_ROOT}/.github/workflows/reusable-tf-governance.yml" && \
+   grep -q "secret-scan-status" "${REPO_ROOT}/.github/workflows/reusable-tf-governance.yml"; then
+  record_pass "Governance Workflow Secret Scanning [6/13]: reusable-tf-governance.yml executes mandatory secret scanner"
+else
+  record_fail "Governance Workflow Secret Scanning [6/13]: Step presence" "reusable-tf-governance.yml missing secret scanner step or output"
+fi
+
+# Test 28.7: Azure Conftest evaluates all namespaces
+if grep -q "conftest test --all-namespaces" "${REPO_ROOT}/.github/workflows/reusable-tf-azure.yml"; then
+  record_pass "Azure Namespace Enforcement [7/13]: reusable-tf-azure.yml evaluates all OPA namespaces"
+else
+  record_fail "Azure Namespace Enforcement [7/13]: Flag check" "reusable-tf-azure.yml missing --all-namespaces flag"
+fi
+
+# Test 28.8: GCP Conftest evaluates all namespaces
+if grep -q "conftest test --all-namespaces" "${REPO_ROOT}/.github/workflows/reusable-tf-gcp.yml"; then
+  record_pass "GCP Namespace Enforcement [8/13]: reusable-tf-gcp.yml evaluates all OPA namespaces"
+else
+  record_fail "GCP Namespace Enforcement [8/13]: Flag check" "reusable-tf-gcp.yml missing --all-namespaces flag"
+fi
+
+# Test 28.9: Unauthorized decommissioning strictly rejected (heuristic bypass closed)
+TMP_UNAUTH_DEC="$(mktemp -d -t unauth_dec_XXXXXX)"
+cat << 'EOF' > "${TMP_UNAUTH_DEC}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.decommissioned_bucket",
+      "type": "aws_s3_bucket",
+      "change": {"actions": ["delete"]}
+    }
+  ]
+}
+EOF
+if ! "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_UNAUTH_DEC}/plan.json" --no-color > "${TMP_UNAUTH_DEC}/out.txt" 2>&1 && \
+   grep -q "Direct deletion of critical resource 'aws_s3_bucket.decommissioned_bucket'" "${TMP_UNAUTH_DEC}/out.txt"; then
+  record_pass "Unauthorized Decommission Gate [9/13]: Substring bypass closed; unauthorized decommission rejected"
+else
+  record_fail "Unauthorized Decommission Gate [9/13]: Decommission check" "conftest accepted unauthorized decommission"
+fi
+rm -rf "${TMP_UNAUTH_DEC}"
+
+# Test 28.10: Authorized decommissioning with plan-bound token accepted
+TMP_AUTH_DEC="$(mktemp -d -t auth_dec_XXXXXX)"
+cat << 'EOF' > "${TMP_AUTH_DEC}/plan.json"
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.decommissioned_bucket",
+      "type": "aws_s3_bucket",
+      "change": {"actions": ["delete"]}
+    }
+  ],
+  "infraflow_authorization": {
+    "authorized": true,
+    "schema_version": "infraflow-destruction-confirmation-v1",
+    "token": "infraflow-valid-auth-token-hash-2026"
+  }
+}
+EOF
+if "${CONFTEST_BIN}" test --namespace common.critical_resources --policy "${REPO_ROOT}/policies/common/critical_resources.rego" "${TMP_AUTH_DEC}/plan.json" --no-color >/dev/null 2>&1; then
+  record_pass "Authorized Decommission Gate [10/13]: Authorized decommission with valid token allowed"
+else
+  record_fail "Authorized Decommission Gate [10/13]: Decommission check" "conftest rejected authorized decommission"
+fi
+rm -rf "${TMP_AUTH_DEC}"
+
+# Test 28.11: Workflow input guards strictly reject disabling mandatory security scanners
+if grep -q "Disabling mandatory policy evaluation" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "Disabling mandatory Trivy IaC scanning" "${REPO_ROOT}/.github/workflows/reusable-tf-plan.yml" && \
+   grep -q "Disabling mandatory policy evaluation" "${REPO_ROOT}/.github/workflows/reusable-tf-aws.yml" && \
+   grep -q "Disabling mandatory Trivy IaC scanning" "${REPO_ROOT}/.github/workflows/reusable-tf-security.yml"; then
+  record_pass "Input Guard Enforcement [11/13]: Platform workflows reject disabling mandatory scanners"
+else
+  record_fail "Input Guard Enforcement [11/13]: Guard check" "One or more workflows missing input guard against disabling scanners"
+fi
+
+# Test 28.12: Dedicated 16-test security integration test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_g10_security_integration.py" >/dev/null 2>&1; then
+  record_pass "Security Integration Suite [12/13]: Dedicated 16-test suite passed (test_g10_security_integration.py)"
+else
+  record_fail "Security Integration Suite [12/13]: Test suite" "One or more tests in test_g10_security_integration.py failed"
+fi
+
+# Test 28.13: Full Conftest policy suite passes all 213 unit tests across all domains
+if "${CONFTEST_BIN}" verify --policy "${REPO_ROOT}/policies" >/dev/null 2>&1; then
+  record_pass "Comprehensive Policy Verification [13/13]: conftest verify passed all 213 tests across all policies"
+else
+  record_fail "Comprehensive Policy Verification [13/13]: Conftest verify" "conftest verify failed on policies directory"
+fi
+
+# ==============================================================================
+# SECTION 29: Distributed State Locking & Concurrency Engine (Milestone G10.4)
+# ==============================================================================
+log_header "29. Distributed State Locking & Concurrency Engine (G10.4)"
+
+# Test 29.1: Distributed locking core module exists and is non-empty
+if [[ -f "${REPO_ROOT}/infraflow/locking.py" && -s "${REPO_ROOT}/infraflow/locking.py" ]]; then
+  record_pass "Distributed Locking Engine [1/10]: infraflow/locking.py verified intact"
+else
+  record_fail "Distributed Locking Engine [1/10]: Module presence" "infraflow/locking.py missing or empty"
+fi
+
+# Test 29.2: Worker driver strictly excludes force-unlock capabilities
+if grep -q "class DistributedLockDriver" "${REPO_ROOT}/infraflow/locking.py" && \
+   ! grep -q "def force_break" "${REPO_ROOT}/infraflow/locking.py" && \
+   ! grep -q "def force_unlock" "${REPO_ROOT}/infraflow/locking.py"; then
+  record_pass "Worker Driver Privilege Boundary [2/10]: DistributedLockDriver excludes force-unlock methods"
+else
+  record_fail "Worker Driver Privilege Boundary [2/10]: Interface privilege" "DistributedLockDriver contains forbidden force_break/force_unlock"
+fi
+
+# Test 29.3: Dedicated core locking test suite passes (18 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_distributed_locking.py" >/dev/null 2>&1; then
+  record_pass "Core Locking Suite [3/10]: 18 core locking tests passed (test_distributed_locking.py)"
+else
+  record_fail "Core Locking Suite [3/10]: Core test failure" "test_distributed_locking.py failed"
+fi
+
+# Test 29.4: Multiprocessing concurrency adversarial test suite passes (19 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_locking_concurrency_adversarial.py" >/dev/null 2>&1; then
+  record_pass "Multiprocessing Concurrency Suite [4/10]: 19 adversarial multiprocessing tests passed"
+else
+  record_fail "Multiprocessing Concurrency Suite [4/10]: Concurrency test failure" "test_locking_concurrency_adversarial.py failed"
+fi
+
+# Test 29.5: Platform CLI lock subcommand help contracts verified
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect --help >/dev/null 2>&1; then
+  record_pass "CLI Lock Subcommand [5/10]: infraflow lock and inspect help contracts verified"
+else
+  record_fail "CLI Lock Subcommand [5/10]: CLI help error" "infraflow lock --help returned non-zero"
+fi
+
+# Test 29.6: CLI lock inspect returns UNLOCKED on clean target
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect "infraflow/locks/v1/local/test/target/state.tfstate/default.lock" 2>&1 | grep -q "UNLOCKED"; then
+  record_pass "CLI Lock Inspection [6/10]: infraflow lock inspect accurately reports UNLOCKED status"
+else
+  record_fail "CLI Lock Inspection [6/10]: Inspection output" "infraflow lock inspect failed to report UNLOCKED"
+fi
+
+# Test 29.7: CLI lock inspect --json emits valid JSON output
+TMP_CLI_JSON="$(mktemp -d)"
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect "infraflow/locks/v1/local/test/target/state.tfstate/default.lock" -d "${TMP_CLI_JSON}" --json | grep -q '"status": "UNLOCKED"'; then
+  record_pass "CLI Lock JSON Contract [7/10]: infraflow lock inspect --json emits valid structured output"
+else
+  record_fail "CLI Lock JSON Contract [7/10]: JSON output" "infraflow lock inspect --json failed or malformed"
+fi
+rm -rf "${TMP_CLI_JSON}"
+
+# Test 29.8: CLI lock inspect rejects directory traversal fail-closed
+if python3 "${REPO_ROOT}/scripts/infraflow-cli.py" lock inspect "../../etc/shadow" >/dev/null 2>&1; then
+  record_fail "CLI Path Traversal Gate [8/10]: Security rejection" "infraflow lock inspect permitted traversal key"
+else
+  record_pass "CLI Path Traversal Gate [8/10]: Traversal attack strictly rejected with security exit code"
+fi
+
+# Test 29.9: Telemetry catalog contains all 8 distributed locking event types
+LOCK_EVT_COUNT=$(grep -c -E '"lock_(acquired|renewed|released|contention|stale_reclaimed|lost|fencing_violation|force_unlocked)"' "${REPO_ROOT}/scripts/emit-telemetry.py" || true)
+if [[ "${LOCK_EVT_COUNT}" -eq 8 ]]; then
+  record_pass "Telemetry Catalog Contract [9/10]: All 8 distributed locking event types registered in emit-telemetry.py"
+else
+  record_fail "Telemetry Catalog Contract [9/10]: Event registration" "Expected 8 locking event types in emit-telemetry.py, found ${LOCK_EVT_COUNT}"
+fi
+
+# Test 29.10: LocalFSDriver enforces single-host limitation disclaimer
+if grep -q "LOCALFS_LIMITATION_NOTICE" "${REPO_ROOT}/infraflow/locking.py" && \
+   grep -q "strictly confined to a single host" "${REPO_ROOT}/infraflow/locking.py"; then
+  record_pass "LocalFS Architectural Disclaimer [10/10]: Single-host confinement and NFS/SMB disclaimer verified"
+else
+  record_fail "LocalFS Architectural Disclaimer [10/10]: Disclaimer presence" "Missing single-host limitation notice in LocalFSDriver"
+fi
+
+# ==============================================================================
+# SECTION 30: Plan Lifecycle Lock Authority & Integration (Milestone G10.4.4)
+# ==============================================================================
+log_header "30. Plan Lifecycle Lock Authority & Integration (G10.4.4)"
+
+# Test 30.1: Dedicated lifecycle locking test suite passes (11 tests)
+if python3 -m unittest "${REPO_ROOT}/tests/test_lifecycle_locking.py" >/dev/null 2>&1; then
+  record_pass "Lifecycle Locking Suite [1/10]: 11 lifecycle locking integration tests passed"
+else
+  record_fail "Lifecycle Locking Suite [1/10]: Test failure" "test_lifecycle_locking.py failed"
+fi
+
+# Test 30.2: Plan lifecycle verifier CLI exposes all required lock subcommands
+if python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-identity --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-reserve --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-consume --help >/dev/null 2>&1 && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-fail --help >/dev/null 2>&1; then
+  record_pass "Lifecycle Lock CLI Commands [2/10]: lock-identity, lock-reserve, lock-consume, lock-fail subcommands verified"
+else
+  record_fail "Lifecycle Lock CLI Commands [2/10]: Subcommand verification" "One or more lock subcommands failed --help contract"
+fi
+
+# Test 30.3: lock-identity derives canonical lock key and resource fingerprint
+G10_4_TMP="$(mktemp -d)"
+ID_OUT="$(python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-identity \
+  --repo "TM-threemavithana/infraflow" \
+  --environment "production" \
+  --backend "s3://infraflow-tfstate-bucket/env/production/tf.state" \
+  --workspace "default" 2>/dev/null || true)"
+if echo "${ID_OUT}" | grep -q "canonical_lock_key" && echo "${ID_OUT}" | grep -q "resource_fingerprint"; then
+  record_pass "Lock Identity Derivation [3/10]: lock-identity produces canonical key and SHA-256 fingerprint"
+else
+  record_fail "Lock Identity Derivation [3/10]: Output format" "lock-identity failed to output valid JSON with canonical_lock_key"
+fi
+
+# Test 30.4: Replay ledger schema binds lock_id, fencing_token, and canonical_lock_key
+if python3 -c "
+import sqlite3
+from tests.test_lifecycle_locking import PlanReplayLedger
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger.db')
+conn = sqlite3.connect('${G10_4_TMP}/ledger.db')
+cols = [r[1] for r in conn.execute('PRAGMA table_info(plan_executions)').fetchall()]
+assert 'lock_id' in cols
+assert 'fencing_token' in cols
+assert 'canonical_lock_key' in cols
+" >/dev/null 2>&1; then
+  record_pass "Replay Ledger Schema [4/10]: SQLite ledger schema contains lock_id, fencing_token, and canonical_lock_key columns"
+else
+  record_fail "Replay Ledger Schema [4/10]: Ledger schema" "Missing locking columns in plan_executions table"
+fi
+
+# Test 30.5: Mutual exclusion on same backend target during plan authorization
+if python3 -c "
+import tempfile, datetime
+from tests.test_lifecycle_locking import PlanLifecycleVerifier, PlanReplayLedger, DECISION_AUTHORIZED, DECISION_REJECTED
+from tests.test_lifecycle_locking import TestLifecycleLocking
+t = TestLifecycleLocking()
+t.setUp()
+env1 = t._create_synthetic_envelope('plan-race-1', digest='1111' + 'a'*60)
+env2 = t._create_synthetic_envelope('plan-race-2', digest='2222' + 'b'*60)
+state = t._create_synthetic_state()
+ver = PlanLifecycleVerifier(ledger=PlanReplayLedger(db_path=t.ledger_db))
+d1 = ver.verify_authorization(env1, state, t.valid_repo, t.valid_commit, t.valid_env, t.valid_lineage, t.valid_serial, expected_backend=t.valid_backend, actual_backend=t.valid_backend, require_lock=True, lock_dir=t.locks_dir, current_time=t.ref_now)
+d2 = ver.verify_authorization(env2, state, t.valid_repo, t.valid_commit, t.valid_env, t.valid_lineage, t.valid_serial, expected_backend=t.valid_backend, actual_backend=t.valid_backend, require_lock=True, lock_dir=t.locks_dir, current_time=t.ref_now)
+assert d1.decision == DECISION_AUTHORIZED
+assert d2.decision == DECISION_REJECTED
+assert d2.decision_code == 'LOCK_HELD'
+t.tearDown()
+" >/dev/null 2>&1; then
+  record_pass "Target Mutual Exclusion [5/10]: Concurrent authorization on same backend target rejected with LOCK_HELD"
+else
+  record_fail "Target Mutual Exclusion [5/10]: Concurrency race" "Failed to enforce mutual exclusion on same target"
+fi
+
+# Test 30.6: Stale fencing token consumption strictly rejected fail-closed
+if python3 -c "
+import datetime
+from tests.test_lifecycle_locking import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger2.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-stale', '1111'*16, 'org/repo', 'commit1', 'prod', now, {}, lock_id='lock-1', fencing_token=1, canonical_lock_key='target-key')
+l.reserve_plan('plan-newer', '2222'*16, 'org/repo', 'commit2', 'prod', now, {}, lock_id='lock-2', fencing_token=2, canonical_lock_key='target-key')
+try:
+    l.consume_plan('plan-stale', fencing_token=1)
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'STALE_FENCING_TOKEN' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Fencing Token Monotonicity [6/10]: Consumption with superseded fencing token rejected with STALE_FENCING_TOKEN"
+else
+  record_fail "Fencing Token Monotonicity [6/10]: Stale token check" "Failed to reject stale fencing token"
+fi
+
+# Test 30.7: Lost lock handle rejects consumption with StaleOwnerError
+if python3 -c "
+from tests.test_lifecycle_locking import PlanLifecycleVerifier, PlanReplayLedger, StaleOwnerError
+from tests.test_lifecycle_locking import TestLifecycleLocking
+t = TestLifecycleLocking()
+t.setUp()
+env = t._create_synthetic_envelope('plan-lost-g10')
+state = t._create_synthetic_state()
+ver = PlanLifecycleVerifier(ledger=PlanReplayLedger(db_path=t.ledger_db))
+d = ver.verify_authorization(env, state, t.valid_repo, t.valid_commit, t.valid_env, t.valid_lineage, t.valid_serial, expected_backend=t.valid_backend, actual_backend=t.valid_backend, require_lock=True, lock_dir=t.locks_dir, current_time=t.ref_now)
+d.lock_handle.mark_lost('partition')
+try:
+    ver.consume_plan('plan-lost-g10', lock_handle=d.lock_handle)
+    raise AssertionError('Should have failed')
+except StaleOwnerError:
+    pass
+t.tearDown()
+" >/dev/null 2>&1; then
+  record_pass "Lost Handle Fast-Fail [7/10]: Consuming plan with lost lock handle raises StaleOwnerError"
+else
+  record_fail "Lost Handle Fast-Fail [7/10]: Lost handle check" "Failed to raise StaleOwnerError on lost handle"
+fi
+
+# Test 30.8: OUTCOME_UNCERTAIN outcome preservation and re-execution protection
+if python3 -c "
+import datetime
+from tests.test_lifecycle_locking import PlanReplayLedger, PlanReplayError, STATUS_OUTCOME_UNCERTAIN
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger3.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-unc', '3333'*16, 'org/repo', 'commit1', 'prod', now, {})
+l.fail_plan('plan-unc', uncertain=True)
+assert l.get_plan_status('plan-unc')['status'] == STATUS_OUTCOME_UNCERTAIN
+try:
+    l.reserve_plan('plan-unc', '3333'*16, 'org/repo', 'commit1', 'prod', now, {})
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'UNCERTAIN_EXECUTION_STATE' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Uncertain Outcome Protection [8/10]: OUTCOME_UNCERTAIN recorded and blocks re-execution without manual review"
+else
+  record_fail "Uncertain Outcome Protection [8/10]: Uncertain outcome check" "Failed to preserve OUTCOME_UNCERTAIN state"
+fi
+
+# Test 30.9: INTERRUPTED outcome preservation and re-execution protection
+if python3 -c "
+import datetime
+from tests.test_lifecycle_locking import PlanReplayLedger, PlanReplayError, STATUS_INTERRUPTED
+l = PlanReplayLedger(db_path='${G10_4_TMP}/ledger4.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-int', '4444'*16, 'org/repo', 'commit1', 'prod', now, {})
+l.fail_plan('plan-int', interrupted=True)
+assert l.get_plan_status('plan-int')['status'] == STATUS_INTERRUPTED
+try:
+    l.reserve_plan('plan-int', '4444'*16, 'org/repo', 'commit1', 'prod', now, {})
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'INTERRUPTED' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Interrupted Outcome Protection [9/10]: INTERRUPTED state recorded and prevents duplicate execution"
+else
+  record_fail "Interrupted Outcome Protection [9/10]: Interrupted outcome check" "Failed to preserve INTERRUPTED state"
+fi
+
+# Test 30.10: Lock authority boundary documentation verified
+if grep -q "Lock Authority Boundaries" "${REPO_ROOT}/docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md" && \
+   grep -q "Terraform Native State Locking" "${REPO_ROOT}/docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md" && \
+   grep -q "InfraFlow Orchestration Locking" "${REPO_ROOT}/docs/architecture/G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md"; then
+  record_pass "Lock Authority Boundaries [10/10]: Architectural authority boundaries documented and delineated"
+else
+  record_fail "Lock Authority Boundaries [10/10]: Documentation presence" "Missing lock authority boundaries in G10-DISTRIBUTED-LOCKING-ARCHITECTURE.md"
+fi
+rm -rf "${G10_4_TMP}"
+
+# ==============================================================================
+# SECTION 31: Milestone G10.5.1 — Plan Lifecycle State Correctness & Workflow Integration
+# ==============================================================================
+log_header "Section 31: Milestone G10.5.1 — Plan Lifecycle State Correctness & Workflow Integration"
+
+# Test 31.1: reusable-tf-apply.yml contains enable-lock, lock-dir, and lock-ttl-seconds inputs
+if grep -q "enable-lock:" "${REUSABLE_APPLY_WF}" && \
+   grep -q "lock-dir:" "${REUSABLE_APPLY_WF}" && \
+   grep -q "lock-ttl-seconds:" "${REUSABLE_APPLY_WF}"; then
+  record_pass "Workflow Inputs [1/10]: reusable-tf-apply.yml defines enable-lock, lock-dir, and lock-ttl-seconds inputs"
+else
+  record_fail "Workflow Inputs [1/10]: Inputs check" "reusable-tf-apply.yml missing required locking inputs"
+fi
+
+# Test 31.2: reusable-tf-apply.yml contains lock-consume step for completed simulation
+if grep -q "lock-consume" "${REUSABLE_APPLY_WF}" && \
+   grep -q "Complete Simulation & Consume Plan in Replay Ledger" "${REUSABLE_APPLY_WF}"; then
+  record_pass "Workflow Consumption [2/10]: reusable-tf-apply.yml transitions simulation to CONSUMED via lock-consume"
+else
+  record_fail "Workflow Consumption [2/10]: Consumption check" "reusable-tf-apply.yml missing lock-consume step"
+fi
+
+# Test 31.3: reusable-tf-apply.yml contains lock-fail step for failure and cancellation handling
+if grep -q "lock-fail" "${REUSABLE_APPLY_WF}" && \
+   grep -q "Handle Failure & Mark Plan Failed" "${REUSABLE_APPLY_WF}" && \
+   grep -q "Handle Cancellation & Mark Interrupted" "${REUSABLE_APPLY_WF}"; then
+  record_pass "Workflow Failure Traps [3/10]: reusable-tf-apply.yml contains failure and cancellation lock-fail traps"
+else
+  record_fail "Workflow Failure Traps [3/10]: Failure traps check" "reusable-tf-apply.yml missing failure or cancellation traps"
+fi
+
+# Test 31.4: reusable-tf-apply.yml actionlint validation
+if (cd "${REPO_ROOT}" && "${ACTIONLINT_BIN}" .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+  record_pass "Workflow Linting [4/10]: reusable-tf-apply.yml passes actionlint with zero errors"
+else
+  record_fail "Workflow Linting [4/10]: Actionlint check" "actionlint failed on reusable-tf-apply.yml"
+fi
+
+# Test 31.5: reusable-tf-apply.yml zizmor security audit
+if (cd "${REPO_ROOT}" && "${ZIZMOR_BIN}" -c .zizmor.yml --min-severity medium .github/workflows/reusable-tf-apply.yml >/dev/null 2>&1); then
+  record_pass "Workflow Security Audit [5/10]: reusable-tf-apply.yml passes zizmor security audit"
+else
+  record_fail "Workflow Security Audit [5/10]: Zizmor check" "zizmor detected vulnerabilities in reusable-tf-apply.yml"
+fi
+
+# Test 31.6: Idempotent duplicate plan consumption
+G10_5_TMP=$(mktemp -d "/tmp/infraflow-g10-5-1-XXXXXX")
+if python3 -c "
+import datetime
+from tests.test_lifecycle_state_correctness import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_5_TMP}/ledger.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-id-1', '1'*64, 'repo', 'commit', 'prod', now, {}, lock_id='lock-1', fencing_token=1)
+l.consume_plan('plan-id-1', lock_id='lock-1', fencing_token=1)
+# Duplicate consume by same owner must succeed idempotently
+l.consume_plan('plan-id-1', lock_id='lock-1', fencing_token=1)
+" >/dev/null 2>&1; then
+  record_pass "Idempotent Consumption [6/10]: Duplicate consume by same owner succeeds idempotently"
+else
+  record_fail "Idempotent Consumption [6/10]: Idempotency check" "Failed idempotent duplicate plan consumption"
+fi
+
+# Test 31.7: Terminal outcome enforcement: consuming plan with different owner rejects with ALREADY_CONSUMED
+if python3 -c "
+from tests.test_lifecycle_state_correctness import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_5_TMP}/ledger.db')
+try:
+    l.consume_plan('plan-id-1', lock_id='lock-2', fencing_token=1)
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'ALREADY_CONSUMED' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Terminal State Guard [7/10]: Consuming already consumed plan with different owner raises ALREADY_CONSUMED"
+else
+  record_fail "Terminal State Guard [7/10]: Terminal guard check" "Failed terminal state guard on duplicate consume"
+fi
+
+# Test 31.8: Monotonic fencing token validation: superseded token rejects with STALE_FENCING_TOKEN
+if python3 -c "
+import datetime
+from tests.test_lifecycle_state_correctness import PlanReplayLedger, PlanReplayError
+l = PlanReplayLedger(db_path='${G10_5_TMP}/ledger2.db')
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+l.reserve_plan('plan-a', '2'*64, 'repo', 'commit', 'prod', now, {}, lock_id='l1', fencing_token=1, canonical_lock_key='key1')
+l.reserve_plan('plan-b', '3'*64, 'repo', 'commit', 'prod', now, {}, lock_id='l2', fencing_token=2, canonical_lock_key='key1')
+try:
+    l.consume_plan('plan-a', lock_id='l1', fencing_token=1)
+    raise AssertionError('Should have failed')
+except PlanReplayError as e:
+    assert 'STALE_FENCING_TOKEN' in str(e)
+" >/dev/null 2>&1; then
+  record_pass "Fencing Token Guard [8/10]: Superseded fencing token rejected with STALE_FENCING_TOKEN"
+else
+  record_fail "Fencing Token Guard [8/10]: Fencing token check" "Failed stale fencing token rejection"
+fi
+rm -rf "${G10_5_TMP}"
+
+# Test 31.9: CLI lock-consume --idempotent and lock-fail --idempotent supported
+if python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-consume --help | grep -q -- "--idempotent" && \
+   python3 "${REPO_ROOT}/scripts/verify-plan-lifecycle.py" lock-fail --help | grep -q -- "--idempotent"; then
+  record_pass "CLI Idempotency [9/10]: verify-plan-lifecycle.py lock-consume and lock-fail support --idempotent"
+else
+  record_fail "CLI Idempotency [9/10]: CLI flag check" "verify-plan-lifecycle.py missing --idempotent flag"
+fi
+
+# Test 31.10: Full adversarial lifecycle state correctness unit test suite
+if python3 -m unittest "${REPO_ROOT}/tests/test_lifecycle_state_correctness.py" >/dev/null 2>&1; then
+  record_pass "Lifecycle Test Suite [10/10]: All 13 tests passed in test_lifecycle_state_correctness.py"
+else
+  record_fail "Lifecycle Test Suite [10/10]: Unit tests" "Tests in test_lifecycle_state_correctness.py failed"
+fi
+
 # --- Summary Report ---
 log_header "Summary of Validation Results"
 
@@ -5846,7 +6752,7 @@ echo -e "Passed Checks         : ${COLOR_GREEN}${PASSED_CHECKS}${COLOR_RESET}"
 echo -e "Failed Checks         : ${COLOR_RED}${FAILED_CHECKS}${COLOR_RESET}"
 
 if [[ ${FAILED_CHECKS} -eq 0 ]]; then
-  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08/G09 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
+  echo -e "\n${COLOR_GREEN}>>> ALL G01/G02/G03/G04/G05/G06/G07/G08/G09/G10 QUALITY GATES PASSED SUCCESSFULLY (${PASSED_CHECKS}/${TOTAL_CHECKS}) <<<${COLOR_RESET}\n"
   exit 0
 else
   echo -e "\n${COLOR_RED}>>> VALIDATION FAILED WITH ${FAILED_CHECKS} ERRORS <<<${COLOR_RESET}\n"
